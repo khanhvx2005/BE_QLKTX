@@ -1,0 +1,35 @@
+{
+  "name": "be_quanlyktx",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "db:test": "node src/scripts/test-db.js",
+    "seed": "node src/scripts/seed.js",
+    "test:phase5": "node src/scripts/test-phase5-api.js",
+    "test:phase6": "node src/scripts/test-phase6-api.js",
+    "test:phase7": "node src/scripts/test-phase7-api.js",
+    "job": "node src/core/cron/scheduler.js run-now",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "joi": "^18.2.9",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.10.0",
+    "node-cron": "^4.6.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}

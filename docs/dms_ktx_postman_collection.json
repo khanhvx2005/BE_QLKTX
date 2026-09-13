@@ -1,0 +1,270 @@
+{
+  "info": {
+    "name": "DMS Ký Túc Xá API Collection",
+    "_postman_id": "dms-ktx-api-v1",
+    "description": "Bộ sưu tập API Quản lý Ký túc xá phục vụ tích hợp Frontend - Backend",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000/api",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01. Auth",
+      "item": [
+        {
+          "name": "Login (Admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.code === 200 && jsonData.data && jsonData.data.token) {",
+                  "    pm.collectionVariables.set('token', jsonData.data.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@dorm.local\",\n  \"password\": \"Password123@\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Get Profile (Me)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "me"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02. Students",
+      "item": [
+        {
+          "name": "Get Students List",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/students?page=1&limit=10&search=&status=active",
+              "host": ["{{baseUrl}}"],
+              "path": ["students"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" },
+                { "key": "search", "value": "" },
+                { "key": "status", "value": "active" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Student",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"studentCode\": \"SV20260001\",\n  \"fullName\": \"Trần Thị Hoa\",\n  \"gender\": \"female\",\n  \"dob\": \"2005-04-12\",\n  \"citizenId\": \"001205009988\",\n  \"phone\": \"0988112233\",\n  \"email\": \"hoatt@university.edu.vn\",\n  \"major\": \"Công nghệ thông tin\",\n  \"academicYear\": \"K21\",\n  \"faculty\": \"CNTT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/students",
+              "host": ["{{baseUrl}}"],
+              "path": ["students"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03. Rooms & Beds",
+      "item": [
+        {
+          "name": "Get Rooms List",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/rooms?page=1&limit=10&gender=female&status=available",
+              "host": ["{{baseUrl}}"],
+              "path": ["rooms"]
+            }
+          }
+        },
+        {
+          "name": "Get Room Detail (with Beds)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/rooms/:roomId",
+              "host": ["{{baseUrl}}"],
+              "path": ["rooms", ":roomId"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04. Residencies & Contracts",
+      "item": [
+        {
+          "name": "Check-in Student (Create Residency)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"studentId\": \"<STUDENT_ID>\",\n  \"bedId\": \"<BED_ID>\",\n  \"startDate\": \"2026-09-15\",\n  \"endDate\": \"2027-02-15\",\n  \"depositAmount\": 1000000,\n  \"monthlyRate\": 500000\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/residencies",
+              "host": ["{{baseUrl}}"],
+              "path": ["residencies"]
+            }
+          }
+        },
+        {
+          "name": "Get Contracts List",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/contracts?page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["contracts"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05. Invoices & Fees",
+      "item": [
+        {
+          "name": "Get Invoices",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/invoices?page=1&limit=10&status=pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["invoices"]
+            }
+          }
+        },
+        {
+          "name": "Record Meter Reading",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roomId\": \"<ROOM_ID>\",\n  \"month\": 9,\n  \"year\": 2026,\n  \"electricityOld\": 120,\n  \"electricityNew\": 185,\n  \"waterOld\": 40,\n  \"waterNew\": 52\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/utility-readings",
+              "host": ["{{baseUrl}}"],
+              "path": ["utility-readings"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06. Payments",
+      "item": [
+        {
+          "name": "Create VNPay Payment URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invoiceId\": \"<INVOICE_ID>\",\n  \"method\": \"vnpay\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/payments/vnpay-url",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "vnpay-url"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "07. Requests & Deposit Settlement",
+      "item": [
+        {
+          "name": "Get Requests List",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/requests?page=1&limit=10&status=submitted",
+              "host": ["{{baseUrl}}"],
+              "path": ["requests"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "08. Dashboard",
+      "item": [
+        {
+          "name": "Get Dashboard Overview",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/dashboard/overview",
+              "host": ["{{baseUrl}}"],
+              "path": ["dashboard", "overview"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
