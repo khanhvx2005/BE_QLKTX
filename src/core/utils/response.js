@@ -30,7 +30,7 @@ const ApiResponse = {
    * Trả về danh sách có phân trang chuẩn theo API.md §1.2
    * Envelope: data: { items, total, page, limit }
    */
-  paginate(res, items = [], total = 0, page = 1, limit = 20, message = 'Thành công') {
+  paginate(res, items = [], total = 0, page = 1, limit = 20, message = 'Thành công', extra = {}) {
     return res.status(200).json({
       code: 'OK',
       message,
@@ -39,6 +39,7 @@ const ApiResponse = {
         total: Number(total),
         page: Number(page),
         limit: Number(limit),
+        ...extra,
       },
     });
   },

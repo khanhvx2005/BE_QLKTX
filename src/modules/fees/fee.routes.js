@@ -14,6 +14,7 @@ const {
   updateUtilityReadingSchema,
   queryUtilityReadingSchema,
   generateInvoicesSchema,
+  previewGenerationSchema,
   createInvoiceSchema,
   queryInvoiceSchema,
 } = require('./fee.validation');
@@ -42,6 +43,7 @@ router.put('/utility-readings/:id', authorize('admin', 'staff'), validate(update
 // ==========================================
 // 3. Hóa đơn (Invoices)
 // ==========================================
+router.get('/invoices/generation-preview', authorize('admin', 'staff'), validate(previewGenerationSchema, 'query'), feeController.previewInvoiceGeneration);
 router.post('/invoices/generate', authorize('admin', 'staff'), validate(generateInvoicesSchema), feeController.generateInvoices);
 router.get('/invoices/overdue', authorize('admin', 'staff', 'viewer'), feeController.getOverdueInvoices);
 router.get('/invoices', authorize('admin', 'staff', 'viewer', 'student'), validate(queryInvoiceSchema, 'query'), feeController.getInvoices);

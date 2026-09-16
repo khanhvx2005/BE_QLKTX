@@ -8,8 +8,8 @@ const { FEE_TYPE_CODES, INVOICE_TYPE, INVOICE_STATUS } = require('../../shared/c
 
 // 1. Fee Types
 const createFeeTypeSchema = Joi.object({
-  code: Joi.string().valid(...FEE_TYPE_CODES).required().messages({
-    'any.only': 'Mã loại phí không hợp lệ',
+  code: Joi.string().pattern(/^[a-z][a-z0-9_]{1,29}$/).required().messages({
+    'string.pattern.base': 'Mã loại phí phải bắt đầu bằng chữ cái thường và chỉ chứa chữ thường, số, dấu gạch dưới (2-30 ký tự)',
     'any.required': 'Mã loại phí là bắt buộc',
   }),
   name: Joi.string().trim().required().messages({
@@ -69,6 +69,7 @@ const updateUtilityReadingSchema = Joi.object({
 const queryUtilityReadingSchema = Joi.object({
   billingPeriod: Joi.string().pattern(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
   buildingId: Joi.string().hex().length(24).optional(),
+  roomId: Joi.string().hex().length(24).optional(),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
 });
@@ -79,26 +80,50 @@ const generateInvoicesSchema = Joi.object({
     'string.pattern.base': 'Kỳ lập hóa đơn phải có định dạng YYYY-MM (ví dụ 2026-10)',
     'any.required': 'Kỳ lập hóa đơn là bắt buộc',
   }),
-  buildingIds: Joi.array().items(Joi.string().hex().length(24)).optional(),
+  buildingIds: Joi.alternatives().try(
+    Joi.array().items(Joi.string()),
+    Joi.string()
+  ).optional(),
   dueDate: Joi.date().iso().required().messages({
     'any.required': 'Hạn nộp tiền là bắt buộc',
   }),
+});
+
+const previewGenerationSchema = Joi.object({
+  billingPeriod: Joi.string().pattern(/^\d{4}-(0[1-9]|1[0-2])$/).required().messages({
+    'string.pattern.base': 'Kỳ lập hóa đơn phải có định dạng YYYY-MM (ví dụ 2026-10)',
+    'any.required': 'Kỳ lập hóa đơn là bắt buộc',
+  }),
+  buildingIds: Joi.alternatives().try(
+    Joi.array().items(Joi.string()),
+    Joi.string()
+  ).optional(),
 });
 
 const createInvoiceSchema = Joi.object({
   studentId: Joi.string().hex().length(24).required().messages({
     'any.required': 'Sinh viên là bắt buộc',
   }),
-  contractId: Joi.string().hex().length(24).optional(),
-  billingPeriod: Joi.string().pattern(/^\d{4}-(0[1-9]|1[0-2])$/).optional().allow(null, ''),
-  type: Joi.string().valid(...INVOICE_TYPE).default('monthly'),
+  contractId: Joi.string().hex().length(24).required().messages({
+    'any.required': 'Hợp đồng là bắt buộc',
+  }),
+  dueDate: Joi.date().iso().required().messages({
+    'any.required': 'Hạn thanh toán là bắt buộc',
+  }),
+  note: Joi.string().trim().optional().allow(''),
   lineItems: Joi.array()
     .items(
       Joi.object({
-        feeTypeId: Joi.string().hex().length(24).optional(),
-        description: Joi.string().trim().required(),
+        feeTypeId: Joi.string().hex().length(24).required().messages({
+          'any.required': 'Khoản phí là bắt buộc',
+        }),
+        description: Joi.string().trim().required().messages({
+          'any.required': 'Mô tả là bắt buộc',
+        }),
         quantity: Joi.number().min(1).default(1),
-        unitPrice: Joi.number().integer().min(0).required(),
+        unitPrice: Joi.number().integer().min(0).required().messages({
+          'any.required': 'Đơn giá là bắt buộc',
+        }),
       })
     )
     .min(1)
@@ -107,12 +132,11 @@ const createInvoiceSchema = Joi.object({
       'array.min': 'Hóa đơn phải có ít nhất 1 khoản phí',
       'any.required': 'Chi tiết hóa đơn là bắt buộc',
     }),
-  dueDate: Joi.date().iso().required().messages({
-    'any.required': 'Hạn thanh toán là bắt buộc',
-  }),
 });
 
 const queryInvoiceSchema = Joi.object({
+  search: Joi.string().trim().optional().allow(''),
+  buildingId: Joi.string().hex().length(24).optional(),
   studentId: Joi.string().hex().length(24).optional(),
   billingPeriod: Joi.string().optional(),
   status: Joi.string().valid(...INVOICE_STATUS).optional(),
@@ -128,6 +152,7 @@ module.exports = {
   updateUtilityReadingSchema,
   queryUtilityReadingSchema,
   generateInvoicesSchema,
+  previewGenerationSchema,
   createInvoiceSchema,
   queryInvoiceSchema,
 };

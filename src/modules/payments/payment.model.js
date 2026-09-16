@@ -45,6 +45,12 @@ const paymentSchema = new mongoose.Schema(
       },
       required: [true, 'Phương thức thanh toán là bắt buộc'],
     },
+    bankReference: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
     gatewayTransactionId: {
       type: String,
       default: null,

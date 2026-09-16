@@ -8,6 +8,7 @@ const testFiles = [
   'test-auth-api.js',
   'test-phase2-api.js',
   'test-v12-api.js',
+  'test-v12-integration.js',
 ];
 
 console.log('====================================================');

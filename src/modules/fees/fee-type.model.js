@@ -47,6 +47,7 @@ const feeTypeSchema = new mongoose.Schema(
   {
     timestamps: true,
     toJSON: {
+      virtuals: true,
       transform(doc, ret) {
         ret.id = ret._id;
         delete ret._id;
@@ -56,6 +57,12 @@ const feeTypeSchema = new mongoose.Schema(
     },
   }
 );
+
+const SYSTEM_FEE_CODES = ['rent', 'electricity', 'water', 'deposit', 'supplies', 'other'];
+
+feeTypeSchema.virtual('isSystem').get(function () {
+  return SYSTEM_FEE_CODES.includes(this.code);
+});
 
 const FeeType = mongoose.model('FeeType', feeTypeSchema);
 

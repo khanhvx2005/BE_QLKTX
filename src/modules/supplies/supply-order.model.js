@@ -85,6 +85,10 @@ const supplyOrderSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    cancelledAt: {
+      type: Date,
+      default: null,
+    },
     deliveredAt: {
       type: Date,
       default: null,

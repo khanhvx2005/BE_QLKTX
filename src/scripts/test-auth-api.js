@@ -92,10 +92,22 @@ async function runAuthTests() {
       console.assert(meRes.body.data.email === 'admin@dorm.local', 'Email phải đúng');
       console.log('  ✅ Lấy thông tin profile chính chủ thành công!');
 
-      // 4. Test Đăng ký Sinh viên mới (POST /api/auth/register)
-      console.log('▶ Test 4: Sinh viên tự đăng ký tài khoản...');
+      // 4. Test Đăng ký Sinh viên (POST /api/auth/register - liên kết hồ sơ có sẵn theo FR-80/81)
+      console.log('▶ Test 4: Sinh viên tự đăng ký tài khoản (liên kết hồ sơ có sẵn)...');
       const testStudentCode = `SV${Date.now().toString().slice(-6)}`;
       const testStudentEmail = `test_${Date.now().toString().slice(-6)}@dorm.local`;
+
+      await Student.create({
+        studentCode: testStudentCode,
+        fullName: 'Nguyễn Văn Kiểm Thử',
+        gender: 'male',
+        phone: '0987654321',
+        email: testStudentEmail,
+        className: 'CNTT2026',
+        faculty: 'Công nghệ thông tin',
+        status: 'active',
+      });
+
       const registerRes = await request('/api/auth/register', 'POST', {}, {
         fullName: 'Nguyễn Văn Kiểm Thử',
         studentCode: testStudentCode,
@@ -103,8 +115,6 @@ async function runAuthTests() {
         password: 'Student@123',
         gender: 'male',
         phone: '0987654321',
-        className: 'CNTT2026',
-        faculty: 'Công nghệ thông tin',
       });
       console.assert(registerRes.status === 201, 'Status phải là 201');
       console.assert(registerRes.body.data.user.role === 'student', 'Role phải bị ép là student');

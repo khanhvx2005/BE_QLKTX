@@ -2,10 +2,10 @@
 
 **Hệ thống:** DMS – Hệ thống quản lý ký túc xá
 **Người đọc:** nhóm Backend (3 người)
-**Người lập:** FE Lead · **Ngày:** 15/09/2026
-**Đối chiếu:** `docs/API.md` **v1.2.8** ↔ repo `BE_QLKTX` commit `ab7db8c` (first-commit). Trích dẫn `file:dòng` trỏ vào `BE_QLKTX/src`.
+**Người lập:** FE Lead · **Ngày:** 15/09/2026 · **Cập nhật:** 16/09/2026 (bản 1.11 — bổ sung mục 6, 7)
+**Đối chiếu:** `docs/API.md` **v1.2.18** ↔ repo `BE_QLKTX` commit `ab7db8c` (first-commit). Trích dẫn `file:dòng` trỏ vào `BE_QLKTX/src`.
 
-> **Tóm tắt một dòng:** backend đang làm theo API **v1.1** (xếp giường bằng tay). Frontend đã làm xong 16/31 màn theo **v1.2** (đăng ký theo phòng, giường tự gán, nhu yếu phẩm). Để nối được, backend cần: **thêm 5 nhóm API còn thiếu**, **sửa định dạng/luật ở 7 nhóm đang lệch**, **bỏ 8 API thừa của v1.1**, và **sửa 6 lỗi chung**.
+> **Tóm tắt một dòng:** backend đang làm theo API **v1.1** (xếp giường bằng tay). Frontend đã làm xong **toàn bộ 31/31 màn** theo **v1.2** (đăng ký theo phòng, giường tự gán, nhu yếu phẩm). Frontend gọi **82 endpoint**: **10 dùng được ngay**, **41 có nhưng lệch** (phần lớn chỉ đổi tên trường), **34 chưa có** (bảng đầy đủ ở **mục 7**). Cần thêm: **5 nhóm API còn thiếu**, sửa **6 lỗi chung** (mục 2), bỏ **8 API thừa** của v1.1 (mục 4).
 
 ---
 
@@ -21,11 +21,12 @@
 | Ưu tiên | Nghĩa |
 |---|---|
 | **P0** | Chặn màn FE **đã xong** — cần sớm nhất để nối |
-| **P1** | Cho màn FE **sắp làm** (tài chính, thanh toán, nhu yếu phẩm, cổng SV còn lại) |
+| **P1** | Màn FE vẫn mở được nhưng thiếu một phần chức năng, hoặc có cách làm tay thay thế |
 | **P2** | Dọn dẹp, bảo mật, lỗi tiềm ẩn — không chặn giao diện |
 
 - **Nguồn sự thật** là `docs/API.md` (định dạng request/response, mã lỗi mục 13) và `docs/DATA-SCHEMA.md` (tên trường). Tài liệu này **không lặp lại** định dạng đã có ở `API.md`, chỉ chỉ ra chỗ lệch và việc cần làm.
-- Mọi phần FE bổ sung vào `API.md` nằm ở bảng **Change Log** cuối file, bản **1.2.1 → 1.2.8**.
+- Mọi phần FE bổ sung vào `API.md` nằm ở bảng **Change Log** cuối file, bản **1.2.1 → 1.2.18**.
+- **Đã đọc bản trước (bàn giao ngày 15/09, `API.md` v1.2.8)?** Xem thẳng **mục 6** — chỉ liệt kê phần thêm mới sau đó. **Mục 7** là bảng đối chiếu từng endpoint để tự kiểm.
 - Frontend có lớp dữ liệu giả (`src/mocks/`) trả **đúng** định dạng trong `API.md` — khi phân vân, chạy FE ở chế độ dữ liệu giả (`VITE_USE_MOCK=true`), mở F12 → Network để xem request/response mẫu.
 
 ---
@@ -34,7 +35,7 @@
 
 | # | Nhóm API | Màn FE dùng | Trạng thái | Ưu tiên |
 |---|---|---|---|---|
-| 1 | Auth (`/auth/*`) | SCR-01, 02, 03 | ⚠️ gần khớp | P0 |
+| 1 | Auth (`/auth/*`) | SCR-01, 02, 03 | ⚠️ `register` sai nghiệp vụ (mục 3.1) | P0 |
 | 2 | Tài khoản (`/users`) | SCR-81 | ❌ chỉ có reset mật khẩu | P0 |
 | 3 | Sinh viên (`/students`) | SCR-11, 31, 81 | ⚠️ thiếu trường | P0 |
 | 4 | Tòa nhà (`/buildings`) | SCR-21, 23 | ⚠️ | P0 |
@@ -43,11 +44,11 @@
 | 7 | **Đơn đăng ký (`/applications`)** | SCR-31 | ❌ | **P0** |
 | 8 | Hợp đồng (`/contracts`) | SCR-32, 61 | ⚠️ lệch nhiều | P0 |
 | 9 | Yêu cầu gia hạn/trả phòng (`/requests`) | SCR-41, 66 | ⚠️ thiếu quyết toán đầy đủ | P0 |
-| 10 | **Cổng sinh viên (`/portal/*`)** | SCR-61, 62, 63→69 | ❌ chỉ có `my-requests` | **P0** / P1 |
+| 10 | **Cổng sinh viên (`/portal/*`)** | SCR-61, 62, 63→69 | ❌ chỉ có `my-requests` (13 endpoint thiếu) | **P0** |
 | 11 | Dashboard (`/dashboard`) | SCR-10 | ⚠️ định dạng khác | P0 |
-| 12 | Phí, chỉ số, hóa đơn (`/fee-types`, `/utility-readings`, `/invoices`) | SCR-51→55, 82 | ⚠️ lệch tên trường | P1 |
-| 13 | Thanh toán (`/payments`) | SCR-54→56, 64, 65 | ⚠️ | P1 |
-| 14 | **Nhu yếu phẩm (`/supply-items`, `/supply-orders`)** | SCR-67, 68, 71 | ❌ | P1 |
+| 12 | Phí, chỉ số, hóa đơn (`/fee-types`, `/utility-readings`, `/invoices`) | SCR-51→55, 82 | ⚠️ lệch tên trường · ❌ thiếu `generation-preview` | P0 |
+| 13 | Thanh toán (`/payments`) | SCR-54→56, 64, 65 | ⚠️ thiếu lọc, `bankReference`, đối soát thật | P0 |
+| 14 | **Nhu yếu phẩm (`/supply-items`, `/supply-orders`)** | SCR-67, 68, 71 | ❌ toàn bộ module | **P0** |
 | 15 | Lưu trú (`/residencies`) | — (không có màn riêng) | 🗑️ phần tạo tay | P2 |
 
 ---
@@ -74,7 +75,7 @@ Những điểm **đã khớp** (giữ nguyên): envelope `{ code, message, data
 | Endpoint | Trạng thái | Cần làm |
 |---|---|---|
 | `POST /auth/login` | ✅ | Đúng định dạng, đúng `INVALID_CREDENTIALS` 401 / `ACCOUNT_LOCKED` 403. Chỉ còn G3, G4 |
-| `POST /auth/register` | ✅ | Đã tạo cả `Student` + `User`. Sửa mã lỗi trùng (G5) và luật mật khẩu (G6) |
+| `POST /auth/register` | ❌ **sai nghiệp vụ** | Hiện **tạo mới hồ sơ `Student`** từ dữ liệu người dùng nhập. Theo FR-80/FR-81 phải **liên kết với hồ sơ sinh viên ban quản lý đã có**: sai mã → `422 STUDENT_NOT_FOUND`, sai họ tên → `422 STUDENT_INFO_MISMATCH`, đã có tài khoản → `409 STUDENT_ALREADY_HAS_ACCOUNT` (`API.md` bản 1.2.18). Tạo hồ sơ tự do khiến tài khoản không gắn được với hồ sơ thật, sinh viên không có phòng/hợp đồng. Kèm mã lỗi trùng (G5) và luật mật khẩu (G6) |
 | `GET /auth/me`, `POST /auth/logout` | ✅ | — |
 | `PATCH /auth/change-password` | ✅ | Body `{ oldPassword, newPassword }` khớp. G6 |
 | `POST /users/:id/reset-password` | ⚠️ | Mật khẩu tạm đang là **10 ký tự hex** — BR-85 cần có cả chữ và số (hex có thể toàn số). Thêm `422 CANNOT_MODIFY_SELF` khi tự reset mình. Bỏ bản trùng `/api/auth/users/:id/reset-password` (`auth.routes.js:30`) |
@@ -176,13 +177,14 @@ Mọi endpoint lấy danh tính **từ JWT** (BR-86). Định dạng: **`API.md`
 
 | Endpoint | Màn FE | Ưu tiên | Ghi chú định dạng FE đang dùng |
 |---|---|---|---|
-| `GET /portal/profile` | SCR-61, 62, 69 | P0 | Hồ sơ `Student` (cần `fullName`, `studentCode`, `gender`, `faculty`, `className`) |
+| `GET /portal/profile` | SCR-61, 62, **69 (đã xong)** | P0 | Hồ sơ `Student`: `fullName`, `studentCode`, `gender`, `dob`, `faculty`, `className`, `phone`, `email`, `emergencyContact { name, relationship, phone }` — màn hồ sơ chỉ đọc (FR-86) |
 | `GET /portal/my-residence` | SCR-61, 66, header cổng SV | **P0** | Xem **`API.md` mục 10** (bản 1.2.8): `{ hasResidence: false }` hoặc `{ hasResidence: true, contract, roomType, includedInRoom, roommates, debtSummary }` |
 | `GET /portal/my-applications` · `POST` · `DELETE /:id` | SCR-61, 62 | **P0** | Mảng đơn của mình, **mới nhất lên đầu**, cùng định dạng item của `GET /applications`. Tạo đơn không giữ chỗ (BR-34) |
 | `GET /portal/my-requests` · `POST` · `DELETE /:id` | SCR-66 | P0 ⚠️ | Đã có — xem 3.9 (kiểm tra ngày, tách router) |
-| `GET /portal/my-invoices` · `/:id` | SCR-61, 64 | P0 (trang chủ) / P1 | Hóa đơn của mình, có `lineItems`, `remainingAmount` |
-| `GET /portal/supply-items` · `GET/POST /portal/my-supply-orders` · `PATCH /:id/cancel` | SCR-61, 67, 68 | P0 (trang chủ gợi ý) / P1 | Xem `API.md` mục 10–11 |
-| `GET /portal/my-contracts`, `GET /portal/my-payments` | SCR-63, 64 | P1 | |
+| `GET /portal/my-invoices` · `/:id` | SCR-61, **64 (đã xong)** | **P0** | Hóa đơn của mình, có `lineItems`, `remainingAmount`; chi tiết kèm `payments` như `API.md` bản 1.2.12. Mô tả dòng điện nước giữ hậu tố `(90 kWh, chia đều 4 người)` để màn sinh viên giải thích cách chia tiền |
+| `GET /portal/supply-items` · `GET/POST /portal/my-supply-orders` · `PATCH /:id/cancel` | SCR-61, **67, 68 (đã xong)** | **P0** | Xem `API.md` mục 10–11 (bản 1.2.17): cửa hàng đã lọc sẵn món cấp sẵn/ngừng bán, đặt hàng chỉ nhận `{ supplyItemId, quantity }` (1–5), trả kèm `invoice` để sinh viên thanh toán ngay, hủy đơn thì hủy cả hóa đơn |
+| `GET /portal/my-contracts` | **SCR-63 (đã xong)** | **P0** | Mảng hợp đồng của mình, mới nhất lên đầu; hợp đồng cũ cần `contractCode`, `bedCode`, `buildingName`, `startDate`, `endDate`, `status`, `terminationReason` để dựng bảng lịch sử lưu trú (FR-39) |
+| `GET /portal/my-payments` | **SCR-65 (đã xong)** | **P0** | Thêm lọc `?transactionRef=` — màn Kết quả thanh toán hỏi lại tối đa 5 lần, mỗi lần cách 2 giây (`API.md` bản 1.2.16) |
 
 > Hiện `GET /invoices`, `GET /payments`, `GET /contracts/:id` cho role `student` xem đồ của mình — **giữ quyền đó** nhưng FE chỉ gọi qua `/portal/*` để tách rõ.
 
@@ -202,30 +204,35 @@ Mọi endpoint lấy danh tính **từ JWT** (BR-86). Định dạng: **`API.md`
 
 | Lệch | Cần làm | Trích dẫn |
 |---|---|---|
-| FeeType dùng `unitPrice`, `isMetered`, mã viết hoa `ELECTRICITY`/`WATER`; chưa seed | Theo `DATA-SCHEMA` 3.8: `defaultAmount`, `isRecurring`, mã `rent`, `electricity`, `water`, `deposit`, `supplies`, `other`. Seed 6 loại | `fee-type.model.js`, `fee.service.js:101-105` |
-| `GET /utility-readings` không phân trang, không Joi; `PUT` không Joi | Joi cho cả hai; trả `{ items, total, page, limit }` (hoặc thống nhất mảng và ghi rõ trong `API.md`) | `fee.service.js:51-72, 134-166` |
+| FeeType dùng `unitPrice`, `isMetered`, mã viết hoa (DB chung đang có `ROOM_FEE`, `ELECTRICITY`, `WATER`, `DEPOSIT`, `INTERNET`); thiếu `supplies`, `other` | Theo `DATA-SCHEMA` 3.8: `defaultAmount`, `isRecurring`, mã `rent`, `electricity`, `water`, `deposit`, `supplies`, `other`. Seed đủ 6 loại hệ thống. FE tạm chuyển đổi khi đọc danh sách, **chưa** chuyển đổi khi thêm/sửa | `fee-type.model.js`, `fee.service.js:101-105` |
+| `GET /fee-types` chỉ trả loại đang dùng; không có `isSystem`; cho ngừng dùng cả loại hệ thống | Theo `API.md` mục 7 (bản 1.2.9): `?includeInactive=true`, trả `isSystem`; ngừng dùng loại hệ thống → `422 FEE_TYPE_REQUIRED`; `PUT` nhận `{ name, unit, defaultAmount, isRecurring, isActive }`, không đổi `code` | `fee.service.js:20-49` |
+| `GET /utility-readings` không phân trang, không Joi, `roomId` bị populate thành object, lọc `buildingId` trong bộ nhớ; `PUT` không Joi; trùng kỳ trả `READING_ALREADY_EXISTS` | Theo `API.md` mục 7 (bản 1.2.10): Joi cho cả hai; trả `{ items, total, page, limit }`; item phẳng `roomId`, `roomNumber`, `buildingId`, tiêu thụ + thành tiền, `recordedByName`, `recordedAt`; chặn kỳ tương lai; trùng → `409 DUPLICATE_ENTRY`. FE (SCR-51) đang nhận được cả dạng hiện tại khi đọc | `fee.service.js:51-72, 134-166` |
 | Invoice dùng `items[{name,...}]`, không có `remainingAmount`, `type` thiếu `supplies` | `lineItems[{ feeTypeId, description, quantity, unitPrice, amount }]`, trả thêm `remainingAmount`, thêm `supplies` | `invoice.model.js` |
-| `POST /invoices/generate` trả `{ totalInvoicesCreated, invoices }`, **bỏ qua** sinh viên đã có hóa đơn tháng | Trả `{ created, updated, totalAmount, skipped[{roomId, roomNumber, reason}] }`; **bổ sung dòng điện nước** vào hóa đơn tháng đã có (BR-48) thay vì bỏ qua | `fee.service.js:189-326` |
-| `GET /invoices/:id` không có `payments` | Thêm danh sách thanh toán của hóa đơn | `fee.service.js:363-380` |
+| `POST /invoices/generate` trả `{ totalInvoicesCreated, invoices }`, **bỏ qua** sinh viên đã có hóa đơn tháng | Trả `{ created, updated, totalAmount, eligibleStudents, readyRooms, skipped[{roomId, roomNumber, buildingCode, code, reason}] }`; **bổ sung dòng điện nước** vào hóa đơn tháng đã có (BR-48) thay vì bỏ qua; đánh dấu chỉ số `isInvoiced` | `fee.service.js:189-326` |
+| ❌ Chưa có xem trước lập hàng loạt | **Thêm `GET /invoices/generation-preview`** (`API.md` bản 1.2.11) — cùng cách tính, không ghi. Khai báo route **trước** `/invoices/:id`. Màn SCR-53 khóa nút Lập khi chưa xem trước được | `fee.routes.js:44-53` |
+| `GET /invoices` không có `search`, `buildingId`, `summary`; `studentId` bị populate; không có `remainingAmount`, phòng/tòa | Theo `API.md` bản 1.2.11: trường phẳng `studentName`, `studentCode`, `roomNumber`, `buildingCode`; `summary` của cả tập đã lọc, bỏ hóa đơn hủy | `fee.service.js:328-361` |
+| Hủy hóa đơn: cho hủy cả hóa đơn nhu yếu phẩm, quyết toán; không mở khóa chỉ số khi hủy hết hóa đơn tháng của phòng | `422 INVOICE_NOT_CANCELLABLE` cho `supplies`/`settlement`/đã hủy; mở lại `isInvoiced` của chỉ số khi phòng không còn hóa đơn tháng nào có tiền điện nước | `fee.service.js:398-417` |
+| `GET /invoices/:id` không có `payments`, mã hợp đồng, phòng; vẫn dùng `items[{ name }]` | Theo `API.md` bản 1.2.12: `contractCode`, `note`, `payments[]` (cũ → mới, có `recordedByName`, `bankReference`), `supplyOrder`. FE tạm lấy lịch sử từ `GET /payments?invoiceId=` | `fee.service.js:363-380` |
 | `GET /invoices/overdue` bỏ sót hóa đơn đã ở trạng thái `overdue` | Lọc `status in [unpaid, partial, overdue]` và `dueDate < now` | `fee.service.js:419-427` |
-| `POST /invoices` không kiểm tra `amount = quantity × unitPrice` | Tự tính `amount`, không nhận từ client | `fee.service.js:382-396` |
+| `POST /invoices` không kiểm tra `amount = quantity × unitPrice` | Tự tính `amount`, không nhận từ client; `type` luôn `other`, `billingPeriod` null; hợp đồng phải `active`; từ chối loại phí `rent`, `deposit`, `supplies` (`API.md` bản 1.2.11) | `fee.service.js:382-396` |
 
 ### 3.13. Thanh toán — P1 ⚠️
 
 | Lệch | Cần làm | Trích dẫn |
 |---|---|---|
 | **`GET /payments/vnpay/return` lỗi 500** (đọc `req.body` khi GET) | Đọc tham số từ `req.query` | `payment.controller.js:41` |
-| Trường `paymentMethod`; body offline không có `method` | Theo `DATA-SCHEMA` 3.11: `method`, `gatewayTransactionId`; body offline `{ invoiceId, amount, method: cash\|bank_transfer, note }` | `payment.model.js`, `payment.validation.js:8-18` |
+| Trường `paymentMethod`; body offline không có `method`, `paidAt`, `bankReference`; cho chuyển khoản không cần mã | Theo `API.md` bản 1.2.12 + `DATA-SCHEMA` 3.11 (bản 1.2.1): `method`, `gatewayTransactionId`, **`bankReference`** (bắt buộc khi chuyển khoản, không trùng → `409 DUPLICATE_ENTRY`); body `{ invoiceId, amount, method, paidAt, bankReference?, note? }`; trả `{ payment, invoice, supplyOrder }`; hóa đơn đã hủy → `422 INVOICE_CANCELLED`; `paidAmount` tính lại từ các thanh toán thành công (BR-43) | `payment.model.js`, `payment.validation.js:8-18` |
 | Trạng thái có cả `completed` và `success` | Chỉ `pending`, `success`, `failed`, `expired` | `enums.js:40` |
 | `POST /online/checkout` trả `paymentUrl` | `redirectUrl` như `API.md`; body `{ invoiceId, gateway, amount? }` | `payment.service.js:94-143` |
 | Có 2 bản trùng `/cash`, `/vnpay/create-url`, `/vnpay/verify` | Giữ `/offline`, `/online/checkout`, `/webhook/vnpay` (🗑️ bản trùng) | `payment.routes.js` |
 | `VNP_HASH_SECRET` thiếu thì tạo URL và kiểm chữ ký dùng **2 secret mặc định khác nhau** | Bắt buộc có biến môi trường, không có mặc định | `vnpay.helper.js:43, 81` |
-| `GET /payments` không lọc `type` | Thêm `?type=payment\|refund` | `payment.service.js:257-261` |
+| `GET /payments` không lọc `type`, `search`, `from`/`to`; không có `summary`; `studentId`/`invoiceId` bị populate; giao dịch tại quầy không có `transactionRef` | Theo `API.md` bản 1.2.13: thêm `type`, `search`, `from`, `to`, `summary`; trả trường phẳng (`studentName`, `invoiceCode`…); sinh `transactionRef` cho cả giao dịch tại quầy; sắp xếp theo `paidAt` rồi `createdAt`. FE (SCR-56) tạm chuyển đổi khi đọc | `payment.service.js:243-280` |
+| `POST /payments/:id/reconcile` chưa hỏi lại cổng thanh toán; hết hạn sau **30 phút** (docs BR-64: 15 phút); giao dịch không `pending` vẫn trả 200 | Gọi lại cổng, cập nhật `Payment` + hóa đơn (BR-43), quá 15 phút → `expired` (BR-64); chặn giao dịch tại quầy (`422 PAYMENT_NOT_ONLINE`) và giao dịch không còn `pending` (`422 PAYMENT_NOT_PENDING`); message nêu rõ kết quả vì FE hiện thẳng cho người dùng | `payment.service.js:220-245` |
 | Thanh toán đủ hóa đơn `supplies` → đơn hàng sang `ready` | Làm khi có module nhu yếu phẩm (BR-95) | — |
 
 ### 3.14. Nhu yếu phẩm — P1 ❌
 
-Chưa có. Làm theo **`API.md` mục 11** + **`DATA-SCHEMA` 3.15–3.16** + **`03` BR-90 → BR-97**: `supply-items` (CRUD, `includedInRoomTypes`), `supply-orders` (danh sách + `summary`, chi tiết, giao hàng, hủy), đặt hàng ở cổng SV sinh **1 hóa đơn `supplies`**, giá lấy từ danh mục (không tin giá client gửi), Scheduler hủy đơn quá hạn thanh toán.
+Chưa có (`/api/supply-items`, `/api/supply-orders` đều trả `404`). Màn SCR-71 đã xong và đang chạy bằng dữ liệu giả. Làm theo **`API.md` mục 11** (bản 1.2.14) + **`DATA-SCHEMA` 3.15–3.16** + **`03` BR-90 → BR-97**: `supply-items` (CRUD, `includedInRoomTypes`), `supply-orders` (danh sách + `summary`, chi tiết, giao hàng, hủy), đặt hàng ở cổng SV sinh **1 hóa đơn `supplies`**, giá lấy từ danh mục (không tin giá client gửi), Scheduler hủy đơn quá hạn thanh toán.
 
 ### 3.15. Lưu trú `/residencies` — P2
 
@@ -254,24 +261,195 @@ Chưa có. Làm theo **`API.md` mục 11** + **`DATA-SCHEMA` 3.15–3.16** + **`
 
 ## 5. Thứ tự đề xuất cho backend
 
-**Đợt 1 — mở khóa 16 màn FE đã xong (P0):**
-1. Lỗi chung G1 → G6.
-2. Loại phòng + đổi mô hình phòng/giường (3.5, 3.6) — nền của mọi thứ phía sau.
-3. Đơn đăng ký + cổng SV `my-applications` (3.7, 3.10) — kèm bỏ API tạo lưu trú/hợp đồng tay.
-4. Hợp đồng theo v1.2 (3.8).
-5. Yêu cầu + quyết toán đầy đủ (3.9).
-6. Cổng SV `profile`, `my-residence` (3.10).
-7. Tài khoản `/users` (3.2), Sinh viên bổ sung trường (3.3), Tòa nhà (3.4), Dashboard (3.11).
+**Frontend đã xong toàn bộ 31/31 màn**, nên không còn màn nào phải chờ. Thứ tự dưới đây xếp theo *luồng nghiệp vụ chạy được từ đầu đến cuối*: làm xong mỗi bước là demo thêm được một đoạn.
 
-**Đợt 2 — cho các màn FE sắp làm (P1):** phí & hóa đơn (3.12) → thanh toán (3.13) → nhu yếu phẩm (3.14) → cổng SV hóa đơn, mua sắm, chỗ ở, thanh toán.
+**Bước 1 — nền dữ liệu (P0, chặn mọi thứ phía sau):**
+1. Lỗi chung G1 → G6 (mục 2) — riêng G1 làm hỏng nhiều endpoint có lọc.
+2. Loại phòng + đổi mô hình phòng/giường (3.5, 3.6), kèm `GET /rooms/available`.
+3. Tài khoản `/users` (3.2) và Sinh viên bổ sung trường (3.3), Tòa nhà (3.4).
 
-**Đợt 3 — dọn dẹp (P2):** bỏ API thừa (mục 4), `/residencies` (3.15), `/dashboard/revenue`.
+**Bước 2 — luồng "sinh viên vào ở" (P0):**
+4. Sửa `POST /auth/register` liên kết hồ sơ có sẵn (3.1).
+5. Đơn đăng ký + cổng SV `my-applications` (3.7, 3.10), kèm bỏ API tạo lưu trú/hợp đồng tay.
+6. Hợp đồng theo v1.2 (3.8) + cổng SV `profile`, `my-residence`, `my-contracts`.
+
+**Bước 3 — luồng tiền (P0):**
+7. Loại phí (3.12) → chỉ số điện nước → hóa đơn + `GET /invoices/generation-preview`.
+8. Thanh toán (3.13): thu tại quầy, thanh toán online, đối soát.
+9. Cổng SV `my-invoices`, `my-payments?transactionRef=` — mở khóa màn kết quả thanh toán.
+
+**Bước 4 — phần còn lại (P0/P1):**
+10. Nhu yếu phẩm quản trị (3.14) + cổng SV mua sắm, đơn hàng của tôi.
+11. Yêu cầu gia hạn/trả phòng + quyết toán đầy đủ (3.9).
+12. Dashboard (3.11).
+
+**Bước 5 — dọn dẹp (P2):** bỏ API thừa (mục 4), `/residencies` (3.15), `/dashboard/revenue`.
 
 > Mỗi khi xong một nhóm, báo FE tên nhóm để bật chạy backend thật cho nhóm đó và chạy lại checklist nghiệm thu tương ứng trong `15-CHECKLIST-NGHIEM-THU-FE.md`.
 
 ---
 
-## 6. Cần chốt giữa hai bên
+## 6. Phần thêm sau bản bàn giao đầu (API.md v1.2.8 → v1.2.18)
+
+Bản bàn giao đầu dừng ở `API.md` **v1.2.8**. Từ đó frontend làm xong **15 màn còn lại**, nên `API.md` có thêm 10 bản nhỏ. Bảng này gom đúng phần **mới so với bản các bạn đang cầm**; chi tiết định dạng nằm ở mục tương ứng trong `API.md`.
+
+| `API.md` | Màn FE | Endpoint liên quan | Backend cần thêm / sửa |
+|---|---|---|---|
+| **1.2.9** | SCR-82 Danh mục loại phí | `GET/POST/PUT /fee-types` | `?includeInactive=true`; trả `isSystem`; đổi sang `defaultAmount`, `isRecurring`, mã chữ thường; chặn ngừng dùng 6 loại hệ thống (`422 FEE_TYPE_REQUIRED`) |
+| **1.2.10** | SCR-51 Chỉ số điện nước | `GET/POST/PUT /utility-readings` | Phân trang `{ items, total, page, limit }`; item phẳng (`roomId` không populate) + tiêu thụ + thành tiền + `recordedByName`, `recordedAt`; lọc `roomId`; chặn kỳ tương lai; trùng kỳ → `409 DUPLICATE_ENTRY`; `PUT` giữ đơn giá đã chốt |
+| **1.2.11** | SCR-52, SCR-53 Hóa đơn + lập hàng loạt | `GET/POST /invoices`, `POST /invoices/generate`, **`GET /invoices/generation-preview`**, `PATCH /invoices/:id/cancel` | Danh sách: lọc `search`/`buildingId`, trường phẳng, `summary`. **Thêm endpoint xem trước** (GET, không ghi) trả cùng dạng với generate + `eligibleStudents`, `readyRooms`, `skipped[].code`. Hóa đơn lẻ: `type: other`, `billingPeriod: null`, chặn loại phí `rent`/`deposit`/`supplies`. Hủy: `422 INVOICE_NOT_CANCELLABLE`, mở khóa lại chỉ số khi phòng không còn hóa đơn tháng |
+| **1.2.12** | SCR-54, SCR-55 Chi tiết hóa đơn + thu tiền | `GET /invoices/:id`, `POST /payments/offline` | Chi tiết kèm `contractCode`, `note`, `payments[]` (có `recordedByName`, `bankReference`), `supplyOrder`. Thu tiền quầy: body `{ invoiceId, amount, method, paidAt, bankReference?, note? }`, trả `{ payment, invoice, supplyOrder }`; **`bankReference` bắt buộc khi chuyển khoản, không trùng**; hóa đơn đã hủy → `422 INVOICE_CANCELLED`. Kèm `DATA-SCHEMA` 1.2.1: thêm trường `Payment.bankReference` |
+| **1.2.13** | SCR-56 Lịch sử thanh toán | `GET /payments`, `POST /payments/:id/reconcile` | Danh sách: `search`, `type`, `from`, `to`, `summary`, trường phẳng, sinh `transactionRef` cho cả giao dịch tại quầy. Đối soát: hỏi lại cổng thật, cập nhật hóa đơn (BR-43), quá **15 phút** → `expired` (hiện backend để 30 phút), chặn giao dịch tại quầy (`422 PAYMENT_NOT_ONLINE`) và giao dịch không còn `pending` (`422 PAYMENT_NOT_PENDING`) |
+| **1.2.14** | SCR-71 Nhu yếu phẩm (quản trị) | `/supply-items`, `/supply-orders` | **Toàn bộ module còn thiếu.** Đơn hàng: lọc `from`/`to`, `summary` đủ 6 số đếm, trường phẳng `roomCode`, `deliveredByName`; chi tiết kèm `invoice`; hủy cần `cancelReason` ≥ 5 ký tự và hủy luôn hóa đơn |
+| **1.2.15** | SCR-63, SCR-69 Chỗ ở & hồ sơ | `GET /portal/profile`, `GET /portal/my-contracts` | Hồ sơ đủ `dob`, `faculty`, `className`, `phone`, `emergencyContact`. `my-contracts` trả cả hợp đồng cũ kèm `terminationReason` để dựng lịch sử lưu trú (FR-39) |
+| **1.2.16** | SCR-64, SCR-65 Hóa đơn SV + kết quả thanh toán | `GET /portal/my-invoices(/:id)`, `GET /portal/my-payments?transactionRef=` | Hóa đơn của sinh viên kèm `lineItems`, `remainingAmount`, `payments`. **Thêm lọc `transactionRef`** để màn kết quả hỏi lại giao dịch (tối đa 5 lần, cách 2 giây). Mô tả dòng điện nước giữ hậu tố `(90 kWh, chia đều 4 người)` |
+| **1.2.17** | SCR-67, SCR-68 Mua sắm + đơn hàng | `/portal/supply-items`, `/portal/my-supply-orders` | Cửa hàng lọc sẵn món đã cấp sẵn theo loại phòng và món ngừng bán. Đặt hàng chỉ nhận `{ supplyItemId, quantity }` (1–5), trả kèm `invoice` để thanh toán ngay. Sinh viên hủy đơn không cần body, hủy luôn hóa đơn |
+| **1.2.18** | SCR-02 Đăng ký tài khoản | `POST /auth/register` | **Sửa nghiệp vụ:** phải **liên kết hồ sơ sinh viên có sẵn**, không tạo hồ sơ mới (FR-80/81). Thêm `422 STUDENT_NOT_FOUND`, `422 STUDENT_INFO_MISMATCH`, `409 STUDENT_ALREADY_HAS_ACCOUNT`; mật khẩu ≥ 8 ký tự có chữ và số |
+
+**Hai endpoint hoàn toàn mới** (chưa có trong bản 1.2.8): `GET /api/invoices/generation-preview` và bộ lọc `GET /api/portal/my-payments?transactionRef=`.
+
+---
+
+## 7. Bảng đối chiếu toàn bộ endpoint frontend đang gọi
+
+**82 endpoint** frontend gọi khi chạy đủ 31 màn, cộng 4 dòng liên quan (cổng thanh toán gọi, hoặc backend đang có mà frontend không dùng) — tổng **86 dòng**. Cột "Backend" là hiện trạng repo `BE_QLKTX` ngày 16/09/2026.
+
+### 7.1. Auth & tài khoản
+
+| Method · Endpoint | Màn FE | Backend | Ưu tiên |
+|---|---|---|---|
+| `POST /auth/login` | SCR-01 | ✅ | — |
+| `POST /auth/logout` | mọi màn | ✅ | — |
+| `GET /auth/me` | mọi màn | ✅ | — |
+| `PATCH /auth/change-password` | SCR-03 | ✅ (luật mật khẩu G6) | P2 |
+| `POST /auth/register` | SCR-02 | ⚠️ **sai nghiệp vụ** — tạo hồ sơ mới thay vì liên kết | **P0** |
+| `GET /users` | SCR-81 | ❌ | **P0** |
+| `POST /users` | SCR-81 | ❌ | **P0** |
+| `PUT /users/:id` | SCR-81 | ❌ | **P0** |
+| `PATCH /users/:id/status` | SCR-81 | ❌ | **P0** |
+| `POST /users/:id/reset-password` | SCR-81 | ✅ | — |
+
+### 7.2. Sinh viên
+
+| Method · Endpoint | Màn FE | Backend | Ưu tiên |
+|---|---|---|---|
+| `GET /students` | SCR-11, SCR-81 | ⚠️ thiếu `residence`, `totalDebt`, `hasAccount`, lọc `faculty` | P0 |
+| `GET /students/:id` | SCR-11 | ✅ | — |
+| `POST /students` · `PUT /students/:id` | SCR-11 | ✅ (mã lỗi trùng G5) | P2 |
+| `PATCH /students/:id/deactivate` | SCR-11 | ⚠️ còn kiểm tra hợp đồng `pending` (v1.2 đã bỏ) | P2 |
+
+### 7.3. Cơ sở vật chất
+
+| Method · Endpoint | Màn FE | Backend | Ưu tiên |
+|---|---|---|---|
+| `GET /buildings` | SCR-21, 23, 32, 51, 52 | ⚠️ thiếu `includeInactive`, `maintenanceBeds` | P0 |
+| `POST /buildings` · `PUT /buildings/:id` | SCR-21 | ⚠️ thiếu chặn ngừng hoạt động khi còn người ở | P0 |
+| `GET /room-types` | SCR-22, 23, 62, 71, 10 | ❌ | **P0** |
+| `POST /room-types` · `PUT /room-types/:id` | SCR-22 | ❌ | **P0** |
+| `GET /rooms` | SCR-23, 31, 51 | ⚠️ mô hình v1.1, thiếu `roomTypeId`, `floor`, `maintenanceBeds` | **P0** |
+| `GET /rooms/:id` | SCR-23 | ⚠️ giường thiếu `occupant`, `note` | P0 |
+| `GET /rooms/available` | SCR-31, 62 | ❌ | **P0** |
+| `POST /rooms` · `PUT /rooms/:id` | SCR-23 | ⚠️ chưa tự sinh giường, còn `pricePerBed` | **P0** |
+| `PATCH /beds/:id/status` | SCR-23 | ⚠️ chưa nhận `note`, sai mã lỗi | P0 |
+
+### 7.4. Đơn đăng ký · lưu trú · hợp đồng
+
+| Method · Endpoint | Màn FE | Backend | Ưu tiên |
+|---|---|---|---|
+| `GET /applications` · `/:id` | SCR-31 | ❌ | **P0** |
+| `POST /applications` | SCR-31 | ❌ | **P0** |
+| `PATCH /applications/:id/approve` | SCR-31 | ❌ — gán giường nguyên tử + 2 hóa đơn (BR-36) | **P0** |
+| `PATCH /applications/:id/reject` | SCR-31 | ❌ | **P0** |
+| `GET /residencies` | *(chưa màn nào dùng)* | ✅ | — |
+| `PATCH /residencies/:id/close` | *(không dùng)* | 🗑️ nên bỏ | P2 |
+| `GET /contracts` | SCR-32 | ⚠️ thiếu lọc, `summary`, trường phẳng | P0 |
+| `GET /contracts/:id` | SCR-32 | ⚠️ thiếu `invoices`, `history`, `pendingRequests` | P0 |
+| `GET /contracts/expiring` | SCR-32, SCR-10 | ⚠️ hỏng vì lỗi chung G1 | P0 |
+| `PUT /contracts/:id` | SCR-32 | ⚠️ chỉ nên cho sửa `terms` | P1 |
+| `PATCH /contracts/:id/terminate` | SCR-32 | ⚠️ không đọc body, không quyết toán | P0 |
+
+### 7.5. Yêu cầu gia hạn / trả phòng
+
+| Method · Endpoint | Màn FE | Backend | Ưu tiên |
+|---|---|---|---|
+| `GET /requests` | SCR-41 | ⚠️ thiếu `search`, `summary`, `requestCode` | P0 |
+| `GET /requests/:id` | SCR-41 | ⚠️ thiếu `settlementPreview`, `checklist`, `renewalPreview` | **P0** |
+| `PATCH /requests/:id/approve` | SCR-41 | ⚠️ thiếu tiền phòng kỳ dở, hủy đơn nhu yếu phẩm, `refundMethod` | **P0** |
+| `PATCH /requests/:id/reject` | SCR-41 | ⚠️ | P1 |
+
+### 7.6. Phí · chỉ số · hóa đơn
+
+| Method · Endpoint | Màn FE | Backend | Ưu tiên |
+|---|---|---|---|
+| `GET /fee-types` | SCR-82, 51 | ⚠️ tên trường v1.1, thiếu `includeInactive`, `isSystem` | P0 |
+| `POST /fee-types` · `PUT /fee-types/:id` | SCR-82 | ⚠️ | P0 |
+| `GET /utility-readings` | SCR-51 | ⚠️ không phân trang, `roomId` bị populate | P0 |
+| `POST /utility-readings` · `PUT /:id` | SCR-51 | ⚠️ thiếu Joi, chưa chặn kỳ tương lai | P0 |
+| `GET /invoices` | SCR-52 | ⚠️ thiếu `search`, `buildingId`, `summary`, `remainingAmount` | P0 |
+| `GET /invoices/:id` | SCR-54 | ⚠️ thiếu `payments`, `contractCode`, dùng `items` | P0 |
+| `POST /invoices` | SCR-52 | ⚠️ chưa tự tính `amount`, chưa chặn loại phí | P1 |
+| `POST /invoices/generate` | SCR-53 | ⚠️ bỏ qua sinh viên đã có hóa đơn (mất tiền điện nước — BR-48) | **P0** |
+| `GET /invoices/generation-preview` | SCR-53 | ❌ **endpoint mới** | **P0** |
+| `PATCH /invoices/:id/cancel` | SCR-52, 54 | ⚠️ thiếu chặn loại `supplies`/`settlement`, chưa mở khóa chỉ số | P1 |
+
+### 7.7. Thanh toán
+
+| Method · Endpoint | Màn FE | Backend | Ưu tiên |
+|---|---|---|---|
+| `GET /payments` | SCR-56, SCR-54 | ⚠️ thiếu `search`/`type`/`from`/`to`/`summary`, populate object | P0 |
+| `POST /payments/offline` | SCR-55 | ⚠️ tên trường khác, thiếu `paidAt`, `bankReference` | **P0** |
+| `POST /payments/online/checkout` | SCR-64 | ⚠️ trả `paymentUrl` thay vì `redirectUrl` | P0 |
+| `POST /payments/:id/reconcile` | SCR-56 | ⚠️ chưa hỏi cổng, hết hạn 30 phút thay vì 15 | P1 |
+| `POST /payments/webhook/vnpay` | *(cổng gọi)* | ✅ — cần cho SCR-65 chạy thật | P0 |
+| `GET /payments/vnpay/return` | *(cổng gọi)* | ⚠️ **lỗi 500** (đọc `req.body` khi GET) | P1 |
+
+### 7.8. Nhu yếu phẩm (quản trị)
+
+| Method · Endpoint | Màn FE | Backend | Ưu tiên |
+|---|---|---|---|
+| `GET /supply-items` · `POST` · `PUT /:id` | SCR-71 | ❌ | **P0** |
+| `GET /supply-orders` · `/:id` | SCR-71 | ❌ | **P0** |
+| `PATCH /supply-orders/:id/deliver` | SCR-71 | ❌ | **P0** |
+| `PATCH /supply-orders/:id/cancel` | SCR-71 | ❌ | **P0** |
+
+### 7.9. Cổng sinh viên
+
+| Method · Endpoint | Màn FE | Backend | Ưu tiên |
+|---|---|---|---|
+| `GET /portal/profile` | SCR-61, 62, 69 | ❌ | **P0** |
+| `GET /portal/my-residence` | SCR-61, 63, 66, 69 | ❌ | **P0** |
+| `GET /portal/my-contracts` | SCR-63 | ❌ | **P0** |
+| `GET /portal/my-invoices` · `/:id` | SCR-61, 64 | ❌ | **P0** |
+| `GET /portal/my-payments` *(+`?transactionRef=`)* | SCR-65 | ❌ | **P0** |
+| `GET /portal/my-requests` · `POST` · `DELETE /:id` | SCR-66 | ⚠️ đang dùng chung router với `/api/requests` (lộ cả route duyệt) | P0 |
+| `GET /portal/my-applications` · `POST` · `DELETE /:id` | SCR-61, 62 | ❌ | **P0** |
+| `GET /portal/supply-items` | SCR-61, 67 | ❌ | **P0** |
+| `GET /portal/my-supply-orders` · `POST` · `PATCH /:id/cancel` | SCR-67, 68 | ❌ | **P0** |
+
+### 7.10. Dashboard
+
+| Method · Endpoint | Màn FE | Backend | Ưu tiên |
+|---|---|---|---|
+| `GET /dashboard/summary` | SCR-10 | ⚠️ tên trường khác, tỷ lệ lấp đầy tính sai | P0 |
+| `GET /dashboard/occupancy` | SCR-10 | ⚠️ tỷ lệ tính sai, `gender` thừa | P0 |
+
+### 7.11. Tổng kết số lượng
+
+| Trạng thái | Số endpoint | Ghi chú |
+|---|---|---|
+| ✅ Dùng được ngay | 10 | Đăng nhập/đổi mật khẩu, sinh viên, lưu trú, webhook VNPay |
+| ⚠️ Có nhưng lệch | 41 | Phần lớn chỉ cần đổi tên trường / bổ sung trường, không phải viết lại |
+| ❌ Chưa có | 34 | Loại phòng (3), đơn đăng ký (5), tài khoản (4), phòng trống + xem trước hóa đơn (2), nhu yếu phẩm (7), cổng sinh viên (13) |
+| 🗑️ Nên bỏ | 1 | `PATCH /residencies/:id/close` |
+| **Tổng** | **86** | Trong đó 82 endpoint frontend gọi trực tiếp |
+
+**34 endpoint còn thiếu chiếm 11/31 màn** (Loại phòng, Đơn đăng ký, Tài khoản, Nhu yếu phẩm và toàn bộ 8 màn cổng sinh viên trừ Yêu cầu của tôi) — đây là phần quyết định demo có chạy đủ luồng hay không.
+
+> Frontend đã chạy được phần **xem** với backend thật ở: Đăng nhập, Dashboard, Tòa nhà, Loại phí, Chỉ số điện nước, Hóa đơn (danh sách + chi tiết), Thanh toán. Các màn còn lại đang chạy bằng dữ liệu giả, bật lại bằng một biến môi trường khi backend sẵn sàng.
+
+---
+
+## 8. Cần chốt giữa hai bên
 
 | # | Câu hỏi | Đề xuất của FE |
 |---|---|---|
@@ -286,4 +464,15 @@ Chưa có. Làm theo **`API.md` mục 11** + **`DATA-SCHEMA` 3.15–3.16** + **`
 
 | Phiên bản | Ngày | Người | Nội dung |
 |---|---|---|---|
+| 1.11 | 16/09/2026 | FE Lead | Cập nhật mục 0, 1 theo hiện trạng FE đã xong. Viết lại **mục 5** theo luồng nghiệp vụ (FE đã xong 31/31 màn). Thêm **mục 6** (đợt 2: phần thêm sau bản v1.2.8) và **mục 7** (bảng đối chiếu toàn bộ 82 endpoint frontend gọi kèm hiện trạng backend) |
+| 1.10 | 16/09/2026 | FE Lead | Đăng ký tài khoản sinh viên (3.1): `register` phải liên kết hồ sơ có sẵn (FR-80/81), backend đang tạo hồ sơ mới. **FE đã xong toàn bộ 31 màn** |
+| 1.9 | 16/09/2026 | FE Lead | Cổng SV (3.10): mua sắm + đơn hàng của tôi (SCR-67/68) đã xong |
+| 1.8 | 16/09/2026 | FE Lead | Cổng SV (3.10): hóa đơn + kết quả thanh toán (SCR-64/65) đã xong, cần `my-invoices`, `my-payments?transactionRef=` |
+| 1.7 | 16/09/2026 | FE Lead | Cổng SV (3.10): `profile` và `my-contracts` cho 2 màn SCR-63, SCR-69 đã xong |
+| 1.6 | 16/09/2026 | FE Lead | Nhu yếu phẩm (3.14): định dạng cho màn quản trị SCR-71 đã làm xong |
+| 1.5 | 16/09/2026 | FE Lead | Lịch sử thanh toán (3.13): danh sách có `summary`, lọc, đối soát giao dịch treo |
+| 1.4 | 15/09/2026 | FE Lead | Chi tiết hóa đơn (3.12) + ghi nhận thanh toán tại quầy (3.13): `payments[]` trong chi tiết, `bankReference`, `paidAt`, `INVOICE_CANCELLED` |
+| 1.3 | 15/09/2026 | FE Lead | Hóa đơn (3.12): xem trước lập hàng loạt, danh sách + `summary`, hóa đơn lẻ, luật hủy |
+| 1.2 | 15/09/2026 | FE Lead | Chỉ số điện nước (3.12): định dạng danh sách cho màn SCR-51 |
+| 1.1 | 15/09/2026 | FE Lead | Phí (3.12): cập nhật dữ liệu loại phí đang có trên DB chung, thêm yêu cầu cho màn SCR-82 (`includeInactive`, `isSystem`, `FEE_TYPE_REQUIRED`) |
 | 1.0 | 15/09/2026 | FE Lead | Bản đầu — đối chiếu `API.md` v1.2.8 với `BE_QLKTX` commit `ab7db8c` |

@@ -169,6 +169,8 @@ const getMyContracts = async (studentId) => {
       buildingName: building?.name || '',
       roomTypeName: roomType?.name || '',
       tier: roomType?.tier || 'standard',
+      terminationReason: c.terminationReason || null,
+      terminatedAt: c.terminatedAt || null,
     };
   });
 };
@@ -191,7 +193,7 @@ const getMyInvoices = async (studentId, query = {}) => {
     billingPeriod: inv.billingPeriod,
     totalAmount: inv.totalAmount,
     paidAmount: inv.paidAmount || 0,
-    remainingAmount: inv.totalAmount - (inv.paidAmount || 0),
+    remainingAmount: Math.max(0, inv.totalAmount - (inv.paidAmount || 0)),
     dueDate: inv.dueDate.toISOString().slice(0, 10),
     status: inv.status,
     lineItems: inv.lineItems,
@@ -213,9 +215,9 @@ const getMyInvoiceById = async (studentId, invoiceId) => {
     throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn');
   }
 
-  const payments = await Payment.find({ invoiceId: invoice._id, status: 'success' }).sort({
-    paidAt: -1,
-  });
+  const payments = await Payment.find({ invoiceId: invoice._id, status: 'success' })
+    .populate('recordedBy', 'fullName')
+    .sort({ paidAt: -1 });
 
   return {
     id: invoice._id.toString(),
@@ -224,7 +226,7 @@ const getMyInvoiceById = async (studentId, invoiceId) => {
     billingPeriod: invoice.billingPeriod,
     totalAmount: invoice.totalAmount,
     paidAmount: invoice.paidAmount || 0,
-    remainingAmount: invoice.totalAmount - (invoice.paidAmount || 0),
+    remainingAmount: Math.max(0, invoice.totalAmount - (invoice.paidAmount || 0)),
     dueDate: invoice.dueDate.toISOString().slice(0, 10),
     status: invoice.status,
     lineItems: invoice.lineItems,
@@ -232,30 +234,47 @@ const getMyInvoiceById = async (studentId, invoiceId) => {
       id: p._id.toString(),
       transactionRef: p.transactionRef,
       amount: p.amount,
+      type: p.type,
       method: p.method,
+      status: p.status,
       paidAt: p.paidAt,
+      recordedByName: p.recordedBy?.fullName || 'Ban quản lý',
+      bankReference: p.bankReference || null,
+      gatewayTransactionId: p.gatewayTransactionId || null,
+      note: p.note || '',
     })),
     createdAt: invoice.createdAt,
   };
 };
 
 /**
- * Lấy lịch sử thanh toán của sinh viên
+ * Lấy lịch sử thanh toán của sinh viên (API.md §10 v1.2.16 - SCR-65)
+ * Hỗ trợ lọc theo ?transactionRef= để polling kiểm tra kết quả giao dịch.
  * GET /api/portal/my-payments
  */
-const getMyPayments = async (studentId) => {
-  const payments = await Payment.find({ studentId }).populate('invoiceId', 'invoiceCode type').sort({ createdAt: -1 });
+const getMyPayments = async (studentId, query = {}) => {
+  const filter = { studentId };
+  if (query.transactionRef && query.transactionRef.trim()) {
+    filter.transactionRef = query.transactionRef.trim();
+  }
+
+  const payments = await Payment.find(filter)
+    .populate('invoiceId', 'invoiceCode type')
+    .sort({ createdAt: -1 });
 
   return payments.map((p) => ({
     id: p._id.toString(),
     transactionRef: p.transactionRef,
+    invoiceId: p.invoiceId?._id ? p.invoiceId._id.toString() : (p.invoiceId ? p.invoiceId.toString() : null),
     invoiceCode: p.invoiceId?.invoiceCode || '',
-    type: p.type,
+    invoiceType: p.invoiceId?.type || '',
     amount: p.amount,
+    type: p.type,
     method: p.method,
     status: p.status,
-    paidAt: p.paidAt,
+    gatewayTransactionId: p.gatewayTransactionId || null,
     createdAt: p.createdAt,
+    paidAt: p.paidAt,
   }));
 };
 

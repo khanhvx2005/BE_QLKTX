@@ -33,7 +33,8 @@ const getMyInvoiceById = asyncHandler(async (req, res) => {
 });
 
 const getMyPayments = asyncHandler(async (req, res) => {
-  const result = await portalService.getMyPayments(req.user.studentId);
+  const query = req.validatedQuery || req.query;
+  const result = await portalService.getMyPayments(req.user.studentId, query);
   return ApiResponse.success(res, result, 'Lấy lịch sử thanh toán thành công');
 });
 

@@ -1,24 +1,30 @@
 /**
  * Service xử lý logic nghiệp vụ cho Module Supplies (Nhu yếu phẩm).
- * Tuân thủ theo API.md §11, 03-PHAN-TICH-NGHIEP-VU.md BR-90 → BR-97 và DATA-SCHEMA.md §3.15–3.16.
+ * Tuân thủ theo API.md §11 (v1.2.14, v1.2.17), 03-PHAN-TICH-NGHIEP-VU.md BR-90 → BR-97 và DATA-SCHEMA.md §3.15–3.16.
  */
 
+const mongoose = require('mongoose');
 const SupplyItem = require('./supply-item.model');
 const SupplyOrder = require('./supply-order.model');
 const Contract = require('../contracts/contract.model');
 const Invoice = require('../fees/invoice.model');
 const FeeType = require('../fees/fee-type.model');
+const Student = require('../students/student.model');
+const Room = require('../rooms/room.model');
 const ApiError = require('../../core/errors/api-error');
 const { generateOrderCode, generateInvoiceCode } = require('../../core/utils/code-generator');
 
 /**
- * Lấy danh mục vật phẩm nhu yếu phẩm.
+ * Lấy danh mục vật phẩm nhu yếu phẩm (API.md §11 v1.2.14).
+ * Kèm includedRoomTypeNames để frontend hiển thị tag loại phòng cấp sẵn.
  */
 const getSupplyItems = async (query = {}) => {
   const filter = {};
   if (query.category) filter.category = query.category;
-  if (query.isActive !== undefined) filter.isActive = query.isActive;
-  if (query.search) {
+  if (query.isActive !== undefined) {
+    filter.isActive = query.isActive === true || query.isActive === 'true';
+  }
+  if (query.search && query.search.trim()) {
     filter.name = { $regex: query.search.trim(), $options: 'i' };
   }
 
@@ -35,14 +41,32 @@ const getSupplyItems = async (query = {}) => {
     SupplyItem.countDocuments(filter),
   ]);
 
-  return { items, total, page, limit };
+  const formattedItems = items.map((item) => {
+    const includedRoomTypeNames = (item.includedInRoomTypes || []).map((rt) => rt.name || '');
+    return {
+      id: item._id.toString(),
+      name: item.name,
+      category: item.category,
+      unit: item.unit,
+      price: item.price,
+      description: item.description || '',
+      imageUrl: item.imageUrl || '',
+      includedInRoomTypes: (item.includedInRoomTypes || []).map((rt) => rt._id.toString()),
+      includedRoomTypeNames,
+      isActive: item.isActive,
+      createdAt: item.createdAt,
+    };
+  });
+
+  return { items: formattedItems, total, page, limit };
 };
 
 /**
  * Tạo mới vật phẩm nhu yếu phẩm (Admin, Staff).
  */
 const createSupplyItem = async (data) => {
-  return await SupplyItem.create(data);
+  const item = await SupplyItem.create(data);
+  return item;
 };
 
 /**
@@ -60,8 +84,9 @@ const updateSupplyItem = async (id, data) => {
 };
 
 /**
- * Lấy danh sách đơn đặt hàng nhu yếu phẩm (Admin, Staff, Viewer).
- * Bổ sung thống kê summary: pendingPayment, ready, deliveredToday.
+ * Lấy danh sách đơn đặt hàng nhu yếu phẩm cho cán bộ (API.md §11 v1.2.14 - SCR-71).
+ * Bổ sung thống kê summary đủ 6 số đếm: { all, pendingPayment, ready, delivered, cancelled, deliveredToday }.
+ * Trả dữ liệu phẳng: studentName, studentCode, roomCode, buildingName, deliveredByName...
  */
 const getSupplyOrders = async (query = {}) => {
   const page = parseInt(query.page, 10) || 1;
@@ -71,105 +96,134 @@ const getSupplyOrders = async (query = {}) => {
   const filter = {};
   if (query.status) filter.status = query.status;
 
-  if (query.from || query.to) {
-    filter.createdAt = {};
-    if (query.from) filter.createdAt.$gte = new Date(query.from);
-    if (query.to) filter.createdAt.$lte = new Date(query.to);
-  }
+  let allOrders = await SupplyOrder.find(filter)
+    .populate('studentId', 'studentCode fullName phone className')
+    .populate({
+      path: 'contractId',
+      populate: {
+        path: 'bedId',
+        populate: {
+          path: 'roomId',
+          populate: { path: 'buildingId' },
+        },
+      },
+    })
+    .populate('deliveredBy', 'fullName email')
+    .sort({ createdAt: -1 });
 
-  // Tìm kiếm theo mã đơn hoặc thông tin sinh viên
+  // Lọc theo search (orderCode, studentCode, studentName, roomNumber)
   if (query.search && query.search.trim()) {
-    const searchRegex = { $regex: query.search.trim(), $options: 'i' };
-    const Student = require('../students/student.model');
-    const matchedStudents = await Student.find({
-      $or: [{ fullName: searchRegex }, { studentCode: searchRegex }],
-    }).select('_id');
-
-    const studentIds = matchedStudents.map((s) => s._id);
-
-    filter.$or = [
-      { orderCode: searchRegex },
-      { studentId: { $in: studentIds } },
-    ];
+    const s = query.search.trim().toLowerCase();
+    allOrders = allOrders.filter((order) => {
+      const oCode = (order.orderCode || '').toLowerCase();
+      const sCode = (order.studentId?.studentCode || '').toLowerCase();
+      const sName = (order.studentId?.fullName || '').toLowerCase();
+      const roomNum = (order.contractId?.bedId?.roomId?.roomNumber || '').toLowerCase();
+      const bed = (order.contractId?.bedId?.bedCode || '').toLowerCase();
+      return oCode.includes(s) || sCode.includes(s) || sName.includes(s) || roomNum.includes(s) || bed.includes(s);
+    });
   }
 
+  // Lọc theo from / to
+  if (query.from) {
+    const fromDate = new Date(query.from);
+    allOrders = allOrders.filter((o) => new Date(o.createdAt) >= fromDate);
+  }
+  if (query.to) {
+    const toDate = new Date(query.to);
+    toDate.setHours(23, 59, 59, 999);
+    allOrders = allOrders.filter((o) => new Date(o.createdAt) <= toDate);
+  }
+
+  // Tính summary đủ 6 trạng thái
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
   const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
-  const [items, total, pendingPaymentCount, readyCount, deliveredTodayCount] = await Promise.all([
-    SupplyOrder.find(filter)
-      .populate('studentId', 'studentCode fullName phone className')
-      .populate('contractId', 'contractCode bedCode')
-      .populate('invoiceId', 'invoiceCode totalAmount paidAmount status dueDate')
-      .populate('deliveredBy', 'fullName email')
-      .sort('-createdAt')
-      .skip(skip)
-      .limit(limit),
-    SupplyOrder.countDocuments(filter),
-    SupplyOrder.countDocuments({ status: 'pending_payment' }),
-    SupplyOrder.countDocuments({ status: 'ready' }),
-    SupplyOrder.countDocuments({
-      status: 'delivered',
-      deliveredAt: { $gte: todayStart, $lte: todayEnd },
-    }),
-  ]);
+  // Tra cứu toàn bộ bảng để có summary chính xác
+  const [allCount, pendingPaymentCount, readyCount, deliveredCount, cancelledCount, deliveredTodayCount] =
+    await Promise.all([
+      SupplyOrder.countDocuments({}),
+      SupplyOrder.countDocuments({ status: 'pending_payment' }),
+      SupplyOrder.countDocuments({ status: 'ready' }),
+      SupplyOrder.countDocuments({ status: 'delivered' }),
+      SupplyOrder.countDocuments({ status: 'cancelled' }),
+      SupplyOrder.countDocuments({
+        status: 'delivered',
+        deliveredAt: { $gte: todayStart, $lte: todayEnd },
+      }),
+    ]);
 
-  // Chuẩn hóa format list item theo API.md §11
-  const formattedItems = items.map((order) => {
-    const doc = order.toObject();
+  const total = allOrders.length;
+  const paginated = allOrders.slice(skip, skip + limit);
+
+  const items = paginated.map((order) => {
+    const contract = order.contractId;
+    const bed = contract?.bedId;
+    const room = bed?.roomId;
+    const building = room?.buildingId;
+
+    const roomCode = room?.roomNumber || (bed?.bedCode ? bed.bedCode.split('-')[0] : '');
+
     return {
-      id: doc._id,
-      orderCode: doc.orderCode,
-      status: doc.status,
-      totalAmount: doc.totalAmount,
-      student: doc.studentId
-        ? {
-            id: doc.studentId._id,
-            studentCode: doc.studentId.studentCode,
-            fullName: doc.studentId.fullName,
-            phone: doc.studentId.phone,
-          }
-        : null,
-      roomNumber: doc.contractId?.bedCode ? doc.contractId.bedCode.split('-')[0] : null,
-      bedCode: doc.contractId?.bedCode || null,
-      items: doc.items.map((i) => ({
+      id: order._id.toString(),
+      orderCode: order.orderCode,
+      studentName: order.studentId?.fullName || '',
+      studentCode: order.studentId?.studentCode || '',
+      roomCode,
+      buildingName: building?.name || '',
+      items: (order.items || []).map((i) => ({
+        supplyItemId: i.supplyItemId?.toString(),
         name: i.name,
+        unitPrice: i.price,
         quantity: i.quantity,
-        price: i.price,
         amount: i.amount,
       })),
-      invoice: doc.invoiceId,
-      deliveredAt: doc.deliveredAt,
-      deliveredBy: doc.deliveredBy,
-      createdAt: doc.createdAt,
+      totalAmount: order.totalAmount,
+      invoiceId: order.invoiceId?.toString() || null,
+      status: order.status,
+      createdAt: order.createdAt,
+      deliveredAt: order.deliveredAt || null,
+      deliveredByName: order.deliveredBy?.fullName || null,
+      cancelledAt: order.cancelledAt || null,
+      cancelReason: order.cancelReason || null,
     };
   });
 
   return {
-    items: formattedItems,
+    items,
     total,
     page,
     limit,
     summary: {
+      all: allCount,
       pendingPayment: pendingPaymentCount,
       ready: readyCount,
+      delivered: deliveredCount,
+      cancelled: cancelledCount,
       deliveredToday: deliveredTodayCount,
     },
   };
 };
 
 /**
- * Chi tiết đơn hàng nhu yếu phẩm.
+ * Chi tiết đơn hàng nhu yếu phẩm (API.md §11 v1.2.14).
+ * Bổ sung invoice: { id, invoiceCode, remainingAmount, dueDate }.
  */
 const getSupplyOrderById = async (id) => {
   const order = await SupplyOrder.findById(id)
     .populate('studentId', 'studentCode fullName phone className email')
     .populate({
       path: 'contractId',
-      populate: { path: 'roomTypeId', select: 'name tier' },
+      populate: {
+        path: 'bedId',
+        populate: {
+          path: 'roomId',
+          populate: { path: 'buildingId' },
+        },
+      },
     })
-    .populate('invoiceId', 'invoiceCode totalAmount paidAmount status dueDate')
+    .populate('invoiceId')
     .populate('deliveredBy', 'fullName email')
     .populate('items.supplyItemId', 'name unit price imageUrl category');
 
@@ -177,11 +231,52 @@ const getSupplyOrderById = async (id) => {
     throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy đơn hàng nhu yếu phẩm');
   }
 
-  return order;
+  const invoice = order.invoiceId;
+  const contract = order.contractId;
+  const bed = contract?.bedId;
+  const room = bed?.roomId;
+  const building = room?.buildingId;
+
+  return {
+    id: order._id.toString(),
+    orderCode: order.orderCode,
+    studentName: order.studentId?.fullName || '',
+    studentCode: order.studentId?.studentCode || '',
+    roomCode: room?.roomNumber || '',
+    buildingName: building?.name || '',
+    items: (order.items || []).map((i) => ({
+      supplyItemId: i.supplyItemId?._id ? i.supplyItemId._id.toString() : (i.supplyItemId?.toString() || ''),
+      name: i.name,
+      unitPrice: i.price,
+      quantity: i.quantity,
+      amount: i.amount,
+      imageUrl: i.supplyItemId?.imageUrl || '',
+      unit: i.unit,
+    })),
+    totalAmount: order.totalAmount,
+    status: order.status,
+    createdAt: order.createdAt,
+    deliveredAt: order.deliveredAt || null,
+    deliveredByName: order.deliveredBy?.fullName || null,
+    cancelledAt: order.cancelledAt || null,
+    cancelReason: order.cancelReason || null,
+    invoice: invoice
+      ? {
+          id: invoice._id.toString(),
+          invoiceCode: invoice.invoiceCode,
+          totalAmount: invoice.totalAmount,
+          paidAmount: invoice.paidAmount || 0,
+          remainingAmount: Math.max(0, invoice.totalAmount - (invoice.paidAmount || 0)),
+          dueDate: invoice.dueDate ? invoice.dueDate.toISOString().slice(0, 10) : null,
+          status: invoice.status,
+        }
+      : null,
+  };
 };
 
 /**
- * Bàn giao nhu yếu phẩm cho sinh viên (ready → delivered).
+ * Bàn giao nhu yếu phẩm cho sinh viên (ready → delivered) (API.md §11 v1.2.14).
+ * Lưu người bàn giao và trả về deliveredByName.
  */
 const deliverSupplyOrder = async (id, actorId) => {
   const order = await SupplyOrder.findById(id);
@@ -193,16 +288,26 @@ const deliverSupplyOrder = async (id, actorId) => {
     throw new ApiError(422, 'INVALID_ORDER_STATUS', 'Chỉ giao được đơn đang chờ nhận hàng');
   }
 
+  const User = mongoose.models.User || require('../auth/user.model');
+  const actor = actorId ? await User.findById(actorId).select('fullName') : null;
+
   order.status = 'delivered';
   order.deliveredAt = new Date();
   order.deliveredBy = actorId;
   await order.save();
 
-  return order;
+  return {
+    id: order._id.toString(),
+    orderCode: order.orderCode,
+    status: order.status,
+    deliveredAt: order.deliveredAt,
+    deliveredByName: actor?.fullName || 'Ban quản lý',
+  };
 };
 
 /**
- * Hủy đơn hàng nhu yếu phẩm (pending_payment → cancelled) do Admin/Nhân viên thực hiện.
+ * Hủy đơn hàng nhu yếu phẩm (pending_payment → cancelled) do Admin/Nhân viên thực hiện (API.md §11 v1.2.14).
+ * Yêu cầu lý do hủy >= 5 ký tự và hủy luôn hóa đơn liên kết.
  */
 const cancelSupplyOrder = async (id, cancelReason) => {
   const order = await SupplyOrder.findById(id);
@@ -216,6 +321,7 @@ const cancelSupplyOrder = async (id, cancelReason) => {
 
   order.status = 'cancelled';
   order.cancelReason = cancelReason || 'Ban quản lý hủy đơn hàng';
+  order.cancelledAt = new Date();
   await order.save();
 
   // Hủy kèm hóa đơn supplies tương ứng
@@ -225,10 +331,9 @@ const cancelSupplyOrder = async (id, cancelReason) => {
 };
 
 /**
- * Sinh viên đặt mua nhu yếu phẩm từ Cổng sinh viên (API.md §10 POST /api/portal/my-supply-orders).
+ * Sinh viên đặt mua nhu yếu phẩm từ Cổng sinh viên (API.md §10 v1.2.17 - SCR-67, SCR-68).
  */
 const placeSupplyOrder = async (studentId, requestedItems) => {
-  // 1. Kiểm tra hợp đồng đang hiệu lực
   const contract = await Contract.findOne({ studentId, status: 'active' }).populate({
     path: 'bedId',
     populate: { path: 'roomId' },
@@ -239,7 +344,6 @@ const placeSupplyOrder = async (studentId, requestedItems) => {
 
   const studentRoomTypeId = contract.bedId?.roomId?.roomTypeId?.toString();
 
-  // 2. Kiểm tra danh mục vật phẩm và tính tiền
   const orderItems = [];
   let totalAmount = 0;
 
@@ -253,7 +357,6 @@ const placeSupplyOrder = async (studentId, requestedItems) => {
       );
     }
 
-    // Kiểm tra xem sản phẩm đã có sẵn trong loại phòng của sinh viên chưa
     if (
       studentRoomTypeId &&
       supplyItem.includedInRoomTypes &&
@@ -281,10 +384,8 @@ const placeSupplyOrder = async (studentId, requestedItems) => {
     });
   }
 
-  // 3. Tra cứu FeeType loại 'supplies'
   const suppliesFeeType = await FeeType.findOne({ code: 'supplies' });
 
-  // 4. Sinh hóa đơn supplies
   const orderDate = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const billingPeriod = `${orderDate.getFullYear()}-${pad(orderDate.getMonth() + 1)}`;
@@ -310,7 +411,6 @@ const placeSupplyOrder = async (studentId, requestedItems) => {
     status: 'unpaid',
   });
 
-  // 5. Tạo đơn đặt hàng ở trạng thái pending_payment
   const order = await SupplyOrder.create({
     orderCode: generateOrderCode(),
     studentId,
@@ -322,22 +422,23 @@ const placeSupplyOrder = async (studentId, requestedItems) => {
   });
 
   return {
-    id: order._id,
+    id: order._id.toString(),
     orderCode: order.orderCode,
     status: order.status,
     totalAmount: order.totalAmount,
     invoice: {
-      id: invoice._id,
+      id: invoice._id.toString(),
       invoiceCode: invoice.invoiceCode,
       type: invoice.type,
       totalAmount: invoice.totalAmount,
-      dueDate: invoice.dueDate,
+      dueDate: invoice.dueDate.toISOString().slice(0, 10),
     },
   };
 };
 
 /**
- * Sinh viên tự hủy đơn hàng nhu yếu phẩm khi còn pending_payment (API.md §10 PATCH /api/portal/my-supply-orders/:id/cancel).
+ * Sinh viên tự hủy đơn hàng nhu yếu phẩm khi còn pending_payment (API.md §10 v1.2.17).
+ * Không cần body lý do, hủy luôn cả hóa đơn đi kèm.
  */
 const cancelStudentSupplyOrder = async (orderId, studentId) => {
   const order = await SupplyOrder.findOne({ _id: orderId, studentId });
@@ -350,25 +451,47 @@ const cancelStudentSupplyOrder = async (orderId, studentId) => {
   }
 
   order.status = 'cancelled';
-  order.cancelReason = 'Sinh viên tự hủy trên cổng thông tin';
+  order.cancelReason = 'Sinh viên tự hủy đơn hàng';
+  order.cancelledAt = new Date();
   await order.save();
 
-  // Hủy hóa đơn
+  // Hủy hóa đơn liên kết
   await Invoice.findByIdAndUpdate(order.invoiceId, { status: 'cancelled' });
 
-  return order;
+  return {
+    id: order._id.toString(),
+    orderCode: order.orderCode,
+    status: order.status,
+    message: 'Đã hủy đơn hàng thành công',
+  };
 };
 
 /**
- * Lấy danh sách đơn hàng của sinh viên (Portal).
+ * Lấy danh sách đơn hàng nhu yếu phẩm của sinh viên (Cổng sinh viên)
  */
 const getStudentSupplyOrders = async (studentId, query = {}) => {
   const filter = { studentId };
   if (query.status) filter.status = query.status;
 
-  return await SupplyOrder.find(filter)
-    .populate('invoiceId', 'invoiceCode totalAmount paidAmount status dueDate')
-    .sort('-createdAt');
+  const orders = await SupplyOrder.find(filter).sort({ createdAt: -1 });
+
+  return orders.map((o) => ({
+    id: o._id.toString(),
+    orderCode: o.orderCode,
+    status: o.status,
+    totalAmount: o.totalAmount,
+    invoiceId: o.invoiceId?.toString() || null,
+    items: (o.items || []).map((i) => ({
+      name: i.name,
+      quantity: i.quantity,
+      unitPrice: i.price,
+      amount: i.amount,
+      unit: i.unit,
+    })),
+    cancelReason: o.cancelReason || null,
+    createdAt: o.createdAt,
+    deliveredAt: o.deliveredAt || null,
+  }));
 };
 
 module.exports = {

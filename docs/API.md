@@ -67,7 +67,7 @@ For any endpoint a `student` may call, the backend derives the student identity 
 
 | Method | Endpoint | Roles | Description |
 |---|---|---|---|
-| POST | `/api/auth/register` | public | Student self-registration only (`role` forced to `student` server-side) |
+| POST | `/api/auth/register` | public | Student self-registration — **links to an existing `Student` record**, never creates one (FR-80, FR-81); `role` forced to `student` server-side |
 | POST | `/api/auth/login` | public | Returns JWT + user profile |
 | POST | `/api/auth/logout` | authenticated | Client clears the token |
 | GET | `/api/auth/me` | authenticated | Current user profile |
@@ -77,6 +77,30 @@ For any endpoint a `student` may call, the backend derives the student identity 
 | POST | `/api/users` | admin | Create an account — `{ email, fullName, role, studentId? }`; returns a one-time temporary password *(v1.2.6)* |
 | PUT | `/api/users/:id` | admin | Update `{ email, fullName, role }` *(v1.2.6)* |
 | PATCH | `/api/users/:id/status` | admin | Lock / unlock — `{ isActive }` *(v1.2.6)* |
+
+**POST `/api/auth/register`** *(v1.2.18 — SCR-02)*
+```json
+// request
+{ "studentCode": "SV2026080", "fullName": "Bùi Ngọc Ánh", "email": "ngocanh@sv.edu.vn",
+  "phone": "0912345678", "gender": "female", "password": "••••••••" }
+// response 201 — same shape as login, so the student lands straight in the portal
+{ "code": "OK", "message": "Đăng ký tài khoản thành công",
+  "data": { "token": "eyJhbGciOi…", "expiresIn": 604800,
+            "user": { "id": "665e9a…", "email": "ngocanh@sv.edu.vn", "fullName": "Bùi Ngọc Ánh",
+                      "role": "student", "studentId": "665e3a…", "mustChangePassword": false } } }
+```
+> The account is **attached to the `Student` record the staff already manage** (FR-80). The server must not create a new student profile — a self-registered profile would have no room, no contract and no way to be matched later.
+>
+> Checks, in this order:
+> - `studentCode` not in `Student` → `422 STUDENT_NOT_FOUND`, message telling the student to contact the dormitory office (FR-81).
+> - `fullName` does not match that record (compare ignoring accents, case and extra spaces) → `422 STUDENT_INFO_MISMATCH`.
+> - That student already has a `User` → `409 STUDENT_ALREADY_HAS_ACCOUNT`.
+> - `email` already used → `409 DUPLICATE_ENTRY` with a field error on `email`.
+> - Password: at least 8 characters with letters and digits (BR-81) → `400 VALIDATION_ERROR` on `password`.
+>
+> The screen shows the first three as errors under the **Mã số sinh viên** field, so the student sees which value to fix.
+>
+> **Backend status (16/09/2026):** `register` **creates a new `User` + `Student`** from the form instead of linking to the existing record, so any code can register and the account is never tied to the managed profile. Password rule is min 6 with no character check.
 
 **POST `/api/auth/login`**
 ```json
@@ -407,18 +431,36 @@ Errors: `CONTRACT_NOT_ACTIVE` (422), `VALIDATION_ERROR` with field errors on `re
 
 | Method | Endpoint | Roles | Description |
 |---|---|---|---|
-| GET | `/api/fee-types` | admin, staff, viewer | List fee types |
-| POST | `/api/fee-types` | admin | Create fee type |
-| PUT | `/api/fee-types/:id` | admin | Update unit price |
-| GET | `/api/utility-readings` | admin, staff, viewer | List — `?billingPeriod=2026-10&buildingId=` |
+| GET | `/api/fee-types` | admin, staff, viewer | List fee types — active only by default; `?includeInactive=true` adds inactive ones (SCR-82) |
+| POST | `/api/fee-types` | admin | Create fee type — `{ code, name, unit, defaultAmount, isRecurring }` |
+| PUT | `/api/fee-types/:id` | admin | Update `{ name, unit, defaultAmount, isRecurring, isActive }` — `code` cannot change; no delete endpoint |
+| GET | `/api/utility-readings` | admin, staff, viewer | List — `?billingPeriod=2026-10&buildingId=&roomId=` |
 | POST | `/api/utility-readings` | admin, staff | Enter meter readings for one room/period |
-| PUT | `/api/utility-readings/:id` | admin, staff | Edit — rejected once `isInvoiced: true` |
+| PUT | `/api/utility-readings/:id` | admin, staff | Edit the four readings — keeps the frozen unit prices; rejected once `isInvoiced: true` |
+| GET | `/api/invoices/generation-preview` | admin, staff | Preview a bulk generation — `?billingPeriod=&buildingIds=id1,id2`; **never writes** *(v1.2.11)* |
 | POST | `/api/invoices/generate` | admin, staff | Bulk-generate invoices for a billing period |
-| GET | `/api/invoices` | admin, staff, viewer | List — `?studentId=&status=&billingPeriod=&type=deposit\|monthly\|settlement\|supplies\|other` |
+| GET | `/api/invoices` | admin, staff, viewer | List — `?search=&studentId=&status=&billingPeriod=&buildingId=&type=deposit\|monthly\|settlement\|supplies\|other`, with `summary` |
 | GET | `/api/invoices/:id` | admin, staff, viewer, student (own) | Get one, with line items and payments |
 | POST | `/api/invoices` | admin, staff | Create a one-off invoice manually |
-| PATCH | `/api/invoices/:id/cancel` | admin, staff | Cancel — only if no successful payment exists |
+| PATCH | `/api/invoices/:id/cancel` | admin, staff | Cancel — only if no successful payment exists; not for `supplies`/`settlement` |
 | GET | `/api/invoices/overdue` | admin, staff, viewer | Overdue invoices (dashboard list) |
+
+**GET `/api/fee-types?includeInactive=true`** *(v1.2.9)*
+```json
+{ "code": "OK", "message": "Success",
+  "data": [
+    { "id": "665e2a...", "code": "electricity", "name": "Tiền điện", "unit": "kWh", "defaultAmount": 2500,
+      "isRecurring": true, "isActive": true, "isSystem": true, "updatedAt": "2026-08-01T08:00:00+07:00" },
+    { "id": "665e2f...", "code": "lost_key", "name": "Làm mất chìa khóa", "unit": "chiếc", "defaultAmount": 50000,
+      "isRecurring": false, "isActive": true, "isSystem": false, "updatedAt": "2026-08-20T09:30:00+07:00" }
+  ] }
+```
+> Plain array. `isSystem` is `true` for the six codes the billing flow depends on (`rent`, `electricity`, `water`, `deposit`, `supplies`, `other`).
+> - Create: `code` lowercase `^[a-z][a-z0-9_]{1,29}$`, unique → `409 DUPLICATE_ENTRY` with a field error on `code`. `defaultAmount` is a non-negative integer; for `electricity`/`water` it must be `> 0`.
+> - Update: a system fee type cannot be deactivated → `422 FEE_TYPE_REQUIRED`, and its `isRecurring` is fixed. Changing the electricity/water price only affects readings entered afterwards (BR-52).
+> - For a non-system fee type `defaultAmount` is only the suggested unit price when staff add a manual invoice line; `0` means "type the amount each time".
+>
+> **Backend status (15/09/2026):** returns the v1.1 shape — codes `ROOM_FEE`, `ELECTRICITY`, `WATER`, `DEPOSIT`, fields `unitPrice`/`isMetered`, no `isRecurring`/`isSystem`, active only (ignores `includeInactive`), duplicate code returns `FEE_TYPE_CODE_ALREADY_EXISTS`. The frontend normalises the list (lowercase codes, `ROOM_FEE` → `rent`, `unitPrice` → `defaultAmount`) so the screen reads correctly; writes are not verified against the backend.
 
 **POST `/api/utility-readings`** *(PRD §2.9 A2)*
 ```json
@@ -435,6 +477,25 @@ Errors: `CONTRACT_NOT_ACTIVE` (422), `VALIDATION_ERROR` with field errors on `re
 { "code": "INVALID_METER_READING", "message": "Chỉ số cuối kỳ phải lớn hơn hoặc bằng chỉ số đầu kỳ", "data": null } // 422
 { "code": "READING_ALREADY_INVOICED", "message": "Kỳ này đã lập hóa đơn, không thể sửa chỉ số", "data": null }      // 422
 ```
+
+**GET `/api/utility-readings?billingPeriod=2026-10&buildingId=665f0a...`** *(v1.2.10 — SCR-51)*
+```json
+{ "code": "OK", "message": "Success",
+  "data": { "items": [
+    { "id": "665f8a...", "roomId": "665f2a...", "roomNumber": "203", "buildingId": "665f0a...", "buildingName": "Tòa B",
+      "billingPeriod": "2026-10",
+      "electricityStart": 1250, "electricityEnd": 1340, "waterStart": 85, "waterEnd": 97,
+      "electricityUnitPrice": 3500, "waterUnitPrice": 15000,
+      "electricityConsumption": 90, "electricityAmount": 315000, "waterConsumption": 12, "waterAmount": 180000,
+      "isInvoiced": false, "recordedByName": "Lê Thị Nhân Viên", "recordedAt": "2026-10-27T16:30:00+07:00" }
+  ], "total": 17, "page": 1, "limit": 100 } }
+```
+> - `roomId` is a plain id (not populated). One item per room that already has a reading for the period — rooms without a reading are simply absent.
+> - The entry screen loads three lists for one building: `GET /rooms?buildingId=` (occupancy), this period's readings and the **previous** period's readings. A room's start readings default to the previous period's end readings (BR-51); the user may change them and only gets a warning.
+> - Readings are non-negative integers. `billingPeriod` after the current month → `400 VALIDATION_ERROR` on `billingPeriod`. A second `POST` for the same room + period → `409 DUPLICATE_ENTRY` (use `PUT`).
+> - The per-person amount on screen is an estimate: `floor(roomTotal / occupants)` with the remainder added to the smallest student code, using the room's **current** occupants. The real split happens at invoice generation with the students residing during the period.
+>
+> **Backend status (15/09/2026):** list returns a plain array with `roomId` populated as a room object, no pagination; `PUT` has no Joi validation; duplicate returns `READING_ALREADY_EXISTS`. The frontend accepts both list shapes and a populated `roomId`.
 
 **POST `/api/invoices/generate`**
 ```json
@@ -454,18 +515,161 @@ Errors: `CONTRACT_NOT_ACTIVE` (422), `VALIDATION_ERROR` with field errors on `re
 ```
 > `updated` counts students who already had a `monthly` invoice for the period (contract activated mid-period) and had electricity/water line items **added** to it. They are not skipped — skipping them loses the utility charge.
 
+**GET `/api/invoices/generation-preview?billingPeriod=2026-10&buildingIds=665f0a...`** *(v1.2.11 — SCR-53)*
+```json
+{ "code": "OK", "message": "Success",
+  "data": {
+    "created": 52, "updated": 3, "totalAmount": 29307000,
+    "eligibleStudents": 55, "readyRooms": 14,
+    "skipped": [
+      { "roomId": "665f2b...", "roomNumber": "206", "buildingCode": "B", "code": "NO_READING", "reason": "Chưa nhập chỉ số điện nước" },
+      { "roomId": "665f2c...", "roomNumber": "101", "buildingCode": "A", "code": "ALREADY_INVOICED", "reason": "Kỳ này đã lập hóa đơn" },
+      { "roomId": "665f2d...", "roomNumber": "310", "buildingCode": "B", "code": "NO_RESIDENT", "reason": "Không có sinh viên đang ở" }
+    ]
+  } }
+```
+> - Runs exactly the same calculation as `POST /invoices/generate` but writes nothing. The generate response has the same shape.
+> - It is a **separate GET on purpose**: a `dryRun` flag on the POST would silently create real invoices on a backend that ignores the flag.
+> - `buildingIds` omitted = all active buildings. `billingPeriod` after the current month → `400 VALIDATION_ERROR`.
+> - `skipped[].code`: `NO_READING` · `ALREADY_INVOICED` (the room's reading is already `isInvoiced`) · `NO_RESIDENT`. The modal lists `NO_READING` rooms with a link to the reading screen.
+> - Generated line items: rent `Tiền phòng tháng 10/2026`, then `Tiền điện tháng 10/2026 (90 kWh, chia đều 4 người)` and the water equivalent, each with `quantity: 1` and `unitPrice = amount = share`. Generating marks each processed room's reading `isInvoiced: true`.
+
+**GET `/api/invoices`** *(v1.2.11 — SCR-52)*
+```json
+{ "code": "OK", "message": "Success",
+  "data": {
+    "items": [
+      { "id": "665f5c...", "invoiceCode": "INV-202610-00042", "type": "monthly", "billingPeriod": "2026-10",
+        "studentId": "665e3a...", "studentName": "Trần Thị Bích", "studentCode": "SV2024001",
+        "contractId": "6660c1...", "bedCode": "B203-02", "roomNumber": "203", "buildingId": "665f0a...", "buildingCode": "B", "buildingName": "Tòa B",
+        "lineItems": [ { "feeTypeId": "665e2a...", "description": "Tiền phòng tháng 10/2026", "quantity": 1, "unitPrice": 320000, "amount": 320000 } ],
+        "totalAmount": 443750, "paidAmount": 200000, "remainingAmount": 243750,
+        "issueDate": "2026-11-01", "dueDate": "2026-11-10", "status": "partial" }
+    ],
+    "total": 128, "page": 1, "limit": 10,
+    "summary": { "totalAmount": 48620000, "paidAmount": 36150000, "remainingAmount": 12470000, "overdueCount": 7, "overdueAmount": 3120000 }
+  } }
+```
+> - Flat student/room fields, no populated objects. `search` matches invoice code, student code, student name and bed code.
+> - Sort: newest `issueDate` first.
+> - `summary` covers the whole filtered set (not just the page) and **excludes cancelled invoices**.
+
+**POST `/api/invoices`** *(v1.2.11 — one-off invoice, FR-46)*
+```json
+{ "contractId": "6660c1...", "studentId": "665e3a...", "dueDate": "2026-09-22", "note": "Biên bản ngày 12/09",
+  "lineItems": [ { "feeTypeId": "665e2f...", "description": "Làm mất chìa khóa", "quantity": 1, "unitPrice": 50000 } ] }
+```
+> - `type` is always `other` and `billingPeriod` is `null`, so two one-off invoices in the same month never hit the anti-duplicate index.
+> - The contract must be `active` → otherwise `422 CONTRACT_NOT_ACTIVE`.
+> - Fee types `rent`, `deposit`, `supplies` are rejected: their amounts come from the contract or an order.
+> - `amount` and `totalAmount` are computed by the server (BR-41, BR-42). Field errors use paths such as `lineItems.0.unitPrice`.
+
+**PATCH `/api/invoices/:id/cancel`** *(v1.2.11)*
+> - `422 INVOICE_HAS_PAYMENT` when `paidAmount > 0` (BR-46).
+> - `422 INVOICE_NOT_CANCELLABLE` for an already-cancelled invoice, a `supplies` invoice (cancel the order instead) or a `settlement` invoice.
+> - Cancelling a `monthly` invoice: once no non-cancelled monthly invoice with utility lines remains for that room and period, the room's reading goes back to `isInvoiced: false`, so it can be corrected and invoiced again.
+>
+> **Backend status (15/09/2026):**
+> - No `generation-preview`: `GET /invoices/generation-preview` is caught by `/invoices/:id` and returns `400`, so the modal shows an error and blocks generating. Nothing is written.
+> - The list returns `studentId` populated, `items[{ name }]` instead of `lineItems`, no `remainingAmount`/`summary`/room fields, and no `search`/`buildingId` filters. The frontend normalises student, line items and remaining amount.
+
 ---
 
 ## 8. Payments — `modules/payments`
 
 | Method | Endpoint | Roles | Description |
 |---|---|---|---|
-| GET | `/api/payments` | admin, staff, viewer | List — `?invoiceId=&studentId=&method=&status=` |
-| POST | `/api/payments/offline` | admin, staff | Record manual cash/bank-transfer payment |
+| GET | `/api/payments` | admin, staff, viewer | List — `?search=&invoiceId=&studentId=&type=payment\|refund&method=&status=&from=&to=`, with `summary` |
+| POST | `/api/payments/offline` | admin, staff | Record manual cash/bank-transfer payment — `{ invoiceId, amount, method, paidAt, bankReference?, note? }` |
 | POST | `/api/payments/online/checkout` | student | Start a VNPay/ZaloPay session — returns redirect URL / QR |
 | POST | `/api/payments/webhook/vnpay` | public (gateway signed) | VNPay callback — verifies signature, updates `Payment` + `Invoice` |
 | POST | `/api/payments/webhook/zalopay` | public (gateway signed) | ZaloPay callback — same as above |
-| POST | `/api/payments/:id/reconcile` | admin, staff | Re-query the gateway for a stuck `pending` transaction |
+| POST | `/api/payments/:id/reconcile` | admin, staff | Re-query the gateway for a stuck `pending` online transaction (FR-56, BR-64) |
+
+**GET `/api/payments`** *(v1.2.13 — SCR-56)*
+```json
+{ "code": "OK", "message": "Success",
+  "data": {
+    "items": [
+      { "id": "6662c1...", "transactionRef": "PAY20260913ABC123",
+        "studentId": "665e3a...", "studentName": "Trần Thị Bích", "studentCode": "SV2024001",
+        "invoiceId": "665f5c...", "invoiceCode": "INV-202610-00042", "invoiceType": "monthly",
+        "amount": 243750, "type": "payment", "method": "bank_transfer", "status": "success",
+        "bankReference": "FT26256891042", "gatewayTransactionId": null,
+        "createdAt": "2026-09-13T14:29:00+07:00", "paidAt": "2026-09-13T14:30:00+07:00",
+        "recordedByName": "Lê Thị Nhân Viên", "note": "Nộp đợt 2" }
+    ],
+    "total": 128, "page": 1, "limit": 20,
+    "summary": { "collectedAmount": 66763500, "refundedAmount": 1250000, "successCount": 115, "pendingCount": 2, "failedCount": 1 }
+  } }
+```
+> - Flat student/invoice fields, not populated objects. `search` matches transaction reference, invoice code, student name/code, bank reference and gateway id.
+> - Sort: newest first by `paidAt`, falling back to `createdAt` for transactions that never succeeded.
+> - `from`/`to` are dates (`YYYY-MM-DD`) on that same timestamp.
+> - `summary` covers the whole filtered set: `collectedAmount` counts successful `payment` rows, `refundedAmount` successful `refund` rows, `failedCount` = `failed` + `expired`.
+
+**POST `/api/payments/:id/reconcile`** *(v1.2.13 — SCR-56)*
+```json
+// response — gateway says the transaction went through
+{ "code": "OK", "message": "Cổng thanh toán báo giao dịch PAY20260913ABC123 đã thành công — đã cập nhật hóa đơn",
+  "data": { "payment": { "id": "6662c1...", "status": "success", "paidAt": "2026-09-16T11:20:00+07:00", "gatewayTransactionId": "VNP090116" },
+            "invoice": { "id": "665f5c...", "paidAmount": 443750, "remainingAmount": 0, "status": "paid" } } }
+```
+> - Only for `pending` transactions paid through a gateway. `cash`/`bank_transfer` → `422 PAYMENT_NOT_ONLINE`; any other status → `422 PAYMENT_NOT_PENDING`.
+> - Success recomputes the invoice from successful payments (BR-43) and moves a paid `supplies` invoice's order to `ready` (BR-95). No answer from the gateway past 15 minutes → `expired` (BR-64).
+> - The message is shown to the user, so it states the outcome.
+
+**POST `/api/payments/offline`** *(v1.2.12 — SCR-55)*
+```json
+// request — bankReference required when method = bank_transfer
+{ "invoiceId": "665f5c...", "amount": 243750, "method": "bank_transfer", "paidAt": "2026-09-13",
+  "bankReference": "FT26256891042", "note": "Nộp đợt 2" }
+// response 201
+{ "code": "OK", "message": "Đã thu 243.750 đ — hóa đơn đã thanh toán đủ",
+  "data": {
+    "payment": { "id": "6662c1...", "transactionRef": "PAY20260913ABC123", "invoiceId": "665f5c...", "amount": 243750, "type": "payment",
+                 "method": "bank_transfer", "bankReference": "FT26256891042", "status": "success",
+                 "paidAt": "2026-09-13T14:30:00+07:00", "recordedByName": "Lê Thị Nhân Viên", "note": "Nộp đợt 2" },
+    "invoice": { "id": "665f5c...", "totalAmount": 443750, "paidAmount": 443750, "remainingAmount": 0, "status": "paid" },
+    "supplyOrder": null
+  } }
+```
+> - Offline payments are recorded as `success` immediately. `paidAmount` is then **recomputed** from successful payments (BR-43).
+> - `paidAt` is a date not after today; the server adds the current time.
+> - `bankReference` is uppercased; the same reference on another successful payment → `409 DUPLICATE_ENTRY` with a field error on `bankReference`, so one bank transfer is never recorded twice.
+> - A `supplies` invoice that becomes `paid` moves its order to `ready` (BR-95); the order is returned in `supplyOrder` so the screen can say so.
+>
+> Errors:
+> - `400 VALIDATION_ERROR`: `amount` ≤ 0, missing `method`/`paidAt`, `bankReference` missing for bank transfer.
+> - `422 PAYMENT_EXCEEDS_REMAINING` (BR-44).
+> - `422 INVOICE_ALREADY_PAID` (BR-45).
+> - `422 INVOICE_CANCELLED`.
+
+**GET `/api/invoices/:id`** *(v1.2.12 — SCR-54)*
+> Same fields as a list item (§7 v1.2.11), plus:
+> - `contractCode`, `note`.
+> - `payments[]`, oldest first: `transactionRef`, `amount`, `type`, `method`, `status`, `paidAt`, `recordedByName`, `bankReference`, `gatewayTransactionId`, `note`.
+> - `supplyOrder: { id, orderCode, status } | null` for `supplies` invoices.
+>
+> Utility line descriptions keep the `(… kWh, chia đều N người)` suffix; the screen shows it as a second line.
+>
+> **Backend status (15/09/2026):**
+> - Detail has no `payments`, contract code or room fields, and still uses `items[{ name }]`.
+> - The frontend falls back to `GET /payments?invoiceId=`, mapping `paymentMethod`, `transactionId` and `recordedBy.fullName`.
+> - The offline body uses `paymentMethod`, has no `bankReference`/`paidAt` and allows `bank_transfer` without a reference. Recording from the screen is not verified against the backend.
+
+**GET `/api/portal/my-payments?transactionRef=PAY20260916ABC`** *(v1.2.16 — SCR-65)*
+```json
+{ "code": "OK", "message": "Success",
+  "data": [
+    { "id": "6662d1...", "transactionRef": "PAY20260916ABC", "invoiceId": "665f5c...", "invoiceCode": "INV-202611-00150",
+      "invoiceType": "supplies", "amount": 160000, "type": "payment", "method": "vnpay", "status": "pending",
+      "gatewayTransactionId": null, "createdAt": "2026-09-16T13:42:00+07:00", "paidAt": null }
+  ] }
+```
+> - The result screen calls this **up to 5 times, 2 seconds apart**, because the gateway webhook can arrive after the student is redirected back.
+> - Still `pending` after the last try → the screen says "đang được xử lý" with a retry button. It must **never** claim failure while the outcome is unknown.
+> - `status: 'success'` on a `supplies` invoice → the screen also tells the student the order is ready to collect (BR-95).
 
 **POST `/api/payments/online/checkout`**
 ```json
@@ -563,12 +767,12 @@ All endpoints resolve the student from the **JWT**. Passing another student's id
 
 | Method | Endpoint | Roles | Description |
 |---|---|---|---|
-| GET | `/api/portal/profile` | student | Own profile (read-only) |
+| GET | `/api/portal/profile` | student | Own profile (read-only) — full `Student` record incl. `dob`, `faculty`, `className`, `phone`, `email`, `emergencyContact` |
 | GET | `/api/portal/my-residence` | student | Current building/room/bed, room type with everything issued, contract + debt summary |
-| GET | `/api/portal/my-contracts` | student | Current + historical contracts |
+| GET | `/api/portal/my-contracts` | student | Current + historical contracts — plain array, newest first; history rows need `contractCode`, `bedCode`, `buildingName`, dates, `status`, `terminationReason` (FR-39) |
 | GET | `/api/portal/my-invoices` | student | Own invoices — `?status=&type=` |
 | GET | `/api/portal/my-invoices/:id` | student | Own invoice detail with line items |
-| GET | `/api/portal/my-payments` | student | Own payment history |
+| GET | `/api/portal/my-payments` | student | Own payment history — `?transactionRef=` to poll one transaction (SCR-65) |
 | GET | `/api/portal/my-requests` | student | Own renewal/checkout requests — plain array, newest first, same fields as the staff list item (`requestCode`, `renewal`, `settlement`, `reviewNote`, `reviewedAt`) |
 | POST | `/api/portal/my-requests` | student | Submit a renewal or checkout request |
 | DELETE | `/api/portal/my-requests/:id` | student | Cancel own request while still `pending` — otherwise `422 REQUEST_NOT_PENDING` (BR-79) |
@@ -576,7 +780,7 @@ All endpoints resolve the student from the **JWT**. Passing another student's id
 | POST | `/api/portal/my-applications` | student | Submit an application — `{ roomId, startDate, endDate, note }` *(v1.2)* |
 | DELETE | `/api/portal/my-applications/:id` | student | Cancel own application while `pending` *(v1.2)* |
 | GET | `/api/portal/supply-items` | student | Shop: active items **not** issued with the student's room type, plus what is issued *(v1.2)* |
-| GET | `/api/portal/my-supply-orders` | student | Own orders — `?status=` *(v1.2)* |
+| GET | `/api/portal/my-supply-orders` | student | Own orders — `?status=` *(v1.2)* — newest first, each with `items`, `totalAmount`, `invoiceId`, `status`, `createdAt`, `cancelReason` |
 | POST | `/api/portal/my-supply-orders` | student | Place an order — creates a `supplies` invoice *(v1.2)* |
 | PATCH | `/api/portal/my-supply-orders/:id/cancel` | student | Cancel own order while `pending_payment` *(v1.2)* |
 
@@ -653,19 +857,27 @@ Errors: `ROOM_FULL`, `GENDER_MISMATCH`, `STUDENT_HAS_ACTIVE_CONTRACT`, `DUPLICAT
 ```
 > The student pays the returned invoice through the normal payment flow (§8). There is no separate supplies checkout.
 
+**Shop and orders for the student screens (SCR-67/68)** *(v1.2.17)*
+> - `GET /portal/supply-items` drives the shop: `items` already excludes what the room type provides (FR-101) and what is no longer sold, so the screen never has to filter. `roomNumber` + `roomType.name` + `includedInRoom` fill the banner. No active contract → `422 CONTRACT_NOT_ACTIVE`, and the screen shows a link to apply for a room.
+> - `POST /portal/my-supply-orders` takes **only** `{ supplyItemId, quantity }` per line (1–5, BR-91); the screen shows a cart total but the amount that counts comes back in the response (BR-92).
+> - The response `{ orderCode, totalAmount, invoice: { id, invoiceCode, totalAmount, dueDate } }` is what the success notice needs — order code, amount, due date and a link straight to the invoice.
+> - `PATCH /portal/my-supply-orders/:id/cancel` needs no body from the student (the reason is recorded as a self-cancel); it must cancel the linked invoice too (FR-105).
+>
+> **Backend status (16/09/2026):** the portal supplies endpoints do not exist yet (`404`), like the rest of `/api/portal/*`.
+
 ---
 
 ## 11. Supplies — `modules/supplies` *(v1.2)*
 
 | Method | Endpoint | Roles | Description |
 |---|---|---|---|
-| GET | `/api/supply-items` | admin, staff, viewer | Catalog — `?category=&isActive=` |
+| GET | `/api/supply-items` | admin, staff, viewer | Catalog — `?search=&category=&isActive=`, paginated |
 | POST | `/api/supply-items` | admin, staff | Create item |
 | PUT | `/api/supply-items/:id` | admin, staff | Update price, image URL, included room types, `isActive` |
 | GET | `/api/supply-orders` | admin, staff, viewer | List — `?status=&search=&from=&to=`; response adds a `summary` block |
 | GET | `/api/supply-orders/:id` | admin, staff, viewer | Detail |
 | PATCH | `/api/supply-orders/:id/deliver` | admin, staff | `ready → delivered` |
-| PATCH | `/api/supply-orders/:id/cancel` | admin, staff | `pending_payment → cancelled` — `{ cancelReason }` |
+| PATCH | `/api/supply-orders/:id/cancel` | admin, staff | `pending_payment → cancelled` — `{ cancelReason }` (≥ 5 ký tự); cancels the linked invoice too |
 
 **GET `/api/supply-orders?status=ready`**
 ```json
@@ -683,6 +895,17 @@ Errors: `ROOM_FULL`, `GENDER_MISMATCH`, `STUDENT_HAS_ACTIVE_CONTRACT`, `DUPLICAT
   } }
 ```
 > `summary` sits next to the pagination fields. The frontend `useApi` hook passes any extra field through on `meta`, so the screen reads it as `meta.summary`.
+
+**Supplies for the staff screen (SCR-71)** *(v1.2.14)*
+> - `GET /supply-orders` also accepts `from`/`to` (order date, `YYYY-MM-DD`); `search` matches order code, student code/name and room number. Newest first.
+> - `summary` carries every status count the screen shows: `{ all, pendingPayment, ready, delivered, cancelled, deliveredToday }`.
+> - Order items are flat: `studentName`, `studentCode`, `roomCode` (e.g. `B203`), `buildingName`, `items[{ supplyItemId, name, unitPrice, quantity, amount }]`, `totalAmount`, `invoiceId`, `status`, `createdAt`, `deliveredAt`, `deliveredByName`, `cancelledAt`, `cancelReason`.
+> - `GET /supply-orders/:id` adds `invoice` (with `invoiceCode`, `remainingAmount`, `dueDate`) so the screen can link to the invoice and collect payment at the counter.
+> - `PATCH /supply-orders/:id/deliver` records who delivered it (`deliveredByName` in the response, FR-104).
+> - `GET /supply-items` is paginated and each item carries `includedRoomTypeNames` next to `includedInRoomTypes`, so the catalog can show room-type tags without a second call.
+> - `POST`/`PUT /supply-items` body: `{ name, category, unit, price, description, imageUrl, includedInRoomTypes, isActive }`.
+>
+> **Backend status (16/09/2026):** the whole supplies module is missing — `/api/supply-items` and `/api/supply-orders` return `404`. The screen shows the missing-endpoint message on both tabs and stays read-only until the backend adds it.
 
 ```json
 { "code": "INVALID_ORDER_STATUS", "message": "Chỉ giao được đơn đang chờ nhận hàng", "data": null } // 422
@@ -744,6 +967,9 @@ Errors: `ROOM_FULL`, `GENDER_MISMATCH`, `STUDENT_HAS_ACTIVE_CONTRACT`, `DUPLICAT
 | `DUPLICATE_PENDING_REQUEST` | 409 | Student already has an open request of that type |
 | `DUPLICATE_PENDING_APPLICATION` | 409 | Student already has a pending application *(v1.2)* |
 | `GENDER_MISMATCH` | 422 | Student gender does not match room gender *(A1)* |
+| `STUDENT_NOT_FOUND` | 422 | Self-registration: no student record with that code *(v1.2.18)* |
+| `STUDENT_INFO_MISMATCH` | 422 | Self-registration: name does not match the student record *(v1.2.18)* |
+| `STUDENT_ALREADY_HAS_ACCOUNT` | 409 | Self-registration: that student already has an account *(v1.2.18)* |
 | `STUDENT_HAS_ACTIVE_CONTRACT` | 422 | Student already has an `active` contract |
 | `STUDENT_HAS_DEBT` | 422 | Student still owes money |
 | `CONTRACT_NOT_ACTIVE` | 422 | Operation requires an `active` contract |
@@ -752,12 +978,17 @@ Errors: `ROOM_FULL`, `GENDER_MISMATCH`, `STUDENT_HAS_ACTIVE_CONTRACT`, `DUPLICAT
 | `CANNOT_MODIFY_SELF` | 422 | Admin tried to lock, demote or reset their own account |
 | `LAST_ACTIVE_ADMIN` | 422 | Would leave the system without an active admin (BR-83) |
 | `BUILDING_HAS_OCCUPANTS` | 422 | Cannot deactivate a building that still has occupied beds (FR-25) |
+| `FEE_TYPE_REQUIRED` | 422 | Cannot deactivate one of the six system fee types used by billing (FR-45) |
 | `ROOM_TYPE_MISMATCH` | 422 | Staff tried to switch an application to a room of another type *(v1.2)* |
 | `ROOM_TYPE_IN_USE` | 422 | Cannot change tier/capacity of a room type that rooms already use *(v1.2)* |
 | `ROOM_HAS_OCCUPANTS` | 422 | Cannot change room type or gender of an occupied room *(v1.2)* |
 | `BED_OCCUPIED` | 422 | Cannot set an occupied bed to maintenance |
 | `INVOICE_ALREADY_PAID` | 422 | Invoice already fully paid |
+| `INVOICE_CANCELLED` | 422 | Cannot record a payment on a cancelled invoice *(v1.2.12)* |
+| `PAYMENT_NOT_PENDING` | 422 | Reconcile only applies to a `pending` transaction *(v1.2.13)* |
+| `PAYMENT_NOT_ONLINE` | 422 | Reconcile only applies to gateway payments, not counter payments *(v1.2.13)* |
 | `INVOICE_HAS_PAYMENT` | 422 | Cannot cancel an invoice that has payments |
+| `INVOICE_NOT_CANCELLABLE` | 422 | Invoice already cancelled, or is a `supplies`/`settlement` invoice that is cancelled elsewhere *(v1.2.11)* |
 | `PAYMENT_EXCEEDS_REMAINING` | 422 | Payment larger than the outstanding balance |
 | `INVALID_METER_READING` | 422 | End reading below start reading *(A2)* |
 | `READING_ALREADY_INVOICED` | 422 | Meter reading locked after invoicing *(A2)* |
@@ -787,6 +1018,16 @@ Errors: `ROOM_FULL`, `GENDER_MISMATCH`, `STUDENT_HAS_ACTIVE_CONTRACT`, `DUPLICAT
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 12/09/2026 | Initial API reference |
+| 1.2.18 | 16/09/2026 | Student self-registration (SCR-02): `POST /auth/register` body/response, the link-to-existing-student rule (FR-80/81) and its three new error codes; recorded that the backend currently creates a new student instead. |
+| 1.2.17 | 16/09/2026 | Portal shop + orders (SCR-67/68): what the shop screen needs from `/portal/supply-items`, the order response fields the success notice uses, student cancel without a body. |
+| 1.2.16 | 16/09/2026 | Portal invoices + payment result (SCR-64/65): `/portal/my-payments` `transactionRef` filter and the polling contract behind the result screen; `/portal/my-invoices/:id` is the invoice detail shape (§7 v1.2.12) restricted to the student's own invoice. |
+| 1.2.15 | 16/09/2026 | Portal residence + profile (SCR-63/69): `/portal/profile` field list for the read-only profile screen, `/portal/my-contracts` fields used by the residence history table. |
+| 1.2.14 | 16/09/2026 | Supplies staff screen (SCR-71): `supply-orders` `from`/`to` + search fields, full `summary` counts, flat order fields with `roomCode`/`deliveredByName`, detail `invoice`; `supply-items` pagination + `includedRoomTypeNames` and the create/update body; cancel reason minimum length. |
+| 1.2.13 | 16/09/2026 | Payment history (SCR-56): `GET /payments` flat fields, `search`/`from`/`to` filters, `summary`, sort rule; `POST /payments/:id/reconcile` response and rules with `PAYMENT_NOT_PENDING`, `PAYMENT_NOT_ONLINE`. |
+| 1.2.12 | 15/09/2026 | Invoice detail + offline payment (SCR-54/55): `GET /invoices/:id` adds `contractCode`, `note`, `payments[]` with `recordedByName`/`bankReference`, `supplyOrder`; `POST /payments/offline` body `{ invoiceId, amount, method, paidAt, bankReference?, note? }` and response `{ payment, invoice, supplyOrder }`; duplicate bank reference, `INVOICE_CANCELLED`; `GET /payments` `type` filter. |
+| 1.2.11 | 15/09/2026 | Invoices (SCR-52/53): list filters `search`/`buildingId`, flat room/student fields and `summary`; new `GET /invoices/generation-preview` (same shape as generate, adds `eligibleStudents`, `readyRooms`, `skipped[].code`); one-off `POST /invoices` body and rules; cancel rules with new `INVOICE_NOT_CANCELLABLE` and reading unlock. |
+| 1.2.10 | 15/09/2026 | Utility readings (SCR-51): list item shape with `roomId`, `roomNumber`, frozen prices, amounts, `recordedByName`/`recordedAt`; `roomId` filter; `PUT` keeps frozen prices; future period and duplicate rules; how the entry screen prefills start readings. |
+| 1.2.9 | 15/09/2026 | Fee types (SCR-82): `includeInactive` list flag, `isSystem`, create/update bodies and validation, `FEE_TYPE_REQUIRED`; recorded backend differences. |
 | 1.2.8 | 15/09/2026 | Portal (SCR-61): documented the `GET /portal/my-residence` response (`hasResidence`, `contract`, `roomType`, `includedInRoom`, `roommates`, `debtSummary`). Backend gap analysis for FE integration in `docs/16-YEU-CAU-API-BACKEND.md`. |
 | 1.2.7 | 15/09/2026 | Buildings (SCR-21): `includeInactive` list flag, `stats` shape with `maintenanceBeds`, create/update bodies, `BUILDING_HAS_OCCUPANTS`; recorded backend differences. |
 | 1.2.6 | 15/09/2026 | Accounts (SCR-81): new §2.1 `GET/POST /users`, `PUT /users/:id`, `PATCH /users/:id/status` with list `summary`; create returns a one-time temporary password; errors `CANNOT_MODIFY_SELF`, `LAST_ACTIVE_ADMIN`; student list `hasAccount`. Backend currently only has `POST /users/:id/reset-password` (T3.16 pending). |

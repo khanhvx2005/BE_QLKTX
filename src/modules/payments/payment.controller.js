@@ -62,7 +62,7 @@ const reconcilePayment = asyncHandler(async (req, res) => {
 const getPayments = asyncHandler(async (req, res) => {
   const query = req.validatedQuery || req.query;
   const result = await paymentService.getPayments(query, req.user);
-  return ApiResponse.paginate(res, result.items, result.total, result.page, result.limit, 'Lấy lịch sử thanh toán thành công');
+  return ApiResponse.success(res, result, 'Lấy lịch sử thanh toán thành công');
 });
 
 /**

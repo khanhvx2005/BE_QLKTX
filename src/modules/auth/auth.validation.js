@@ -29,18 +29,16 @@ const registerSchema = Joi.object({
   }),
   phone: Joi.string()
     .pattern(/^0\d{9}$/)
-    .required()
+    .optional()
+    .allow('', null)
     .messages({
       'string.pattern.base': 'Số điện thoại phải gồm 10 chữ số và bắt đầu bằng số 0',
-      'string.empty': 'Số điện thoại không được để trống',
-      'any.required': 'Số điện thoại là bắt buộc',
     }),
-  gender: Joi.string().valid('male', 'female').required().messages({
+  gender: Joi.string().valid('male', 'female').optional().allow('', null).messages({
     'any.only': 'Giới tính chỉ chấp nhận male hoặc female',
-    'any.required': 'Giới tính là bắt buộc',
   }),
-  className: Joi.string().trim().optional().allow(''),
-  faculty: Joi.string().trim().optional().allow(''),
+  className: Joi.string().trim().optional().allow('', null),
+  faculty: Joi.string().trim().optional().allow('', null),
 });
 
 const loginSchema = Joi.object({

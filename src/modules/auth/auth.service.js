@@ -38,60 +38,80 @@ const generateTemporaryPassword = (length = 10) => {
   return chars.join('');
 };
 
+const normalizeFullName = (name) => {
+  return (name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
 /**
- * Đăng ký tài khoản tự phục vụ cho sinh viên.
- * Vai trò bắt buộc là 'student' ở phía server (API.md §2).
+ * Đăng ký tài khoản tự phục vụ cho sinh viên (API.md §2 v1.2.18 - SCR-02).
+ * Bắt buộc liên kết với hồ sơ Student đã có do ban quản lý tạo trước (FR-80/81).
  */
 const register = async (data) => {
-  const { email, password, fullName, studentCode, phone, gender, className, faculty } = data;
+  const { email, password, fullName, studentCode, phone, gender } = data;
 
-  // 1. Kiểm tra trùng email (G5: DUPLICATE_ENTRY + data.errors)
-  const existingUser = await User.findOne({ email: email.toLowerCase() });
-  if (existingUser) {
+  // 1. Kiểm tra mã sinh viên tồn tại trong hồ sơ KTX (FR-81)
+  const student = await Student.findOne({ studentCode: studentCode.trim().toUpperCase() });
+  if (!student) {
+    throw new ApiError(
+      422,
+      'STUDENT_NOT_FOUND',
+      'Không tìm thấy hồ sơ sinh viên với mã này. Vui lòng liên hệ ban quản lý KTX'
+    );
+  }
+
+  // 2. Kiểm tra họ và tên có khớp với hồ sơ (bỏ qua dấu, chữ hoa/thường, khoảng trắng thừa)
+  if (normalizeFullName(student.fullName) !== normalizeFullName(fullName)) {
+    throw new ApiError(
+      422,
+      'STUDENT_INFO_MISMATCH',
+      'Họ và tên không khớp với hồ sơ sinh viên'
+    );
+  }
+
+  // 3. Kiểm tra sinh viên đã có tài khoản User chưa
+  const existingUserForStudent = await User.findOne({ studentId: student._id });
+  if (student.userId || existingUserForStudent) {
+    throw new ApiError(
+      409,
+      'STUDENT_ALREADY_HAS_ACCOUNT',
+      'Sinh viên này đã có tài khoản trên hệ thống'
+    );
+  }
+
+  // 4. Kiểm tra trùng email
+  const existingEmail = await User.findOne({ email: email.toLowerCase().trim() });
+  if (existingEmail) {
     throw new ApiError(409, 'DUPLICATE_ENTRY', 'Email đã tồn tại trong hệ thống', {
       errors: [{ field: 'email', message: 'Email này đã được sử dụng' }],
     });
   }
 
-  // 2. Kiểm tra trùng mã số sinh viên
-  const existingStudent = await Student.findOne({ studentCode: studentCode.toUpperCase() });
-  if (existingStudent) {
-    throw new ApiError(409, 'DUPLICATE_ENTRY', 'Mã sinh viên đã tồn tại', {
-      errors: [{ field: 'studentCode', message: 'Mã số sinh viên này đã tồn tại trong hệ thống' }],
-    });
-  }
-
-  // 3. Hash mật khẩu và tạo User
+  // 5. Hash mật khẩu và tạo User
   const passwordHash = await User.hashPassword(password);
   const user = await User.create({
-    email: email.toLowerCase(),
+    email: email.toLowerCase().trim(),
     passwordHash,
-    fullName,
+    fullName: student.fullName,
     role: 'student', // Bắt buộc ép role student
+    studentId: student._id,
     isActive: true,
   });
 
-  // 4. Tạo hồ sơ Sinh viên tương ứng liên kết với User
-  let student;
-  try {
-    student = await Student.create({
-      userId: user._id,
-      fullName,
-      studentCode: studentCode.toUpperCase(),
-      phone,
-      email: email.toLowerCase(),
-      gender,
-      className,
-      faculty,
-      status: 'active',
-    });
-  } catch (studentErr) {
-    // Rollback user nếu tạo profile student thất bại
-    await User.findByIdAndDelete(user._id);
-    throw studentErr;
-  }
+  // 6. Cập nhật liên kết hồ sơ Sinh viên
+  student.userId = user._id;
+  if (phone) student.phone = phone.trim();
+  if (gender) student.gender = gender;
+  student.email = email.toLowerCase().trim();
+  await student.save();
 
-  // 5. Sinh JWT Token (hạn 7 ngày)
+  // 7. Sinh JWT Token (hạn 7 ngày)
   const token = generateToken({
     id: user._id,
     role: user.role,

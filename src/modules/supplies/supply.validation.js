@@ -54,7 +54,8 @@ const querySupplyOrderSchema = Joi.object({
 });
 
 const cancelSupplyOrderSchema = Joi.object({
-  cancelReason: Joi.string().trim().min(2).required().messages({
+  cancelReason: Joi.string().trim().min(5).required().messages({
+    'string.min': 'Lý do hủy đơn phải có ít nhất 5 ký tự',
     'any.required': 'Lý do hủy đơn là bắt buộc',
   }),
 });

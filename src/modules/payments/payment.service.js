@@ -1,7 +1,7 @@
 /**
  * Service xử lý logic nghiệp vụ cho Module Payments (Thanh toán).
  * Xử lý thu tiền mặt/chuyển khoản quầy và tích hợp cổng thanh toán trực tuyến VNPay Sandbox.
- * Tuân thủ theo API.md §8, 14-PHIEN-BAN-DON-GIAN-HOA.md §4.10 và DATA-SCHEMA.md §3.11.
+ * Tuân thủ theo API.md §8 (v1.2.12 - v1.2.13), 14-PHIEN-BAN-DON-GIAN-HOA.md §4.10 và DATA-SCHEMA.md §3.11.
  */
 
 const mongoose = require('mongoose');
@@ -39,42 +39,48 @@ const recalculateInvoice = async (invoiceId) => {
 
   await invoice.save();
 
-  // Nếu là hóa đơn mua sắm nhu yếu phẩm và đã trả đủ tiền -> chuyển đơn hàng sang trạng thái 'ready'
-  if (invoice.status === 'paid' && invoice.type === 'supplies') {
+  // Nếu là hóa đơn mua sắm nhu yếu phẩm và đã trả đủ tiền -> chuyển đơn hàng sang trạng thái 'ready' (BR-95)
+  let linkedSupplyOrder = null;
+  if (invoice.type === 'supplies') {
     try {
       const SupplyOrder = mongoose.models.SupplyOrder || require('../supplies/supply-order.model');
-      await SupplyOrder.findOneAndUpdate(
-        { invoiceId: invoice._id, status: 'pending_payment' },
-        { status: 'ready' }
-      );
+      if (invoice.status === 'paid') {
+        linkedSupplyOrder = await SupplyOrder.findOneAndUpdate(
+          { invoiceId: invoice._id, status: 'pending_payment' },
+          { status: 'ready' },
+          { returnDocument: 'after' }
+        );
+      } else {
+        linkedSupplyOrder = await SupplyOrder.findOne({ invoiceId: invoice._id });
+      }
     } catch (err) {
-      // Bỏ qua nếu module supplies chưa nạp hoặc đơn không tồn tại
+      // Bỏ qua nếu module supplies chưa nạp
     }
   }
 
-  return invoice;
+  return { invoice, supplyOrder: linkedSupplyOrder };
 };
 
 /**
- * Thu tiền mặt hoặc chuyển khoản tại quầy do Nhân viên hoặc Admin thực hiện (API.md §8 POST /api/payments/offline).
+ * Thu tiền mặt hoặc chuyển khoản tại quầy do Nhân viên hoặc Admin thực hiện (API.md §8 POST /api/payments/offline - v1.2.12).
  */
 const recordOfflinePayment = async (data, actorId) => {
-  const { invoiceId, amount, method = 'cash', note } = data;
+  const { invoiceId, amount, method = 'cash', paidAt, bankReference, note } = data;
 
   const invoice = await Invoice.findById(invoiceId);
   if (!invoice) {
     throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn cần thanh toán');
   }
 
-  if (invoice.status === 'paid') {
-    throw new ApiError(422, 'INVOICE_ALREADY_PAID', 'Hóa đơn này đã được thanh toán đủ');
-  }
-
   if (invoice.status === 'cancelled') {
     throw new ApiError(422, 'INVOICE_CANCELLED', 'Hóa đơn này đã bị hủy, không thể thu tiền');
   }
 
-  const remainingDebt = invoice.totalAmount - invoice.paidAmount;
+  if (invoice.status === 'paid') {
+    throw new ApiError(422, 'INVOICE_ALREADY_PAID', 'Hóa đơn này đã được thanh toán đủ');
+  }
+
+  const remainingDebt = invoice.totalAmount - (invoice.paidAmount || 0);
   if (amount > remainingDebt) {
     throw new ApiError(
       422,
@@ -82,6 +88,36 @@ const recordOfflinePayment = async (data, actorId) => {
       `Số tiền thanh toán (${amount.toLocaleString('vi-VN')} đ) vượt quá số nợ còn lại (${remainingDebt.toLocaleString('vi-VN')} đ)`
     );
   }
+
+  // Bắt buộc bankReference khi chuyển khoản và chống trùng mã tham chiếu (API.md v1.2.12)
+  let cleanBankRef = null;
+  if (method === 'bank_transfer') {
+    if (!bankReference || !bankReference.trim()) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Mã tham chiếu ngân hàng là bắt buộc khi chuyển khoản', {
+        errors: [{ field: 'bankReference', message: 'Mã tham chiếu ngân hàng là bắt buộc khi chuyển khoản' }],
+      });
+    }
+    cleanBankRef = bankReference.trim().toUpperCase();
+
+    const existingBankRef = await Payment.findOne({
+      bankReference: cleanBankRef,
+      status: 'success',
+    });
+
+    if (existingBankRef) {
+      throw new ApiError(
+        409,
+        'DUPLICATE_ENTRY',
+        'Mã tham chiếu ngân hàng này đã được sử dụng',
+        { errors: [{ field: 'bankReference', message: 'Mã tham chiếu ngân hàng này đã được sử dụng' }] }
+      );
+    }
+  } else if (bankReference && bankReference.trim()) {
+    cleanBankRef = bankReference.trim().toUpperCase();
+  }
+
+  const User = mongoose.models.User || require('../auth/user.model');
+  const actor = actorId ? await User.findById(actorId).select('fullName') : null;
 
   // Tạo bản ghi thanh toán offline
   const payment = await Payment.create({
@@ -91,19 +127,47 @@ const recordOfflinePayment = async (data, actorId) => {
     amount,
     method: method === 'bank_transfer' ? 'bank_transfer' : 'cash',
     type: 'payment',
-    gatewayTransactionId: `REC-${Date.now()}`,
+    bankReference: cleanBankRef,
+    gatewayTransactionId: null,
     status: 'success',
-    paidAt: new Date(),
-    note: note || 'Thu tiền trực tiếp tại quầy quản lý KTX',
+    paidAt: paidAt ? new Date(paidAt) : new Date(),
+    note: note || '',
     recordedBy: actorId,
   });
 
   // Tính lại tổng số tiền đã trả của hóa đơn (BR-43)
-  const updatedInvoice = await recalculateInvoice(invoice._id);
+  const { invoice: updatedInvoice, supplyOrder } = await recalculateInvoice(invoice._id);
+
+  const formattedPayment = {
+    id: payment._id.toString(),
+    transactionRef: payment.transactionRef,
+    invoiceId: payment.invoiceId.toString(),
+    amount: payment.amount,
+    type: payment.type,
+    method: payment.method,
+    bankReference: payment.bankReference,
+    status: payment.status,
+    paidAt: payment.paidAt,
+    recordedByName: actor?.fullName || 'Ban quản lý',
+    note: payment.note,
+  };
 
   return {
-    payment,
-    invoice: updatedInvoice,
+    payment: formattedPayment,
+    invoice: {
+      id: updatedInvoice._id.toString(),
+      totalAmount: updatedInvoice.totalAmount,
+      paidAmount: updatedInvoice.paidAmount,
+      remainingAmount: Math.max(0, updatedInvoice.totalAmount - updatedInvoice.paidAmount),
+      status: updatedInvoice.status,
+    },
+    supplyOrder: supplyOrder
+      ? {
+          id: supplyOrder._id.toString(),
+          orderCode: supplyOrder.orderCode,
+          status: supplyOrder.status,
+        }
+      : null,
   };
 };
 
@@ -134,8 +198,8 @@ const createOnlineCheckout = async (data, clientIp = '127.0.0.1', user = null) =
     throw new ApiError(422, 'INVOICE_CANCELLED', 'Hóa đơn đã bị hủy');
   }
 
-  const remainingAmount = invoice.totalAmount - invoice.paidAmount;
-  const payAmount = (amount && Number(amount) <= remainingAmount) ? Number(amount) : remainingAmount;
+  const remainingAmount = invoice.totalAmount - (invoice.paidAmount || 0);
+  const payAmount = amount && Number(amount) <= remainingAmount ? Number(amount) : remainingAmount;
 
   if (payAmount <= 0) {
     throw new ApiError(422, 'INVOICE_ALREADY_PAID', 'Hóa đơn đã thanh toán đầy đủ');
@@ -151,7 +215,6 @@ const createOnlineCheckout = async (data, clientIp = '127.0.0.1', user = null) =
     method: gateway === 'zalopay' ? 'zalopay' : 'vnpay',
     type: 'payment',
     transactionRef,
-    orderInfo: `Thanh toan hoa don KTX ${invoice.invoiceCode}`,
     status: 'pending',
   });
 
@@ -163,7 +226,7 @@ const createOnlineCheckout = async (data, clientIp = '127.0.0.1', user = null) =
   });
 
   return {
-    paymentId: payment._id,
+    paymentId: payment._id.toString(),
     transactionRef,
     redirectUrl,
   };
@@ -173,7 +236,6 @@ const createOnlineCheckout = async (data, clientIp = '127.0.0.1', user = null) =
  * Xác thực kết quả thanh toán từ VNPay Webhook / Return URL (BR-61, BR-62, BR-63, TC-103, TC-104, TC-105).
  */
 const verifyVNPayPayment = async (queryParams) => {
-  // 1. Kiểm tra tính hợp lệ của chữ ký HMAC-SHA512 (TC-103, BR-61)
   const isValidSignature = vnpayHelper.verifySignature(queryParams);
   if (!isValidSignature) {
     throw new ApiError(400, 'GATEWAY_SIGNATURE_INVALID', 'Chữ ký giao dịch VNPay không hợp lệ (sai mã băm bí mật)');
@@ -185,7 +247,7 @@ const verifyVNPayPayment = async (queryParams) => {
     throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy giao dịch thanh toán tương ứng');
   }
 
-  // 2. Idempotent check (TC-104, BR-62): Nếu giao dịch đã thành công trước đó thì không cộng dồn lần hai
+  // Idempotent check: Không cộng dồn 2 lần
   if (payment.status === 'success') {
     const invoice = await Invoice.findById(payment.invoiceId);
     return {
@@ -197,7 +259,6 @@ const verifyVNPayPayment = async (queryParams) => {
     };
   }
 
-  // 3. Kiểm tra số tiền nhận được so với số tiền cần thanh toán (TC-105, BR-63)
   if (queryParams.vnp_Amount) {
     const receivedAmount = Number(queryParams.vnp_Amount) / 100;
     if (receivedAmount !== payment.amount) {
@@ -209,8 +270,6 @@ const verifyVNPayPayment = async (queryParams) => {
     }
   }
 
-  // 4. Phân tích mã phản hồi vnp_ResponseCode
-  // '00': Giao dịch thành công
   if (queryParams.vnp_ResponseCode === '00') {
     payment.status = 'success';
     payment.gatewayTransactionId = queryParams.vnp_TransactionNo || queryParams.vnp_BankTranNo || `VNP-${Date.now()}`;
@@ -218,8 +277,7 @@ const verifyVNPayPayment = async (queryParams) => {
     payment.paidAt = new Date();
     await payment.save();
 
-    // Luôn tính lại hóa đơn từ các Payment thành công (BR-43)
-    const invoice = await recalculateInvoice(payment.invoiceId);
+    const { invoice } = await recalculateInvoice(payment.invoiceId);
 
     return {
       success: true,
@@ -229,7 +287,6 @@ const verifyVNPayPayment = async (queryParams) => {
       invoice,
     };
   } else {
-    // Thanh toán bị hủy hoặc lỗi từ phía ngân hàng
     payment.status = 'failed';
     payment.gatewayRawResponse = queryParams;
     payment.note = `Giao dịch thất bại tại cổng thanh toán (Mã phản hồi: ${queryParams.vnp_ResponseCode})`;
@@ -245,7 +302,7 @@ const verifyVNPayPayment = async (queryParams) => {
 };
 
 /**
- * Đối soát giao dịch đang pending (API.md §8 POST /api/payments/:id/reconcile).
+ * Đối soát giao dịch đang pending (API.md §8 POST /api/payments/:id/reconcile - v1.2.13).
  */
 const reconcilePayment = async (paymentId) => {
   const payment = await Payment.findById(paymentId);
@@ -253,29 +310,61 @@ const reconcilePayment = async (paymentId) => {
     throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy giao dịch thanh toán');
   }
 
+  if (['cash', 'bank_transfer'].includes(payment.method)) {
+    throw new ApiError(
+      422,
+      'PAYMENT_NOT_ONLINE',
+      'Đối soát chỉ áp dụng cho các giao dịch thanh toán trực tuyến qua cổng'
+    );
+  }
+
   if (payment.status !== 'pending') {
+    throw new ApiError(
+      422,
+      'PAYMENT_NOT_PENDING',
+      `Giao dịch đã ở trạng thái ${payment.status}, không thể đối soát`
+    );
+  }
+
+  // Quá 15 phút không nhận được xác thực thành công -> expired (BR-64)
+  const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+  if (payment.createdAt < fifteenMinutesAgo) {
+    payment.status = 'expired';
+    payment.note = 'Giao dịch hết hạn thanh toán (quá 15 phút)';
+    await payment.save();
+
+    const invoice = await Invoice.findById(payment.invoiceId);
     return {
-      payment,
-      message: `Giao dịch đã ở trạng thái ${payment.status}, không cần đối soát lại`,
+      payment: {
+        id: payment._id.toString(),
+        status: payment.status,
+        paidAt: payment.paidAt,
+        gatewayTransactionId: payment.gatewayTransactionId,
+      },
+      invoice: invoice ? {
+        id: invoice._id.toString(),
+        paidAmount: invoice.paidAmount,
+        remainingAmount: Math.max(0, invoice.totalAmount - (invoice.paidAmount || 0)),
+        status: invoice.status,
+      } : null,
+      message: `Giao dịch ${payment.transactionRef} đã quá hạn 15 phút — đã đánh dấu hết hạn (expired)`,
     };
   }
 
-  // Kiểm tra thời gian chờ: nếu quá 30 phút mà chưa hoàn tất, chuyển thành expired
-  const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-  if (payment.createdAt < thirtyMinutesAgo) {
-    payment.status = 'expired';
-    payment.note = 'Giao dịch hết hạn thanh toán (quá 30 phút)';
-    await payment.save();
-  }
-
   return {
-    payment,
-    message: 'Đối soát trạng thái thanh toán hoàn tất',
+    payment: {
+      id: payment._id.toString(),
+      status: payment.status,
+      paidAt: payment.paidAt,
+      gatewayTransactionId: payment.gatewayTransactionId,
+    },
+    invoice: null,
+    message: `Giao dịch ${payment.transactionRef} vẫn đang trong thời gian chờ xử lý (chưa quá 15 phút)`,
   };
 };
 
 /**
- * Danh sách thanh toán có lọc và phân trang (API.md §8 GET /api/payments).
+ * Danh sách thanh toán phẳng có lọc và summary (API.md §8 GET /api/payments - v1.2.13).
  */
 const getPayments = async (query = {}, user = null) => {
   const page = parseInt(query.page, 10) || 1;
@@ -294,22 +383,92 @@ const getPayments = async (query = {}, user = null) => {
     filter.studentId = query.studentId;
   }
 
-  const [items, total] = await Promise.all([
-    Payment.find(filter)
-      .populate('studentId', 'fullName studentCode phone email')
-      .populate('invoiceId', 'invoiceCode totalAmount paidAmount remainingAmount status type')
-      .populate('recordedBy', 'fullName email')
-      .sort('-createdAt')
-      .skip(skip)
-      .limit(limit),
-    Payment.countDocuments(filter),
-  ]);
+  let payments = await Payment.find(filter)
+    .populate('studentId', 'fullName studentCode phone email')
+    .populate('invoiceId', 'invoiceCode totalAmount paidAmount remainingAmount status type')
+    .populate('recordedBy', 'fullName email')
+    .sort({ paidAt: -1, createdAt: -1 });
+
+  // Lọc theo search (transactionRef, invoiceCode, studentName, studentCode, bankReference, gatewayId)
+  if (query.search && query.search.trim()) {
+    const s = query.search.trim().toLowerCase();
+    payments = payments.filter((p) => {
+      const ref = (p.transactionRef || '').toLowerCase();
+      const inv = (p.invoiceId?.invoiceCode || '').toLowerCase();
+      const stCode = (p.studentId?.studentCode || '').toLowerCase();
+      const stName = (p.studentId?.fullName || '').toLowerCase();
+      const bankRef = (p.bankReference || '').toLowerCase();
+      const gateId = (p.gatewayTransactionId || '').toLowerCase();
+      return ref.includes(s) || inv.includes(s) || stCode.includes(s) || stName.includes(s) || bankRef.includes(s) || gateId.includes(s);
+    });
+  }
+
+  // Lọc theo from / to date
+  if (query.from) {
+    const fromDate = new Date(query.from);
+    payments = payments.filter((p) => new Date(p.paidAt || p.createdAt) >= fromDate);
+  }
+  if (query.to) {
+    const toDate = new Date(query.to);
+    toDate.setHours(23, 59, 59, 999);
+    payments = payments.filter((p) => new Date(p.paidAt || p.createdAt) <= toDate);
+  }
+
+  // Tính summary trên toàn bộ tập đã lọc
+  let collectedAmount = 0;
+  let refundedAmount = 0;
+  let successCount = 0;
+  let pendingCount = 0;
+  let failedCount = 0;
+
+  for (const p of payments) {
+    if (p.status === 'success') {
+      successCount += 1;
+      if (p.type === 'payment') collectedAmount += p.amount;
+      if (p.type === 'refund') refundedAmount += p.amount;
+    } else if (p.status === 'pending') {
+      pendingCount += 1;
+    } else if (['failed', 'expired'].includes(p.status)) {
+      failedCount += 1;
+    }
+  }
+
+  const total = payments.length;
+  const paginated = payments.slice(skip, skip + limit);
+
+  const items = paginated.map((p) => ({
+    id: p._id.toString(),
+    transactionRef: p.transactionRef,
+    studentId: p.studentId?._id?.toString() || null,
+    studentName: p.studentId?.fullName || '',
+    studentCode: p.studentId?.studentCode || '',
+    invoiceId: p.invoiceId?._id?.toString() || null,
+    invoiceCode: p.invoiceId?.invoiceCode || '',
+    invoiceType: p.invoiceId?.type || '',
+    amount: p.amount,
+    type: p.type,
+    method: p.method,
+    status: p.status,
+    bankReference: p.bankReference || null,
+    gatewayTransactionId: p.gatewayTransactionId || null,
+    createdAt: p.createdAt,
+    paidAt: p.paidAt,
+    recordedByName: p.recordedBy?.fullName || 'Ban quản lý',
+    note: p.note || '',
+  }));
 
   return {
     items,
     total,
     page,
     limit,
+    summary: {
+      collectedAmount,
+      refundedAmount,
+      successCount,
+      pendingCount,
+      failedCount,
+    },
   };
 };
 

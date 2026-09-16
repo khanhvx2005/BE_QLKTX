@@ -40,13 +40,20 @@ const updateUtilityReading = asyncHandler(async (req, res) => {
 });
 
 // Invoices
+const previewInvoiceGeneration = asyncHandler(async (req, res) => {
+  const query = req.validatedQuery || req.query;
+  const result = await feeService.getGenerationPreview(query);
+  return ApiResponse.success(res, result, 'Success');
+});
+
 const generateInvoices = asyncHandler(async (req, res) => {
   const result = await feeService.generateInvoices(req.body, req.user.id);
   return ApiResponse.success(res, result, 'Lập hóa đơn hàng loạt thành công', 201);
 });
 
 const getInvoices = asyncHandler(async (req, res) => {
-  const result = await feeService.getInvoices(req.query, req.user);
+  const query = req.validatedQuery || req.query;
+  const result = await feeService.getInvoices(query, req.user);
   return ApiResponse.success(res, result, 'Lấy danh sách hóa đơn thành công');
 });
 
@@ -77,6 +84,7 @@ module.exports = {
   getUtilityReadings,
   recordUtilityReading,
   updateUtilityReading,
+  previewInvoiceGeneration,
   generateInvoices,
   getInvoices,
   getInvoiceById,

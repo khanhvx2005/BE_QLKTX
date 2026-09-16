@@ -17,6 +17,17 @@ const recordOfflinePaymentSchema = Joi.object({
   method: Joi.string().valid('cash', 'bank_transfer').default('cash').messages({
     'any.only': 'Phương thức thanh toán phải là cash hoặc bank_transfer',
   }),
+  paidAt: Joi.date().iso().optional().messages({
+    'date.format': 'Ngày thanh toán phải có định dạng chuẩn ISO',
+  }),
+  bankReference: Joi.when('method', {
+    is: 'bank_transfer',
+    then: Joi.string().trim().required().messages({
+      'any.required': 'Mã tham chiếu ngân hàng là bắt buộc khi chuyển khoản',
+      'string.empty': 'Mã tham chiếu ngân hàng không được để trống',
+    }),
+    otherwise: Joi.string().trim().optional().allow('', null),
+  }),
   note: Joi.string().trim().optional().allow(''),
 });
 
@@ -47,11 +58,14 @@ const verifyVNPaySchema = Joi.object({
 }).unknown(true); // Cho phép các tham số khác do VNPay gửi kèm
 
 const queryPaymentSchema = Joi.object({
+  search: Joi.string().trim().optional().allow(''),
   invoiceId: Joi.string().hex().length(24).optional(),
   studentId: Joi.string().hex().length(24).optional(),
   method: Joi.string().valid('cash', 'bank_transfer', 'vnpay', 'zalopay').optional(),
   status: Joi.string().valid('pending', 'success', 'failed', 'expired').optional(),
   type: Joi.string().valid('payment', 'refund').optional(),
+  from: Joi.string().optional(),
+  to: Joi.string().optional(),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
 });
