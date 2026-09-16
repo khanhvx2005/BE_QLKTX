@@ -62,6 +62,7 @@ const queryStudentSchema = Joi.object({
   search: Joi.string().trim().optional().allow(''),
   status: Joi.string().valid('active', 'inactive').optional(),
   gender: Joi.string().valid('male', 'female').optional(),
+  faculty: Joi.string().trim().optional().allow(''),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
   sort: Joi.string().optional().default('-createdAt'),

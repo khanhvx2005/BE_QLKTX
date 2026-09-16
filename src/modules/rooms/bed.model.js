@@ -1,7 +1,6 @@
 /**
- * Mongoose Schema cho collection Beds.
+ * Mongoose Schema cho collection Beds (DATA-SCHEMA.md §3.5).
  * Quản lý từng vị trí giường trong phòng.
- * Tuân thủ theo DATA-SCHEMA.md §3.5.
  */
 
 const mongoose = require('mongoose');
@@ -19,6 +18,11 @@ const bedSchema = new mongoose.Schema(
       required: [true, 'Số thứ tự giường là bắt buộc'],
       min: [1, 'Số thứ tự giường tối thiểu là 1'],
     },
+    bedCode: {
+      type: String,
+      required: [true, 'Mã giường là bắt buộc'],
+      trim: true,
+    },
     status: {
       type: String,
       enum: {
@@ -26,6 +30,10 @@ const bedSchema = new mongoose.Schema(
         message: 'Trạng thái giường {VALUE} không hợp lệ',
       },
       default: 'available',
+    },
+    note: {
+      type: String,
+      default: null,
     },
   },
   {
@@ -41,8 +49,9 @@ const bedSchema = new mongoose.Schema(
   }
 );
 
-// Compound Unique Index: Không thể có 2 giường cùng số trong cùng 1 phòng
+// Compound Unique Index: Không thể có 2 giường trùng số thứ tự hoặc trùng mã trong cùng 1 phòng
 bedSchema.index({ roomId: 1, bedNumber: 1 }, { unique: true });
+bedSchema.index({ roomId: 1, bedCode: 1 }, { unique: true });
 
 const Bed = mongoose.model('Bed', bedSchema);
 

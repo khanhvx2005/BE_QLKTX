@@ -1,19 +1,48 @@
 /**
  * Mongoose Schema cho collection Contracts.
- * Quản lý thông tin hợp đồng thuê phòng KTX.
- * Tuân thủ theo DATA-SCHEMA.md §3.7.
+ * Quản lý thông tin hợp đồng thuê phòng KTX theo DATA-SCHEMA.md §3.7 và API.md §6.
  */
 
 const mongoose = require('mongoose');
 const { CONTRACT_STATUS } = require('../../shared/constants/enums');
 
-const DEPOSIT_STATUS = ['pending', 'paid', 'refunded', 'forfeited'];
+const contractHistorySchema = new mongoose.Schema(
+  {
+    at: {
+      type: Date,
+      default: Date.now,
+    },
+    type: {
+      type: String,
+      enum: [
+        'application_submitted',
+        'application_approved',
+        'request_renewal',
+        'request_checkout',
+        'terminated',
+        'expired',
+      ],
+      required: true,
+    },
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    description: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+  },
+  { _id: false }
+);
 
 const contractSchema = new mongoose.Schema(
   {
-    contractNumber: {
+    contractCode: {
       type: String,
-      required: [true, 'Số hợp đồng là bắt buộc'],
+      required: [true, 'Mã hợp đồng là bắt buộc'],
       unique: true,
       uppercase: true,
       trim: true,
@@ -29,6 +58,11 @@ const contractSchema = new mongoose.Schema(
       ref: 'Student',
       required: [true, 'Sinh viên là bắt buộc'],
     },
+    bedId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Bed',
+      required: [true, 'Giường là bắt buộc'],
+    },
     startDate: {
       type: Date,
       required: [true, 'Ngày bắt đầu hợp đồng là bắt buộc'],
@@ -37,28 +71,24 @@ const contractSchema = new mongoose.Schema(
       type: Date,
       required: [true, 'Ngày kết thúc hợp đồng là bắt buộc'],
     },
-    roomFeeSnapshot: {
+    monthlyPrice: {
       type: Number,
-      required: [true, 'Giá thuê phòng thời điểm ký HĐ là bắt buộc'],
-      min: [0, 'Giá thuê phòng không được âm'],
+      required: [true, 'Đơn giá thuê phòng theo tháng là bắt buộc'],
+      min: [0, 'Đơn giá thuê không được âm'],
     },
     depositAmount: {
       type: Number,
       default: 0,
       min: [0, 'Tiền cọc không được âm'],
     },
-    depositStatus: {
-      type: String,
-      enum: {
-        values: DEPOSIT_STATUS,
-        message: 'Trạng thái tiền cọc {VALUE} không hợp lệ',
-      },
-      default: 'pending',
-    },
     depositRefunded: {
       type: Number,
       default: 0,
       min: [0, 'Tiền cọc hoàn trả không được âm'],
+    },
+    terms: {
+      type: String,
+      default: '',
     },
     status: {
       type: String,
@@ -66,11 +96,19 @@ const contractSchema = new mongoose.Schema(
         values: CONTRACT_STATUS,
         message: 'Trạng thái hợp đồng {VALUE} không hợp lệ',
       },
-      default: 'pending',
+      default: 'active',
     },
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+    terminationReason: {
+      type: String,
+      default: null,
+    },
+    terminatedAt: {
+      type: Date,
+      default: null,
+    },
+    history: {
+      type: [contractHistorySchema],
+      default: [],
     },
   },
   {
@@ -87,6 +125,7 @@ const contractSchema = new mongoose.Schema(
 );
 
 contractSchema.index({ studentId: 1, status: 1 });
+contractSchema.index({ endDate: 1 });
 
 const Contract = mongoose.model('Contract', contractSchema);
 

@@ -1,10 +1,10 @@
 /**
- * Mongoose Schema cho collection FeeTypes.
- * Quản lý danh mục các loại phí (tiền phòng, điện, nước, internet...).
- * Tuân thủ theo DATA-SCHEMA.md §3.8.
+ * Mongoose Schema cho collection FeeTypes (DATA-SCHEMA.md §3.8).
+ * Quản lý danh mục các loại phí trong hệ thống.
  */
 
 const mongoose = require('mongoose');
+const { FEE_TYPE_CODES } = require('../../shared/constants/enums');
 
 const feeTypeSchema = new mongoose.Schema(
   {
@@ -12,8 +12,12 @@ const feeTypeSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Mã loại phí là bắt buộc'],
       unique: true,
-      uppercase: true,
+      lowercase: true,
       trim: true,
+      enum: {
+        values: FEE_TYPE_CODES,
+        message: 'Mã loại phí {VALUE} không hợp lệ',
+      },
     },
     name: {
       type: String,
@@ -23,17 +27,17 @@ const feeTypeSchema = new mongoose.Schema(
     },
     unit: {
       type: String,
-      required: [true, 'Đơn vị tính là bắt buộc (ví dụ: kWh, m3, tháng, người)'],
+      required: [true, 'Đơn vị tính là bắt buộc (ví dụ: kWh, m3, tháng, lần)'],
       trim: true,
     },
-    unitPrice: {
+    defaultAmount: {
       type: Number,
-      required: [true, 'Đơn giá là bắt buộc'],
+      required: [true, 'Đơn giá mặc định là bắt buộc'],
       min: [0, 'Đơn giá không được âm'],
     },
-    isMetered: {
+    isRecurring: {
       type: Boolean,
-      default: false, // true nếu tính theo chỉ số đồng hồ (điện/nước)
+      default: true, // true cho tiền phòng/điện nước định kỳ, false cho cọc/một lần
     },
     isActive: {
       type: Boolean,

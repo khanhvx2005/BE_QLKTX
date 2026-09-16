@@ -1,6 +1,6 @@
 /**
  * Validation schema cho Module Requests sử dụng Joi.
- * Tuân thủ theo API.md §9 và §10.
+ * Tuân thủ theo API.md §9 và §10 (v1.2).
  */
 
 const Joi = require('joi');
@@ -14,31 +14,34 @@ const createRequestSchema = Joi.object({
     'any.required': 'Ngày dự kiến kết thúc/trả phòng là bắt buộc',
     'date.format': 'Ngày phải có định dạng ISO hợp lệ (YYYY-MM-DD)',
   }),
-  reason: Joi.string().trim().max(500).allow('').optional().messages({
-    'string.max': 'Lý do không được vượt quá 500 ký tự',
+  reason: Joi.when('type', {
+    is: 'checkout',
+    then: Joi.string().trim().required().messages({
+      'any.required': 'Lý do trả phòng là bắt buộc',
+      'string.empty': 'Lý do trả phòng không được để trống',
+    }),
+    otherwise: Joi.string().trim().allow('').optional(),
   }),
   contractId: Joi.string().hex().length(24).optional(),
 });
 
-const approveRequestSchema = Joi.object({
+const approveCheckoutSchema = Joi.object({
   actualCheckoutDate: Joi.date().iso().optional(),
-  requestedEndDate: Joi.date().iso().optional(),
+  refundMethod: Joi.string().valid('cash', 'bank_transfer').default('cash'),
   forceConfirm: Joi.boolean().default(false),
-  staffNote: Joi.string().trim().max(500).allow('').optional(),
 });
 
 const rejectRequestSchema = Joi.object({
-  reviewNote: Joi.string().trim().min(3).max(500).required().messages({
+  reviewNote: Joi.string().trim().min(1).max(500).required().messages({
     'any.required': 'Lý do từ chối là bắt buộc',
     'string.empty': 'Lý do từ chối không được để trống',
-    'string.min': 'Lý do từ chối phải có ít nhất 3 ký tự',
-    'string.max': 'Lý do từ chối không được vượt quá 500 ký tự',
   }),
 });
 
 const queryRequestSchema = Joi.object({
   type: Joi.string().valid('renewal', 'checkout').optional(),
   status: Joi.string().valid('pending', 'approved', 'rejected', 'cancelled').optional(),
+  search: Joi.string().trim().optional().allow(''),
   studentId: Joi.string().hex().length(24).optional(),
   contractId: Joi.string().hex().length(24).optional(),
   page: Joi.number().integer().min(1).default(1),
@@ -47,7 +50,7 @@ const queryRequestSchema = Joi.object({
 
 module.exports = {
   createRequestSchema,
-  approveRequestSchema,
+  approveCheckoutSchema,
   rejectRequestSchema,
   queryRequestSchema,
 };

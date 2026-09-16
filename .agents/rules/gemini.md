@@ -54,7 +54,7 @@ Bộ tài liệu chia làm **hai tầng**. Tầng 1 là hợp đồng kỹ thu�
 | Vai trò | Thứ tự đọc |
 |---|---|
 | **Thành viên mới (30 phút)** | `PRD.md` → `ARCHITECTURE.md` → [`14` mục 15 (mẫu code)](14-PHIEN-BAN-DON-GIAN-HOA.md) → `13` mục 3 (cài môi trường) |
-| **Backend** | `DATA-SCHEMA.md` → `API.md` (module đang làm) → `03` (quy tắc BR) → `07` |
+| **Backend** | `DATA-SCHEMA.md` → `API.md` (module đang làm)→ `16-YEU-CAU-API-BACKEND.md` (module đang làm) → `03` (quy tắc BR) → `07` |
 | **Frontend** | `API.md` → [`14` mục 15.3–15.5](14-PHIEN-BAN-DON-GIAN-HOA.md) → `08` → `07` (ma trận RBAC) |
 | **Viết báo cáo** | `12` trước tiên, rồi lấy nội dung từ `01`, `02`, `03`, `DATA-SCHEMA.md` |
 | **Quản lý tiến độ** | `09` → `13` |

@@ -7,10 +7,12 @@
 const ApiError = require('../errors/api-error');
 const { verifyToken } = require('../utils/jwt');
 const asyncHandler = require('../utils/async-handler');
+const User = require('../../modules/auth/user.model');
 
 /**
  * Middleware xác thực Bearer Token
  * Gán req.user = { id, role, studentId, mustChangePassword }
+ * G3: Kiểm tra trạng thái isActive của User trong DB (chống dùng token khi đã bị khóa)
  */
 const authenticate = asyncHandler(async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -31,12 +33,28 @@ const authenticate = asyncHandler(async (req, res, next) => {
     throw new ApiError(401, 'UNAUTHORIZED', 'Mã xác thực không hợp lệ');
   }
 
+  const userId = payload.userId || payload.id;
+
+  // G3: Tra cứu trạng thái người dùng trong DB
+  const user = await User.findById(userId).select('isActive role studentId mustChangePassword');
+  if (!user) {
+    throw new ApiError(401, 'UNAUTHORIZED', 'Tài khoản không tồn tại trên hệ thống');
+  }
+
+  if (user.isActive === false) {
+    throw new ApiError(
+      403,
+      'ACCOUNT_LOCKED',
+      'Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ ban quản lý'
+    );
+  }
+
   // Gắn thông tin người dùng vào request
   req.user = {
-    id: payload.userId || payload.id,
-    role: payload.role,
-    studentId: payload.studentId || null,
-    mustChangePassword: Boolean(payload.mustChangePassword),
+    id: user._id.toString(),
+    role: user.role,
+    studentId: user.studentId ? user.studentId.toString() : (payload.studentId || null),
+    mustChangePassword: Boolean(user.mustChangePassword),
   };
 
   next();

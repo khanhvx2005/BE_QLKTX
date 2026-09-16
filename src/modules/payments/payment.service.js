@@ -1,28 +1,31 @@
 /**
  * Service xử lý logic nghiệp vụ cho Module Payments (Thanh toán).
- * Xử lý thu tiền mặt tại quầy và tích hợp cổng thanh toán trực tuyến VNPay Sandbox.
- * Tuân thủ theo API.md §8 và 14-PHIEN-BAN-DON-GIAN-HOA.md §4.10.
+ * Xử lý thu tiền mặt/chuyển khoản quầy và tích hợp cổng thanh toán trực tuyến VNPay Sandbox.
+ * Tuân thủ theo API.md §8, 14-PHIEN-BAN-DON-GIAN-HOA.md §4.10 và DATA-SCHEMA.md §3.11.
  */
 
+const mongoose = require('mongoose');
 const Payment = require('./payment.model');
 const Invoice = require('../fees/invoice.model');
 const vnpayHelper = require('./vnpay.helper');
 const ApiError = require('../../core/errors/api-error');
+const { generateTransactionRef } = require('../../core/utils/code-generator');
 
 /**
- * Luôn tính lại paidAmount của hóa đơn từ tổng các Payment thành công (BR-43).
- * Không bao giờ tự ý tăng/giảm trực tiếp mà tổng hợp từ Payment.
+ * Luôn tính lại paidAmount và remainingAmount của hóa đơn từ tổng các Payment thành công (BR-43).
+ * Nếu hóa đơn là 'supplies' và đã thanh toán đủ -> chuyển SupplyOrder sang 'ready' (BR-95).
  */
 const recalculateInvoice = async (invoiceId) => {
   const invoice = await Invoice.findById(invoiceId);
   if (!invoice) return null;
 
   const agg = await Payment.aggregate([
-    { $match: { invoiceId: invoice._id, status: { $in: ['completed', 'success'] } } },
+    { $match: { invoiceId: invoice._id, type: 'payment', status: 'success' } },
     { $group: { _id: null, total: { $sum: '$amount' } } },
   ]);
 
   invoice.paidAmount = agg[0]?.total || 0;
+  invoice.remainingAmount = Math.max(0, invoice.totalAmount - invoice.paidAmount);
 
   if (invoice.paidAmount >= invoice.totalAmount) {
     invoice.status = 'paid';
@@ -35,14 +38,28 @@ const recalculateInvoice = async (invoiceId) => {
   }
 
   await invoice.save();
+
+  // Nếu là hóa đơn mua sắm nhu yếu phẩm và đã trả đủ tiền -> chuyển đơn hàng sang trạng thái 'ready'
+  if (invoice.status === 'paid' && invoice.type === 'supplies') {
+    try {
+      const SupplyOrder = mongoose.models.SupplyOrder || require('../supplies/supply-order.model');
+      await SupplyOrder.findOneAndUpdate(
+        { invoiceId: invoice._id, status: 'pending_payment' },
+        { status: 'ready' }
+      );
+    } catch (err) {
+      // Bỏ qua nếu module supplies chưa nạp hoặc đơn không tồn tại
+    }
+  }
+
   return invoice;
 };
 
 /**
  * Thu tiền mặt hoặc chuyển khoản tại quầy do Nhân viên hoặc Admin thực hiện (API.md §8 POST /api/payments/offline).
  */
-const recordCashPayment = async (data, actorId) => {
-  const { invoiceId, amount, paymentMethod = 'cash', note } = data;
+const recordOfflinePayment = async (data, actorId) => {
+  const { invoiceId, amount, method = 'cash', note } = data;
 
   const invoice = await Invoice.findById(invoiceId);
   if (!invoice) {
@@ -61,19 +78,21 @@ const recordCashPayment = async (data, actorId) => {
   if (amount > remainingDebt) {
     throw new ApiError(
       422,
-      'AMOUNT_EXCEEDS_DEBT',
+      'PAYMENT_EXCEEDS_REMAINING',
       `Số tiền thanh toán (${amount.toLocaleString('vi-VN')} đ) vượt quá số nợ còn lại (${remainingDebt.toLocaleString('vi-VN')} đ)`
     );
   }
 
   // Tạo bản ghi thanh toán offline
   const payment = await Payment.create({
+    transactionRef: generateTransactionRef(),
     invoiceId: invoice._id,
     studentId: invoice.studentId,
     amount,
-    paymentMethod: paymentMethod === 'bank_transfer' ? 'bank_transfer' : 'cash',
-    transactionId: `REC-${Date.now()}`,
-    status: 'completed',
+    method: method === 'bank_transfer' ? 'bank_transfer' : 'cash',
+    type: 'payment',
+    gatewayTransactionId: `REC-${Date.now()}`,
+    status: 'success',
     paidAt: new Date(),
     note: note || 'Thu tiền trực tiếp tại quầy quản lý KTX',
     recordedBy: actorId,
@@ -89,9 +108,11 @@ const recordCashPayment = async (data, actorId) => {
 };
 
 /**
- * Sinh link thanh toán VNPay Sandbox (BR-60).
+ * Sinh link thanh toán trực tuyến qua cổng VNPay Sandbox (API.md §8 POST /api/payments/online/checkout).
  */
-const createVNPayUrl = async ({ invoiceId }, clientIp = '127.0.0.1', user = null) => {
+const createOnlineCheckout = async (data, clientIp = '127.0.0.1', user = null) => {
+  const { invoiceId, gateway = 'vnpay', amount } = data;
+
   const invoice = await Invoice.findById(invoiceId);
   if (!invoice) {
     throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn');
@@ -114,42 +135,48 @@ const createVNPayUrl = async ({ invoiceId }, clientIp = '127.0.0.1', user = null
   }
 
   const remainingAmount = invoice.totalAmount - invoice.paidAmount;
-  const transactionRef = `PAY${Date.now()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const payAmount = (amount && Number(amount) <= remainingAmount) ? Number(amount) : remainingAmount;
+
+  if (payAmount <= 0) {
+    throw new ApiError(422, 'INVOICE_ALREADY_PAID', 'Hóa đơn đã thanh toán đầy đủ');
+  }
+
+  const transactionRef = generateTransactionRef();
 
   // Tạo giao dịch ở trạng thái pending
   const payment = await Payment.create({
     invoiceId: invoice._id,
     studentId: invoice.studentId,
-    amount: remainingAmount,
-    paymentMethod: 'vnpay',
+    amount: payAmount,
+    method: gateway === 'zalopay' ? 'zalopay' : 'vnpay',
+    type: 'payment',
     transactionRef,
     orderInfo: `Thanh toan hoa don KTX ${invoice.invoiceCode}`,
     status: 'pending',
   });
 
-  const paymentUrl = vnpayHelper.createPaymentUrl({
+  const redirectUrl = vnpayHelper.createPaymentUrl({
     transactionRef,
-    amount: remainingAmount,
+    amount: payAmount,
     orderInfo: `Thanh toan hoa don ${invoice.invoiceCode}`,
     ipAddr: clientIp,
   });
 
   return {
-    paymentUrl,
-    transactionRef,
     paymentId: payment._id,
-    amount: remainingAmount,
+    transactionRef,
+    redirectUrl,
   };
 };
 
 /**
- * Xác thực kết quả thanh toán từ VNPay Return URL (BR-61, BR-62, BR-63, TC-103, TC-104, TC-105).
+ * Xác thực kết quả thanh toán từ VNPay Webhook / Return URL (BR-61, BR-62, BR-63, TC-103, TC-104, TC-105).
  */
 const verifyVNPayPayment = async (queryParams) => {
   // 1. Kiểm tra tính hợp lệ của chữ ký HMAC-SHA512 (TC-103, BR-61)
   const isValidSignature = vnpayHelper.verifySignature(queryParams);
   if (!isValidSignature) {
-    throw new ApiError(400, 'INVALID_SIGNATURE', 'Chữ ký giao dịch VNPay không hợp lệ (sai mã băm bí mật)');
+    throw new ApiError(400, 'GATEWAY_SIGNATURE_INVALID', 'Chữ ký giao dịch VNPay không hợp lệ (sai mã băm bí mật)');
   }
 
   const transactionRef = queryParams.vnp_TxnRef;
@@ -159,7 +186,7 @@ const verifyVNPayPayment = async (queryParams) => {
   }
 
   // 2. Idempotent check (TC-104, BR-62): Nếu giao dịch đã thành công trước đó thì không cộng dồn lần hai
-  if (payment.status === 'completed' || payment.status === 'success') {
+  if (payment.status === 'success') {
     const invoice = await Invoice.findById(payment.invoiceId);
     return {
       success: true,
@@ -175,6 +202,7 @@ const verifyVNPayPayment = async (queryParams) => {
     const receivedAmount = Number(queryParams.vnp_Amount) / 100;
     if (receivedAmount !== payment.amount) {
       payment.status = 'failed';
+      payment.gatewayRawResponse = queryParams;
       payment.note = `Lệch số tiền: yêu cầu ${payment.amount} đ nhưng cổng gửi ${receivedAmount} đ`;
       await payment.save();
       throw new ApiError(422, 'AMOUNT_MISMATCH', 'Số tiền thanh toán từ VNPay không khớp với số tiền của hóa đơn');
@@ -184,8 +212,9 @@ const verifyVNPayPayment = async (queryParams) => {
   // 4. Phân tích mã phản hồi vnp_ResponseCode
   // '00': Giao dịch thành công
   if (queryParams.vnp_ResponseCode === '00') {
-    payment.status = 'completed';
-    payment.transactionId = queryParams.vnp_TransactionNo || `VNP-${Date.now()}`;
+    payment.status = 'success';
+    payment.gatewayTransactionId = queryParams.vnp_TransactionNo || queryParams.vnp_BankTranNo || `VNP-${Date.now()}`;
+    payment.gatewayRawResponse = queryParams;
     payment.paidAt = new Date();
     await payment.save();
 
@@ -202,6 +231,7 @@ const verifyVNPayPayment = async (queryParams) => {
   } else {
     // Thanh toán bị hủy hoặc lỗi từ phía ngân hàng
     payment.status = 'failed';
+    payment.gatewayRawResponse = queryParams;
     payment.note = `Giao dịch thất bại tại cổng thanh toán (Mã phản hồi: ${queryParams.vnp_ResponseCode})`;
     await payment.save();
 
@@ -244,6 +274,9 @@ const reconcilePayment = async (paymentId) => {
   };
 };
 
+/**
+ * Danh sách thanh toán có lọc và phân trang (API.md §8 GET /api/payments).
+ */
 const getPayments = async (query = {}, user = null) => {
   const page = parseInt(query.page, 10) || 1;
   const limit = parseInt(query.limit, 10) || 20;
@@ -251,8 +284,9 @@ const getPayments = async (query = {}, user = null) => {
 
   const filter = {};
   if (query.invoiceId) filter.invoiceId = query.invoiceId;
-  if (query.method) filter.paymentMethod = query.method;
+  if (query.method) filter.method = query.method;
   if (query.status) filter.status = query.status;
+  if (query.type) filter.type = query.type;
 
   if (user && user.role === 'student') {
     filter.studentId = user.studentId;
@@ -263,7 +297,7 @@ const getPayments = async (query = {}, user = null) => {
   const [items, total] = await Promise.all([
     Payment.find(filter)
       .populate('studentId', 'fullName studentCode phone email')
-      .populate('invoiceId', 'invoiceCode totalAmount paidAmount status')
+      .populate('invoiceId', 'invoiceCode totalAmount paidAmount remainingAmount status type')
       .populate('recordedBy', 'fullName email')
       .sort('-createdAt')
       .skip(skip)
@@ -282,7 +316,7 @@ const getPayments = async (query = {}, user = null) => {
 const getPaymentById = async (id, user = null) => {
   const payment = await Payment.findById(id)
     .populate('studentId', 'fullName studentCode phone email')
-    .populate('invoiceId', 'invoiceCode totalAmount paidAmount status')
+    .populate('invoiceId', 'invoiceCode totalAmount paidAmount remainingAmount status type')
     .populate('recordedBy', 'fullName email');
 
   if (!payment) {
@@ -301,11 +335,10 @@ const getPaymentById = async (id, user = null) => {
 
 module.exports = {
   recalculateInvoice,
-  recordCashPayment,
-  createVNPayUrl,
+  recordOfflinePayment,
+  createOnlineCheckout,
   verifyVNPayPayment,
   reconcilePayment,
   getPayments,
   getPaymentById,
 };
-

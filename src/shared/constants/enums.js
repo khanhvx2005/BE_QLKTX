@@ -12,32 +12,38 @@ const GENDER = ['male', 'female'];
 // Trạng thái sinh viên (DATA-SCHEMA.md §3.2)
 const STUDENT_STATUS = ['active', 'inactive'];
 
+// Phân hạng loại phòng (DATA-SCHEMA.md §3.4a, API.md §4)
+const ROOM_TYPE_TIER = ['standard', 'premium'];
+
 // Trạng thái phòng (DATA-SCHEMA.md §3.4)
 const ROOM_STATUS = ['active', 'maintenance', 'inactive'];
 
 // Trạng thái giường (DATA-SCHEMA.md §3.5)
 const BED_STATUS = ['available', 'occupied', 'maintenance'];
 
+// Trạng thái đơn đăng ký phòng (DATA-SCHEMA.md §3.6a, API.md §5.1)
+const APPLICATION_STATUS = ['pending', 'approved', 'rejected', 'cancelled'];
+
 // Trạng thái bản ghi lưu trú (DATA-SCHEMA.md §3.6, API.md §5)
-const RESIDENCY_STATUS = ['active', 'closed', 'ended'];
+const RESIDENCY_STATUS = ['active', 'closed'];
 
-// Trạng thái hợp đồng (DATA-SCHEMA.md §3.7)
-const CONTRACT_STATUS = ['pending', 'active', 'expired', 'terminated'];
+// Trạng thái hợp đồng (DATA-SCHEMA.md §3.7 v1.2: bỏ pending)
+const CONTRACT_STATUS = ['active', 'expired', 'terminated'];
 
-// Mã danh mục loại phí mẫu (DATA-SCHEMA.md §3.8)
-const FEE_TYPE_CODES = ['rent', 'electricity', 'water', 'deposit', 'other'];
+// Mã danh mục loại phí mẫu (DATA-SCHEMA.md §3.8: lowercase)
+const FEE_TYPE_CODES = ['rent', 'electricity', 'water', 'deposit', 'supplies', 'other'];
 
 // Trạng thái hóa đơn (DATA-SCHEMA.md §3.10)
 const INVOICE_STATUS = ['unpaid', 'partial', 'paid', 'overdue', 'cancelled'];
 
 // Loại hóa đơn (DATA-SCHEMA.md §3.10)
-const INVOICE_TYPE = ['deposit', 'monthly', 'settlement', 'other'];
+const INVOICE_TYPE = ['deposit', 'monthly', 'settlement', 'supplies', 'other'];
 
 // Phương thức thanh toán (DATA-SCHEMA.md §3.11)
 const PAYMENT_METHOD = ['cash', 'bank_transfer', 'vnpay', 'zalopay'];
 
-// Trạng thái thanh toán (DATA-SCHEMA.md §3.11, API.md §8)
-const PAYMENT_STATUS = ['pending', 'success', 'completed', 'failed', 'expired'];
+// Trạng thái thanh toán (DATA-SCHEMA.md §3.11, API.md §8: bỏ completed)
+const PAYMENT_STATUS = ['pending', 'success', 'failed', 'expired'];
 
 // Loại thanh toán: thu tiền hoặc hoàn cọc (DATA-SCHEMA.md §3.11, §4)
 const PAYMENT_TYPE = ['payment', 'refund'];
@@ -48,12 +54,20 @@ const REQUEST_TYPE = ['renewal', 'checkout'];
 // Trạng thái yêu cầu (DATA-SCHEMA.md §3.12)
 const REQUEST_STATUS = ['pending', 'approved', 'rejected', 'cancelled'];
 
+// Danh mục sản phẩm nhu yếu phẩm (DATA-SCHEMA.md §3.15, API.md §11)
+const SUPPLY_CATEGORY = ['bedding', 'appliances', 'cleaning', 'personal', 'other'];
+
+// Trạng thái đơn hàng nhu yếu phẩm (DATA-SCHEMA.md §3.16, API.md §11)
+const SUPPLY_ORDER_STATUS = ['pending_payment', 'ready', 'delivered', 'cancelled'];
+
 module.exports = {
   ROLES,
   GENDER,
   STUDENT_STATUS,
+  ROOM_TYPE_TIER,
   ROOM_STATUS,
   BED_STATUS,
+  APPLICATION_STATUS,
   RESIDENCY_STATUS,
   CONTRACT_STATUS,
   FEE_TYPE_CODES,
@@ -64,4 +78,6 @@ module.exports = {
   PAYMENT_TYPE,
   REQUEST_TYPE,
   REQUEST_STATUS,
+  SUPPLY_CATEGORY,
+  SUPPLY_ORDER_STATUS,
 };

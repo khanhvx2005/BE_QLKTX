@@ -15,7 +15,7 @@
     "test:phase6": "node src/scripts/test-phase6-api.js",
     "test:phase7": "node src/scripts/test-phase7-api.js",
     "job": "node src/core/cron/scheduler.js run-now",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node src/scripts/test-all.js"
   },
   "author": "",
   "license": "ISC",

@@ -1,23 +1,22 @@
 /**
  * Service xử lý thống kê tổng quan cho Module Dashboard.
- * Cung cấp:
- * 1. Tỷ lệ lấp đầy phòng/giường toàn hệ thống và theo từng tòa nhà (API.md §11).
- * 2. Báo cáo tổng hợp Vận hành: Công nợ, Doanh thu, Hóa đơn quá hạn, Hàng đợi xử lý của nhân viên.
- * 3. Biểu đồ doanh thu theo tháng phục vụ báo cáo tài chính.
- * Tuân thủ theo API.md §11 và ARCHITECTURE.md §3.3.
+ * Tuân thủ theo API.md §12 và 16-YEU-CAU-API-BACKEND.md 3.11.
  */
 
+const mongoose = require('mongoose');
 const Building = require('../rooms/building.model');
 const Room = require('../rooms/room.model');
 const Bed = require('../rooms/bed.model');
+const Student = require('../students/student.model');
 const Contract = require('../contracts/contract.model');
 const Invoice = require('../fees/invoice.model');
 const Payment = require('../payments/payment.model');
 const Request = require('../requests/request.model');
+const Application = require('../residencies/application.model');
 
 /**
- * Thống kê tỷ lệ lấp đầy giường KTX toàn hệ thống và theo từng tòa nhà (API.md §11 GET /api/dashboard/occupancy).
- * Ràng buộc chuẩn: total = occupied + available + maintenance.
+ * Thống kê tỷ lệ lấp đầy giường KTX toàn hệ thống và theo từng tòa nhà (API.md §12 GET /api/dashboard/occupancy).
+ * Quy tắc: rate = occupied / (total - maintenance) (FR-70, BR-05).
  */
 const getOccupancyStats = async () => {
   // 1. Thống kê toàn bộ giường hệ thống
@@ -43,7 +42,8 @@ const getOccupancyStats = async () => {
   });
 
   const totalBeds = statusMap.occupied + statusMap.available + statusMap.maintenance;
-  const overallRate = totalBeds > 0 ? Number((statusMap.occupied / totalBeds).toFixed(2)) : 0;
+  const rentableBeds = totalBeds - statusMap.maintenance;
+  const overallRate = rentableBeds > 0 ? Number((statusMap.occupied / rentableBeds).toFixed(2)) : 0;
 
   const overall = {
     total: totalBeds,
@@ -58,7 +58,7 @@ const getOccupancyStats = async () => {
 
   const byBuilding = await Promise.all(
     buildings.map(async (building) => {
-      const rooms = await Room.find({ buildingId: building._id });
+      const rooms = await Room.find({ buildingId: building._id, status: { $ne: 'inactive' } });
       const roomIds = rooms.map((r) => r._id);
 
       const buildingBedStats = await Bed.aggregate([
@@ -79,13 +79,13 @@ const getOccupancyStats = async () => {
       });
 
       const bTotal = bMap.occupied + bMap.available + bMap.maintenance;
-      const bRate = bTotal > 0 ? Number((bMap.occupied / bTotal).toFixed(2)) : 0;
+      const bRentable = bTotal - bMap.maintenance;
+      const bRate = bRentable > 0 ? Number((bMap.occupied / bRentable).toFixed(2)) : 0;
 
       return {
-        buildingId: building._id,
+        buildingId: building._id.toString(),
         buildingCode: building.code,
         buildingName: building.name,
-        gender: building.gender,
         total: bTotal,
         occupied: bMap.occupied,
         available: bMap.available,
@@ -102,81 +102,117 @@ const getOccupancyStats = async () => {
 };
 
 /**
- * Tổng hợp số liệu tổng quan Dashboard (API.md §11 GET /api/dashboard/summary).
- * Bao gồm lấp đầy + tài chính công nợ + hàng đợi cần xử lý của nhân viên.
+ * Tổng hợp số liệu tổng quan Dashboard theo đúng định dạng API.md §12 (v1.2.5).
  */
 const getSummaryStats = async () => {
   const now = new Date();
   const thirtyDaysLater = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-  const [occupancy, revenueAgg, unpaidInvoices, overdueCount, pendingRequests, expiringContracts] =
-    await Promise.all([
-      // 1. Tỷ lệ lấp đầy
-      getOccupancyStats(),
+  const [
+    occupancy,
+    activeStudents,
+    activeContracts,
+    expiringIn30Days,
+    contractsByStatusAgg,
+    unpaidInvoices,
+    pendingRenewals,
+    pendingCheckouts,
+    pendingApplications,
+    supplyOrdersReady,
+  ] = await Promise.all([
+    // 1. Tỷ lệ lấp đầy
+    getOccupancyStats(),
 
-      // 2. Tổng doanh thu thực tế đã thu vào
-      Payment.aggregate([
-        {
-          $match: {
-            status: { $in: ['completed', 'success'] },
-            type: { $ne: 'refund' },
-          },
+    // 2. Sinh viên đang ở KTX (có hợp đồng active)
+    Student.countDocuments({ status: 'active' }),
+
+    // 3. Hợp đồng đang active
+    Contract.countDocuments({ status: 'active' }),
+
+    // 4. Hợp đồng sắp hết hạn trong 30 ngày (BR-29)
+    Contract.countDocuments({
+      status: 'active',
+      endDate: { $gte: now, $lte: thirtyDaysLater },
+    }),
+
+    // 5. Thống kê hợp đồng theo trạng thái
+    Contract.aggregate([
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
         },
-        {
-          $group: {
-            _id: null,
-            totalRevenue: { $sum: '$amount' },
-            totalTransactions: { $sum: 1 },
-          },
-        },
-      ]),
+      },
+    ]),
 
-      // 3. Toàn bộ hóa đơn chưa đóng để tính tổng nợ
-      Invoice.find({
-        status: { $in: ['unpaid', 'partial', 'overdue'] },
-      }).select('totalAmount paidAmount dueDate status'),
+    // 6. Toàn bộ hóa đơn chưa thanh toán
+    Invoice.find({
+      status: { $in: ['unpaid', 'partial', 'overdue'] },
+    }).select('totalAmount paidAmount dueDate status'),
 
-      // 4. Số hóa đơn quá hạn
-      Invoice.countDocuments({
-        status: { $in: ['unpaid', 'partial', 'overdue'] },
-        dueDate: { $lt: now },
-      }),
+    // 7. Yêu cầu gia hạn đang chờ
+    Request.countDocuments({ type: 'renewal', status: 'pending' }),
 
-      // 5. Số yêu cầu sinh viên đang chờ xử lý
-      Request.countDocuments({ status: 'pending' }),
+    // 8. Yêu cầu trả phòng đang chờ
+    Request.countDocuments({ type: 'checkout', status: 'pending' }),
 
-      // 6. Số hợp đồng sắp hết hạn trong 30 ngày tới
-      Contract.countDocuments({
-        status: 'active',
-        endDate: { $gte: now, $lte: thirtyDaysLater },
-      }),
-    ]);
+    // 9. Đơn đăng ký đang chờ duyệt
+    Application.countDocuments({ status: 'pending' }),
 
-  // Tính tổng nợ chưa thanh toán
-  const totalOutstandingDebt = unpaidInvoices.reduce(
-    (sum, inv) => sum + (inv.totalAmount - (inv.paidAmount || 0)),
-    0
-  );
+    // 10. Đơn hàng nhu yếu phẩm sẵn sàng giao
+    mongoose.models.SupplyOrder
+      ? mongoose.models.SupplyOrder.countDocuments({ status: 'ready' })
+      : 0,
+  ]);
 
-  const totalRevenue = revenueAgg[0]?.totalRevenue || 0;
+  // Tổng hợp hợp đồng theo trạng thái
+  const contractsByStatus = { active: 0, expired: 0, terminated: 0 };
+  contractsByStatusAgg.forEach((item) => {
+    if (contractsByStatus[item._id] !== undefined) {
+      contractsByStatus[item._id] = item.count;
+    }
+  });
+
+  // Tính tổng nợ và nợ quá hạn
+  let totalDebt = 0;
+  let overdueInvoiceCount = 0;
+  let overdueAmount = 0;
+
+  unpaidInvoices.forEach((inv) => {
+    const remaining = inv.totalAmount - (inv.paidAmount || 0);
+    totalDebt += remaining;
+
+    if (new Date(inv.dueDate) < now) {
+      overdueInvoiceCount += 1;
+      overdueAmount += remaining;
+    }
+  });
 
   return {
     occupancy: {
-      totalBeds: occupancy.overall.total,
-      occupiedBeds: occupancy.overall.occupied,
-      availableBeds: occupancy.overall.available,
-      maintenanceBeds: occupancy.overall.maintenance,
-      occupancyRate: occupancy.overall.rate,
+      total: occupancy.overall.total,
+      occupied: occupancy.overall.occupied,
+      available: occupancy.overall.available,
+      maintenance: occupancy.overall.maintenance,
+      rate: occupancy.overall.rate,
+    },
+    residents: {
+      activeStudents,
+      activeContracts,
+      expiringIn30Days,
+      contractsByStatus,
     },
     finance: {
-      totalRevenue,
-      totalOutstandingDebt,
-      overdueInvoiceCount: overdueCount,
+      totalDebt,
+      overdueInvoiceCount,
+      overdueAmount,
     },
-    queue: {
-      pendingRequests,
-      expiringContracts,
+    pendingRequests: {
+      renewal: pendingRenewals,
+      checkout: pendingCheckouts,
     },
+    pendingApplications,
+    supplyOrdersReady,
   };
 };
 
@@ -187,7 +223,7 @@ const getRevenueChartData = async (months = 6) => {
   const result = await Payment.aggregate([
     {
       $match: {
-        status: { $in: ['completed', 'success'] },
+        status: 'success',
         type: { $ne: 'refund' },
       },
     },

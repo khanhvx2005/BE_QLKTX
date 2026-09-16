@@ -25,6 +25,15 @@ const settlementSchema = new mongoose.Schema(
       type: Number,
       default: 0, // Số tiền sinh viên còn phải đóng thêm nếu cọc không đủ bù nợ
     },
+    proratedRent: {
+      type: Number,
+      default: 0, // Tiền phòng kỳ dở tính theo ngày ở thực tế (BR-31)
+    },
+    refundMethod: {
+      type: String,
+      enum: ['cash', 'bank_transfer', null],
+      default: null,
+    },
     settlementInvoiceId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Invoice',
@@ -34,6 +43,10 @@ const settlementSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Payment',
       default: null,
+    },
+    cancelledSupplyOrders: {
+      type: Number,
+      default: 0,
     },
     settledAt: {
       type: Date,
@@ -48,8 +61,24 @@ const settlementSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const renewalSchema = new mongoose.Schema(
+  {
+    previousEndDate: { type: Date },
+    newEndDate: { type: Date },
+    extraMonths: { type: Number },
+  },
+  { _id: false }
+);
+
 const requestSchema = new mongoose.Schema(
   {
+    requestCode: {
+      type: String,
+      required: [true, 'Mã yêu cầu là bắt buộc'],
+      unique: true,
+      uppercase: true,
+      trim: true,
+    },
     studentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Student',
@@ -101,6 +130,10 @@ const requestSchema = new mongoose.Schema(
     },
     settlement: {
       type: settlementSchema,
+      default: null,
+    },
+    renewal: {
+      type: renewalSchema,
       default: null,
     },
   },

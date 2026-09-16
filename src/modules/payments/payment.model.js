@@ -1,14 +1,19 @@
 /**
- * Mongoose Schema cho collection Payments.
- * Quản lý lịch sử các giao dịch thanh toán (tiền mặt, VNPay).
- * Tuân thủ theo DATA-SCHEMA.md §3.11 và API.md §8.
+ * Mongoose Schema cho collection Payments (DATA-SCHEMA.md §3.11, API.md §8).
+ * Quản lý lịch sử các giao dịch thu tiền và hoàn cọc.
  */
 
 const mongoose = require('mongoose');
-const { PAYMENT_METHOD, PAYMENT_STATUS } = require('../../shared/constants/enums');
+const { PAYMENT_METHOD, PAYMENT_STATUS, PAYMENT_TYPE } = require('../../shared/constants/enums');
 
 const paymentSchema = new mongoose.Schema(
   {
+    transactionRef: {
+      type: String,
+      required: [true, 'Mã tham chiếu thanh toán là bắt buộc'],
+      unique: true,
+      trim: true,
+    },
     invoiceId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Invoice',
@@ -19,20 +24,20 @@ const paymentSchema = new mongoose.Schema(
       ref: 'Student',
       required: [true, 'Sinh viên là bắt buộc'],
     },
+    amount: {
+      type: Number,
+      required: [true, 'Số tiền là bắt buộc'],
+      min: [1, 'Số tiền tối thiểu là 1 VNĐ'],
+    },
     type: {
       type: String,
       enum: {
-        values: ['payment', 'refund'],
-        message: 'Loại thanh toán {VALUE} không hợp lệ',
+        values: PAYMENT_TYPE,
+        message: 'Loại thanh toán {VALUE} không hợp lệ (payment hoặc refund)',
       },
       default: 'payment',
     },
-    amount: {
-      type: Number,
-      required: [true, 'Số tiền thanh toán là bắt buộc'],
-      min: [1000, 'Số tiền thanh toán tối thiểu là 1.000 VNĐ'],
-    },
-    paymentMethod: {
+    method: {
       type: String,
       enum: {
         values: PAYMENT_METHOD,
@@ -40,18 +45,13 @@ const paymentSchema = new mongoose.Schema(
       },
       required: [true, 'Phương thức thanh toán là bắt buộc'],
     },
-    transactionRef: {
+    gatewayTransactionId: {
       type: String,
-      unique: true,
-      sparse: true, // Mã tham chiếu thanh toán ví dụ PAY202610...
+      default: null,
     },
-    transactionId: {
-      type: String,
-      default: null, // Mã giao dịch trả về từ cổng VNPay (vnp_TransactionNo) hoặc số phiếu thu tiền mặt
-    },
-    orderInfo: {
-      type: String,
-      default: '',
+    gatewayRawResponse: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
     },
     status: {
       type: String,
@@ -68,10 +68,12 @@ const paymentSchema = new mongoose.Schema(
     note: {
       type: String,
       default: '',
+      trim: true,
     },
     recordedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User', // Nhân viên ghi nhận nếu là tiền mặt
+      ref: 'User',
+      default: null,
     },
   },
   {
@@ -89,6 +91,8 @@ const paymentSchema = new mongoose.Schema(
 
 paymentSchema.index({ invoiceId: 1 });
 paymentSchema.index({ studentId: 1 });
+paymentSchema.index({ paidAt: 1 });
+paymentSchema.index({ gatewayTransactionId: 1 }, { unique: true, sparse: true });
 
 const Payment = mongoose.model('Payment', paymentSchema);
 

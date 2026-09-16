@@ -39,10 +39,10 @@ function formatDate(date = new Date()) {
  * Tạo URL chuyển hướng sang cổng thanh toán VNPay Sandbox.
  */
 function createPaymentUrl({ transactionRef, amount, orderInfo, ipAddr = '127.0.0.1' }) {
-  const tmnCode = config.payment.vnpay.tmnCode || 'DEMO_TMN';
-  const hashSecret = config.payment.vnpay.hashSecret || 'DEMO_SECRET_KEY';
-  const vnpUrl = config.payment.vnpay.url || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html';
-  const returnUrl = config.payment.vnpay.returnUrl || 'http://localhost:5173/portal/payment-result';
+  const tmnCode = config.payment?.vnpay?.tmnCode || process.env.VNP_TMN_CODE || 'DEMO_TMN';
+  const hashSecret = config.payment?.vnpay?.hashSecret || process.env.VNP_HASH_SECRET || 'SANDBOXSECRETKEYFORVNPAYKTX202612345';
+  const vnpUrl = config.payment?.vnpay?.url || process.env.VNP_URL || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html';
+  const returnUrl = config.payment?.vnpay?.returnUrl || process.env.VNP_RETURN_URL || 'http://localhost:5173/portal/payment-result';
 
   const createDate = formatDate(new Date());
 
@@ -78,7 +78,7 @@ function createPaymentUrl({ transactionRef, amount, orderInfo, ipAddr = '127.0.0
  * Ký dữ liệu tham số VNPay bằng thuật toán HMAC-SHA512.
  */
 function signParams(params) {
-  const hashSecret = config.payment.vnpay.hashSecret || 'SANDBOXSECRETKEYFORVNPAYKTX202612345';
+  const hashSecret = config.payment?.vnpay?.hashSecret || process.env.VNP_HASH_SECRET || 'SANDBOXSECRETKEYFORVNPAYKTX202612345';
   const cleanParams = { ...params };
   delete cleanParams.vnp_SecureHash;
   delete cleanParams.vnp_SecureHashType;

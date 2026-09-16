@@ -37,6 +37,11 @@ const userSchema = new mongoose.Schema(
       },
       default: 'student',
     },
+    studentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Student',
+      default: null,
+    },
     isActive: {
       type: Boolean,
       default: true,

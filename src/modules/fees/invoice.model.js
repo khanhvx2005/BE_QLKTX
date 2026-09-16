@@ -1,31 +1,28 @@
 /**
- * Mongoose Schema cho collection Invoices.
- * Quản lý hóa đơn thu tiền của từng sinh viên (tiền phòng, tiền điện nước, cọc, quyết toán).
- * Tuân thủ theo DATA-SCHEMA.md §3.10.
+ * Mongoose Schema cho collection Invoices (DATA-SCHEMA.md §3.10, API.md §7).
+ * Quản lý hóa đơn thu tiền của từng sinh viên.
  */
 
 const mongoose = require('mongoose');
 const { INVOICE_STATUS, INVOICE_TYPE } = require('../../shared/constants/enums');
 
-const invoiceItemSchema = new mongoose.Schema(
+const lineItemSchema = new mongoose.Schema(
   {
     feeTypeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'FeeType',
+      default: null,
     },
-    name: {
+    description: {
       type: String,
-      required: [true, 'Tên khoản phí là bắt buộc'],
+      required: [true, 'Mô tả khoản thu là bắt buộc'],
       trim: true,
     },
     quantity: {
       type: Number,
       required: true,
       default: 1,
-    },
-    unit: {
-      type: String,
-      default: '',
+      min: [1, 'Số lượng tối thiểu là 1'],
     },
     unitPrice: {
       type: Number,
@@ -58,10 +55,11 @@ const invoiceSchema = new mongoose.Schema(
     contractId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Contract',
+      default: null,
     },
     billingPeriod: {
       type: String,
-      default: null, // YYYY-MM với hóa đơn định kỳ hàng tháng; null với cọc/phát sinh
+      default: null, // YYYY-MM với hóa đơn định kỳ; null với cọc/quyết toán/nhu yếu phẩm
     },
     type: {
       type: String,
@@ -71,8 +69,8 @@ const invoiceSchema = new mongoose.Schema(
       },
       default: 'monthly',
     },
-    items: {
-      type: [invoiceItemSchema],
+    lineItems: {
+      type: [lineItemSchema],
       required: [true, 'Chi tiết hóa đơn không được rỗng'],
       validate: [
         (val) => Array.isArray(val) && val.length > 0,
@@ -87,7 +85,7 @@ const invoiceSchema = new mongoose.Schema(
     paidAmount: {
       type: Number,
       default: 0,
-      min: [0, 'Số tiền đã trả không được âm'],
+      min: [0, 'Số tiền đã thanh toán không được âm'],
     },
     dueDate: {
       type: Date,
@@ -104,6 +102,7 @@ const invoiceSchema = new mongoose.Schema(
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
+      default: null,
     },
   },
   {
@@ -111,6 +110,7 @@ const invoiceSchema = new mongoose.Schema(
     toJSON: {
       transform(doc, ret) {
         ret.id = ret._id;
+        ret.remainingAmount = Math.max(0, ret.totalAmount - (ret.paidAmount || 0));
         delete ret._id;
         delete ret.__v;
         return ret;
@@ -121,6 +121,7 @@ const invoiceSchema = new mongoose.Schema(
 
 invoiceSchema.index({ studentId: 1, status: 1 });
 invoiceSchema.index({ billingPeriod: 1 });
+invoiceSchema.index({ status: 1, dueDate: 1 });
 
 const Invoice = mongoose.model('Invoice', invoiceSchema);
 

@@ -9,13 +9,21 @@ const router = express.Router();
 const authController = require('./auth.controller');
 const { registerSchema, loginSchema, changePasswordSchema } = require('./auth.validation');
 const validate = require('../../core/middlewares/validate');
-const { authenticate, authorize } = require('../../core/middlewares/auth');
+const { authenticate } = require('../../core/middlewares/auth');
+const createRateLimiter = require('../../core/middlewares/rate-limiter');
+
+// Rate limiter cho đăng nhập: tối đa 10 lần trong 15 phút (FR-05)
+const loginLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: 'Bạn đã đăng nhập sai quá nhiều lần. Vui lòng thử lại sau 15 phút',
+});
 
 // 1. Đăng ký tài khoản sinh viên (Public)
 router.post('/register', validate(registerSchema), authController.register);
 
-// 2. Đăng nhập (Public)
-router.post('/login', validate(loginSchema), authController.login);
+// 2. Đăng nhập (Public có Rate Limiter)
+router.post('/login', loginLimiter, validate(loginSchema), authController.login);
 
 // 3. Đăng xuất (Yêu cầu đăng nhập)
 router.post('/logout', authenticate, authController.logout);
@@ -25,8 +33,5 @@ router.get('/me', authenticate, authController.getMe);
 
 // 5. Đổi mật khẩu cá nhân (Yêu cầu đăng nhập)
 router.patch('/change-password', authenticate, validate(changePasswordSchema), authController.changePassword);
-
-// 6. Reset mật khẩu tạm thời cho người dùng (Chỉ Admin & Staff)
-router.post('/users/:id/reset-password', authenticate, authorize('admin', 'staff'), authController.resetPassword);
 
 module.exports = router;

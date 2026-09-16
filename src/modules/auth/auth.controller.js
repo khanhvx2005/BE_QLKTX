@@ -33,8 +33,8 @@ const changePassword = asyncHandler(async (req, res) => {
 });
 
 const resetPassword = asyncHandler(async (req, res) => {
-  const result = await authService.resetPassword(req.params.id, req.user.role);
-  return ApiResponse.success(res, result, 'Đã đặt lại mật khẩu tạm thời thành công');
+  const result = await authService.resetPassword(req.params.id, req.user.role, req.user.id);
+  return ApiResponse.success(res, result, 'Đã đặt lại mật khẩu');
 });
 
 module.exports = {

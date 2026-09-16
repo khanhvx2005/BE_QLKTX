@@ -1,248 +1,514 @@
 /**
- * Service xử lý logic nghiệp vụ cho Module Requests (Yêu cầu gia hạn & trả phòng).
- * Thực hiện:
- * 1. Sinh viên gửi yêu cầu trực tuyến (Gia hạn / Trả phòng).
- * 2. Nhân viên duyệt Gia hạn: Tự động kéo dài thời hạn Hợp đồng và Lưu trú.
- * 3. ⭐ Nhân viên duyệt Trả phòng: Tự động quyết toán cọc (PRD §2.9 A3), giải phóng giường, kết thúc lưu trú và thanh lý hợp đồng.
- * 4. Nhân viên từ chối: Ghi nhận lý do bắt buộc.
- * Tuân thủ theo API.md §9, §10 và DATA-SCHEMA.md §3.12, §4.
+ * Service xử lý logic nghiệp vụ cho Module Requests (Gia hạn / Trả phòng).
+ * Tuân thủ theo API.md §9, §10, DATA-SCHEMA.md §3.12, §4 và PRD §2.9 A3.
  */
 
+const mongoose = require('mongoose');
 const Request = require('./request.model');
 const Contract = require('../contracts/contract.model');
+const Student = require('../students/student.model');
 const Residency = require('../residencies/residency.model');
 const Bed = require('../rooms/bed.model');
+const Room = require('../rooms/room.model');
 const Invoice = require('../fees/invoice.model');
 const Payment = require('../payments/payment.model');
+const FeeType = require('../fees/fee-type.model');
 const ApiError = require('../../core/errors/api-error');
+const {
+  generateRequestCode,
+  generateInvoiceCode,
+  generateTransactionRef,
+} = require('../../core/utils/code-generator');
 
 /**
- * Sinh viên gửi yêu cầu Gia hạn hoặc Trả phòng (API.md §10 POST /api/portal/my-requests).
+ * Tính tổng công nợ chưa thanh toán của sinh viên
  */
-const createRequest = async (data, user) => {
-  let studentId = user.studentId;
-  if (!studentId && user.role !== 'student' && data.studentId) {
-    studentId = data.studentId;
-  }
-
-  if (!studentId) {
-    throw new ApiError(400, 'BAD_REQUEST', 'Không xác định được hồ sơ sinh viên');
-  }
-
-  // 1. Kiểm tra hợp đồng đang hiệu lực của sinh viên
-  let contract;
-  if (data.contractId) {
-    contract = await Contract.findOne({ _id: data.contractId, studentId, status: 'active' });
-  } else {
-    contract = await Contract.findOne({ studentId, status: 'active' });
-  }
-
-  if (!contract) {
-    throw new ApiError(422, 'CONTRACT_NOT_ACTIVE', 'Bạn chưa có hợp đồng đang hiệu lực');
-  }
-
-  // 2. Chống gửi nhiều yêu cầu cùng loại đang pending (API.md §10)
-  const existingPending = await Request.findOne({
-    contractId: contract._id,
-    type: data.type,
-    status: 'pending',
-  });
-
-  if (existingPending) {
-    throw new ApiError(409, 'DUPLICATE_PENDING_REQUEST', 'Bạn đã có một yêu cầu cùng loại đang chờ xử lý');
-  }
-
-  // 3. Tạo bản ghi Request
-  const request = await Request.create({
+const calculateStudentDebt = async (studentId) => {
+  const invoices = await Invoice.find({
     studentId,
-    contractId: contract._id,
-    type: data.type,
-    reason: data.reason || '',
-    requestedEndDate: new Date(data.requestedEndDate),
-    status: 'pending',
+    status: { $in: ['unpaid', 'partial', 'overdue'] },
   });
-
-  return request;
+  return invoices.reduce((sum, inv) => sum + (inv.totalAmount - (inv.paidAmount || 0)), 0);
 };
 
 /**
- * Danh sách yêu cầu cho Staff hoặc Sinh viên (API.md §9 GET /api/requests).
+ * Lấy danh sách yêu cầu hàng đợi nhân viên (admin, staff, viewer)
  */
-const getRequests = async (query = {}, user = null) => {
+const getRequests = async (query = {}) => {
   const page = parseInt(query.page, 10) || 1;
   const limit = parseInt(query.limit, 10) || 20;
   const skip = (page - 1) * limit;
 
   const filter = {};
-
-  if (user && user.role === 'student') {
-    filter.studentId = user.studentId;
-  } else if (query.studentId) {
-    filter.studentId = query.studentId;
-  }
-
-  if (query.type) filter.type = query.type;
   if (query.status) filter.status = query.status;
+  if (query.type) filter.type = query.type;
+  if (query.studentId) filter.studentId = query.studentId;
   if (query.contractId) filter.contractId = query.contractId;
 
-  const [items, total] = await Promise.all([
-    Request.find(filter)
-      .populate('studentId', 'fullName studentCode phone email gender')
-      .populate('contractId', 'contractNumber startDate endDate depositAmount status')
-      .populate('reviewedBy', 'fullName email')
-      .sort('-createdAt')
-      .skip(skip)
-      .limit(limit),
-    Request.countDocuments(filter),
+  // Thống kê summary
+  const summaryFilter = query.status ? { status: query.status } : {};
+  const [pendingCount, approvedCount, rejectedCount, byTypeRenewal, byTypeCheckout] = await Promise.all([
+    Request.countDocuments({ status: 'pending' }),
+    Request.countDocuments({ status: 'approved' }),
+    Request.countDocuments({ status: 'rejected' }),
+    Request.countDocuments({ ...summaryFilter, type: 'renewal' }),
+    Request.countDocuments({ ...summaryFilter, type: 'checkout' }),
   ]);
+
+  const summary = {
+    pending: pendingCount,
+    approved: approvedCount,
+    rejected: rejectedCount,
+    byType: {
+      all: byTypeRenewal + byTypeCheckout,
+      renewal: byTypeRenewal,
+      checkout: byTypeCheckout,
+    },
+  };
+
+  const sort = query.status === 'pending'
+    ? { createdAt: -1 }
+    : { reviewedAt: -1, createdAt: -1 };
+
+  let requests = await Request.find(filter)
+    .populate('studentId', 'studentCode fullName phone className')
+    .populate({
+      path: 'contractId',
+      select: 'contractCode startDate endDate monthlyPrice depositAmount bedId',
+      populate: {
+        path: 'bedId',
+        select: 'bedCode roomId',
+        populate: {
+          path: 'roomId',
+          select: 'roomNumber buildingId',
+          populate: { path: 'buildingId', select: 'name code' },
+        },
+      },
+    })
+    .sort(sort);
+
+  if (query.search) {
+    const s = query.search.trim().toLowerCase();
+    requests = requests.filter((r) => {
+      const reqCode = r.requestCode?.toLowerCase() || '';
+      const stuCode = r.studentId?.studentCode?.toLowerCase() || '';
+      const stuName = r.studentId?.fullName?.toLowerCase() || '';
+      const cCode = r.contractId?.contractCode?.toLowerCase() || '';
+      const bedCode = r.contractId?.bedId?.bedCode?.toLowerCase() || '';
+      return reqCode.includes(s) || stuCode.includes(s) || stuName.includes(s) || cCode.includes(s) || bedCode.includes(s);
+    });
+  }
+
+  const total = requests.length;
+  const paginated = requests.slice(skip, skip + limit);
+
+  const items = await Promise.all(
+    paginated.map(async (r) => {
+      const studentDebt = r.studentId ? await calculateStudentDebt(r.studentId._id) : 0;
+      const contract = r.contractId;
+      const bed = contract?.bedId;
+      const room = bed?.roomId;
+      const building = room?.buildingId;
+
+      return {
+        id: r._id.toString(),
+        requestCode: r.requestCode,
+        studentId: r.studentId?._id?.toString() || null,
+        studentCode: r.studentId?.studentCode || '',
+        studentName: r.studentId?.fullName || '',
+        contractId: contract?._id?.toString() || null,
+        contractCode: contract?.contractCode || '',
+        bedCode: bed?.bedCode || '',
+        roomNumber: room?.roomNumber || '',
+        buildingName: building?.name || '',
+        buildingCode: building?.code || '',
+        type: r.type,
+        reason: r.reason,
+        requestedEndDate: r.requestedEndDate,
+        contractEndDate: contract?.endDate || null,
+        status: r.status,
+        outstandingDebt: studentDebt,
+        createdAt: r.createdAt,
+        reviewedAt: r.reviewedAt,
+        reviewNote: r.reviewNote,
+        settlement: r.settlement,
+        renewal: r.renewal,
+      };
+    })
+  );
 
   return {
     items,
     total,
     page,
     limit,
+    summary,
   };
 };
 
 /**
- * Lấy chi tiết 1 yêu cầu kèm tổng nợ hiện tại của sinh viên (API.md §9 GET /api/requests/:id).
+ * Lấy chi tiết một yêu cầu gia hạn/trả phòng
  */
-const getRequestById = async (id, user = null) => {
+const getRequestById = async (id) => {
   const request = await Request.findById(id)
-    .populate('studentId', 'fullName studentCode phone email gender')
+    .populate('studentId')
     .populate({
       path: 'contractId',
-      populate: { path: 'residencyId', populate: { path: 'bedId' } },
-    })
-    .populate('reviewedBy', 'fullName email');
+      populate: {
+        path: 'bedId',
+        populate: {
+          path: 'roomId',
+          populate: [
+            { path: 'buildingId' },
+            { path: 'roomTypeId' },
+          ],
+        },
+      },
+    });
 
   if (!request) {
     throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy yêu cầu');
   }
 
-  if (user && user.role === 'student') {
-    const ownerId = request.studentId?._id?.toString() || request.studentId?.toString();
-    if (ownerId !== user.studentId?.toString()) {
-      throw new ApiError(403, 'FORBIDDEN', 'Bạn không có quyền xem yêu cầu của sinh viên khác');
-    }
-  }
+  const student = request.studentId;
+  const contract = request.contractId;
+  const bed = contract?.bedId;
+  const room = bed?.roomId;
+  const roomType = room?.roomTypeId;
 
-  // Tính tổng nợ chưa thanh toán của sinh viên
-  const studentObjId = request.studentId?._id || request.studentId;
+  // Lấy các hóa đơn chưa thanh toán của sinh viên
   const unpaidInvoices = await Invoice.find({
-    studentId: studentObjId,
+    studentId: student?._id,
     status: { $in: ['unpaid', 'partial', 'overdue'] },
-  });
+  }).sort({ dueDate: 1 });
 
   const outstandingDebt = unpaidInvoices.reduce(
     (sum, inv) => sum + (inv.totalAmount - (inv.paidAmount || 0)),
     0
   );
 
-  const requestObj = request.toJSON();
-  requestObj.outstandingDebt = outstandingDebt;
+  let unpaidSupplyOrders = 0;
+  let readySupplyOrders = 0;
+  if (mongoose.models.SupplyOrder) {
+    unpaidSupplyOrders = await mongoose.models.SupplyOrder.countDocuments({
+      studentId: student?._id,
+      status: 'pending_payment',
+    });
+    readySupplyOrders = await mongoose.models.SupplyOrder.countDocuments({
+      studentId: student?._id,
+      status: 'ready',
+    });
+  }
 
-  return requestObj;
+  const result = {
+    id: request._id.toString(),
+    requestCode: request.requestCode,
+    type: request.type,
+    status: request.status,
+    reason: request.reason,
+    requestedEndDate: request.requestedEndDate,
+    createdAt: request.createdAt,
+    reviewedAt: request.reviewedAt,
+    reviewNote: request.reviewNote,
+    student: student ? {
+      id: student._id.toString(),
+      studentCode: student.studentCode,
+      fullName: student.fullName,
+      gender: student.gender,
+      className: student.className,
+      phone: student.phone,
+    } : null,
+    contract: contract ? {
+      id: contract._id.toString(),
+      contractCode: contract.contractCode,
+      status: contract.status,
+      startDate: contract.startDate,
+      endDate: contract.endDate,
+      monthlyPrice: contract.monthlyPrice,
+      depositAmount: contract.depositAmount,
+      bedCode: bed?.bedCode || '',
+      roomTypeName: roomType?.name || '',
+    } : null,
+    unpaidInvoices: unpaidInvoices.map((inv) => ({
+      id: inv._id.toString(),
+      invoiceCode: inv.invoiceCode,
+      type: inv.type,
+      billingPeriod: inv.billingPeriod,
+      dueDate: inv.dueDate.toISOString().slice(0, 10),
+      remainingAmount: inv.totalAmount - (inv.paidAmount || 0),
+    })),
+    unpaidSupplyOrders,
+    readySupplyOrders,
+  };
+
+  // Nếu là pending checkout -> kèm settlementPreview & checklist
+  if (request.status === 'pending' && request.type === 'checkout') {
+    const depositAmount = contract?.depositAmount || 0;
+    const refundAmount = Math.max(0, depositAmount - outstandingDebt);
+    const studentStillOwes = Math.max(0, outstandingDebt - depositAmount);
+
+    result.settlementPreview = {
+      checkoutDate: request.requestedEndDate.toISOString().slice(0, 10),
+      depositAmount,
+      outstandingDebt,
+      proratedRent: 0,
+      proratedDays: 0,
+      daysInMonth: 30,
+      proratedPeriod: null,
+      refundAmount,
+      studentStillOwes,
+      cancelledSupplyOrders: unpaidSupplyOrders,
+    };
+
+    result.checklist = {
+      utilityPeriod: new Date().toISOString().slice(0, 7),
+      utilityReadingRecorded: true,
+      readySupplyOrders,
+    };
+  }
+
+  // Nếu là pending renewal -> kèm renewalPreview
+  if (request.status === 'pending' && request.type === 'renewal' && contract) {
+    const currEnd = new Date(contract.endDate);
+    const reqEnd = new Date(request.requestedEndDate);
+    const extraMonths = Math.max(
+      1,
+      (reqEnd.getFullYear() - currEnd.getFullYear()) * 12 + (reqEnd.getMonth() - currEnd.getMonth())
+    );
+
+    result.renewalPreview = {
+      currentEndDate: currEnd.toISOString().slice(0, 10),
+      requestedEndDate: reqEnd.toISOString().slice(0, 10),
+      extraMonths,
+    };
+  }
+
+  // Nếu đã xử lý -> kèm kết quả lưu trữ
+  if (request.status === 'approved') {
+    result.settlement = request.settlement;
+    result.renewal = request.renewal;
+  }
+
+  return result;
 };
 
 /**
- * Sinh viên hủy yêu cầu của chính mình khi còn pending (API.md §10 DELETE /api/portal/my-requests/:id).
+ * Sinh viên nộp yêu cầu gia hạn hoặc trả phòng
  */
-const cancelRequest = async (id, user) => {
-  const request = await Request.findById(id);
+const createRequest = async ({ type, requestedEndDate, reason, contractId }, studentId) => {
+  let targetContractId = contractId;
+
+  if (!targetContractId) {
+    const activeContract = await Contract.findOne({ studentId, status: 'active' });
+    if (!activeContract) {
+      throw new ApiError(422, 'CONTRACT_NOT_ACTIVE', 'Bạn chưa có hợp đồng đang hiệu lực');
+    }
+    targetContractId = activeContract._id;
+  }
+
+  const contract = await Contract.findOne({ _id: targetContractId, studentId, status: 'active' });
+  if (!contract) {
+    throw new ApiError(422, 'CONTRACT_NOT_ACTIVE', 'Hợp đồng không tồn tại hoặc không ở trạng thái hiệu lực');
+  }
+
+  const reqDate = new Date(requestedEndDate);
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  // BR-72: Gia hạn thì ngày mới phải sau ngày kết thúc hiện tại
+  if (type === 'renewal') {
+    if (reqDate <= new Date(contract.endDate)) {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'Ngày gia hạn phải sau ngày kết thúc hợp đồng hiện tại',
+        { errors: [{ field: 'requestedEndDate', message: 'Ngày gia hạn phải sau ngày kết thúc hợp đồng' }] }
+      );
+    }
+  }
+
+  // Trả phòng thì ngày trả phòng phải từ hôm nay tới ngày kết thúc hợp đồng, lý do bắt buộc
+  if (type === 'checkout') {
+    if (reqDate < now || reqDate > new Date(contract.endDate)) {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'Ngày trả phòng phải nằm trong khoảng từ hôm nay đến ngày kết thúc hợp đồng',
+        { errors: [{ field: 'requestedEndDate', message: 'Ngày trả phòng không hợp lệ' }] }
+      );
+    }
+    if (!reason || reason.trim() === '') {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'Lý do trả phòng là bắt buộc',
+        { errors: [{ field: 'reason', message: 'Lý do trả phòng là bắt buộc' }] }
+      );
+    }
+  }
+
+  // BR-pending: Không được gửi trùng loại yêu cầu đang pending
+  const existingPending = await Request.findOne({
+    contractId: contract._id,
+    type,
+    status: 'pending',
+  });
+  if (existingPending) {
+    throw new ApiError(
+      409,
+      'DUPLICATE_PENDING_REQUEST',
+      'Bạn đã có một yêu cầu cùng loại đang chờ xử lý'
+    );
+  }
+
+  const requestCode = generateRequestCode();
+
+  const request = await Request.create({
+    requestCode,
+    studentId,
+    contractId: contract._id,
+    type,
+    reason: reason || '',
+    requestedEndDate: reqDate,
+    status: 'pending',
+  });
+
+  return {
+    id: request._id.toString(),
+    requestCode: request.requestCode,
+    type: request.type,
+    status: request.status,
+    requestedEndDate: request.requestedEndDate,
+  };
+};
+
+/**
+ * Duyệt yêu cầu (Renewal hoặc Checkout)
+ */
+const approveRequest = async (requestId, body = {}, reviewerUserId) => {
+  const request = await Request.findById(requestId);
   if (!request) {
     throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy yêu cầu');
   }
 
-  if (user && user.role === 'student') {
-    const ownerId = request.studentId?._id?.toString() || request.studentId?.toString();
-    if (ownerId !== user.studentId?.toString()) {
-      throw new ApiError(403, 'FORBIDDEN', 'Bạn không có quyền hủy yêu cầu của sinh viên khác');
-    }
-  }
-
   if (request.status !== 'pending') {
-    throw new ApiError(422, 'REQUEST_NOT_PENDING', 'Chỉ có thể hủy yêu cầu đang ở trạng thái chờ xử lý (pending)');
+    throw new ApiError(422, 'REQUEST_NOT_PENDING', 'Yêu cầu đã được xử lý hoặc bị hủy');
   }
 
-  request.status = 'cancelled';
-  await request.save();
-
-  return request;
-};
-
-/**
- * Nhân viên duyệt yêu cầu Gia hạn hoặc Trả phòng (API.md §9 PATCH /api/requests/:id/approve).
- */
-const approveRequest = async (id, body = {}, actorId) => {
-  const request = await Request.findById(id).populate('contractId');
-  if (!request) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy yêu cầu cần duyệt');
+  const contract = await Contract.findById(request.contractId);
+  if (!contract || contract.status !== 'active') {
+    throw new ApiError(422, 'CONTRACT_NOT_ACTIVE', 'Hợp đồng liên quan không còn ở trạng thái hiệu lực');
   }
 
-  if (request.status !== 'pending') {
-    throw new ApiError(422, 'REQUEST_NOT_PENDING', 'Yêu cầu này đã được xử lý hoặc đã bị hủy');
-  }
+  const now = new Date();
 
-  const contract = await Contract.findById(request.contractId._id || request.contractId);
-  if (!contract) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hợp đồng liên quan');
-  }
-
-  // ========================================================
-  // TRƯỜNG HỢP 1: DUYỆT GIA HẠN HỢP ĐỒNG (RENEWAL)
-  // ========================================================
+  // ==========================================
+  // 1. Duyệt Gia hạn hợp đồng (Renewal)
+  // ==========================================
   if (request.type === 'renewal') {
-    const newEndDate = body.requestedEndDate
-      ? new Date(body.requestedEndDate)
-      : new Date(request.requestedEndDate);
+    const previousEndDate = new Date(contract.endDate);
+    const newEndDate = new Date(request.requestedEndDate);
 
-    if (newEndDate <= contract.endDate) {
-      throw new ApiError(422, 'INVALID_END_DATE', 'Ngày kết thúc mới phải sau ngày kết thúc hợp đồng hiện tại');
+    if (newEndDate <= previousEndDate) {
+      throw new ApiError(422, 'VALIDATION_ERROR', 'Ngày gia hạn phải lớn hơn ngày kết thúc hợp đồng hiện tại');
     }
 
-    // 1. Kéo dài ngày kết thúc của Contract
+    const extraMonths = Math.max(
+      1,
+      (newEndDate.getFullYear() - previousEndDate.getFullYear()) * 12 + (newEndDate.getMonth() - previousEndDate.getMonth())
+    );
+
     contract.endDate = newEndDate;
+    contract.history.push({
+      at: now,
+      type: 'request_renewal',
+      title: 'Duyệt gia hạn hợp đồng',
+      description: `Gia hạn thêm ${extraMonths} tháng đến ${newEndDate.toISOString().slice(0, 10)}`,
+    });
     await contract.save();
 
-    // 2. Kéo dài ngày kết thúc của Residency
-    if (contract.residencyId) {
-      const residency = await Residency.findById(contract.residencyId);
-      if (residency) {
-        residency.endDate = newEndDate;
-        await residency.save();
+    // Sinh hóa đơn tháng cho các kỳ gia hạn (BR-73)
+    const rentFeeType = await FeeType.findOne({ code: 'rent' });
+    let periodCursor = new Date(previousEndDate);
+    periodCursor.setMonth(periodCursor.getMonth() + 1);
+
+    while (periodCursor <= newEndDate) {
+      const periodStr = `${periodCursor.getFullYear()}-${String(periodCursor.getMonth() + 1).padStart(2, '0')}`;
+      const dueDate = new Date(periodCursor.getFullYear(), periodCursor.getMonth(), 10);
+
+      const existingInv = await Invoice.findOne({
+        studentId: contract.studentId,
+        billingPeriod: periodStr,
+        type: 'monthly',
+      });
+
+      if (!existingInv) {
+        await Invoice.create({
+          invoiceCode: generateInvoiceCode(now),
+          studentId: contract.studentId,
+          contractId: contract._id,
+          type: 'monthly',
+          billingPeriod: periodStr,
+          lineItems: [
+            {
+              feeTypeId: rentFeeType?._id || null,
+              description: `Tiền phòng kỳ gia hạn (${periodStr})`,
+              quantity: 1,
+              unitPrice: contract.monthlyPrice,
+              amount: contract.monthlyPrice,
+            },
+          ],
+          totalAmount: contract.monthlyPrice,
+          paidAmount: 0,
+          dueDate,
+          status: 'unpaid',
+          createdBy: reviewerUserId,
+        });
       }
+
+      periodCursor.setMonth(periodCursor.getMonth() + 1);
     }
 
-    // 3. Cập nhật trạng thái Request
     request.status = 'approved';
-    request.reviewedBy = actorId;
-    request.reviewedAt = new Date();
-    request.reviewNote = body.staffNote || 'Duyệt gia hạn hợp đồng thành công';
+    request.reviewedBy = reviewerUserId;
+    request.reviewedAt = now;
+    request.renewal = {
+      previousEndDate,
+      newEndDate,
+      extraMonths,
+    };
     await request.save();
 
     return {
-      request,
-      contract,
+      request: {
+        id: request._id.toString(),
+        status: request.status,
+      },
+      renewal: request.renewal,
+      settlement: null,
     };
   }
 
-  // ========================================================
-  // TRƯỜNG HỢP 2: DUYỆT TRẢ PHÒNG & QUYẾT TOÁN CỌC (CHECKOUT - PRD §2.9 A3, BR-33, BR-34)
-  // ========================================================
+  // ==========================================
+  // 2. Duyệt Trả phòng (Checkout) & Quyết toán Cọc
+  // ==========================================
   if (request.type === 'checkout') {
-    // 1. Tính tổng nợ chưa thanh toán của sinh viên
-    const unpaidInvoices = await Invoice.find({
-      studentId: request.studentId,
-      status: { $in: ['unpaid', 'partial', 'overdue'] },
-    });
+    const checkoutDate = body.actualCheckoutDate ? new Date(body.actualCheckoutDate) : new Date(request.requestedEndDate);
 
-    const outstandingDebt = unpaidInvoices.reduce(
-      (sum, inv) => sum + (inv.totalAmount - (inv.paidAmount || 0)),
-      0
-    );
+    // 1. Hủy các đơn nhu yếu phẩm chưa thanh toán (BR-97)
+    let cancelledSupplyOrders = 0;
+    if (mongoose.models.SupplyOrder) {
+      const cancelRes = await mongoose.models.SupplyOrder.updateMany(
+        { studentId: contract.studentId, status: 'pending_payment' },
+        { status: 'cancelled', cancelReason: 'Trả phòng KTX' }
+      );
+      cancelledSupplyOrders = cancelRes.modifiedCount || 0;
+    }
 
-    // Kiểm tra forceConfirm nếu sinh viên còn nợ tiền (API.md §9, BR-33)
+    // 2. Tính công nợ chưa trả (sau khi hủy đơn hàng chưa nhận)
+    const outstandingDebt = await calculateStudentDebt(contract.studentId);
+
+    // 3. Kiểm tra nợ chưa trả: nếu còn nợ mà không có forceConfirm: true thì chặn (PRD §2.9 A3)
     if (outstandingDebt > 0 && !body.forceConfirm) {
       throw new ApiError(
         422,
@@ -252,134 +518,246 @@ const approveRequest = async (id, body = {}, actorId) => {
       );
     }
 
-    const residency = await Residency.findById(contract.residencyId);
+    // 4. Quyết toán cọc (A3 settlement)
     const depositAmount = contract.depositAmount || 0;
-    const refund = depositAmount - outstandingDebt;
-    const checkoutDate = body.actualCheckoutDate ? new Date(body.actualCheckoutDate) : new Date();
+    const refundAmount = Math.max(0, depositAmount - outstandingDebt);
+    const studentStillOwes = Math.max(0, outstandingDebt - depositAmount);
+    const refundMethod = body.refundMethod || 'cash';
 
-    let settlementInvoice = null;
-    let refundPayment = null;
+    let settlementInvoiceId = null;
+    let refundPaymentId = null;
 
-    if (refund > 0) {
-      // Tiền cọc lớn hơn số nợ -> Hoàn lại phần chênh lệch cho sinh viên
-      contract.depositRefunded = refund;
-      contract.depositStatus = 'refunded';
-
-      // Ghi nhận bản ghi thanh toán hoàn cọc (Payment type: 'refund') theo DATA-SCHEMA.md §4
-      refundPayment = await Payment.create({
-        studentId: request.studentId,
-        amount: refund,
-        paymentMethod: 'cash',
+    // Nếu có tiền hoàn cọc -> ghi nhận Payment refund (BR-77)
+    if (refundAmount > 0) {
+      const refundPayment = await Payment.create({
+        studentId: contract.studentId,
+        amount: refundAmount,
         type: 'refund',
-        transactionId: `REFUND-${Date.now()}`,
-        status: 'completed',
-        paidAt: new Date(),
-        note: `Hoàn trả cọc sau khi trừ nợ (Cọc: ${depositAmount.toLocaleString()}đ - Nợ: ${outstandingDebt.toLocaleString()}đ)`,
-        recordedBy: actorId,
+        method: refundMethod,
+        transactionRef: generateTransactionRef(),
+        status: 'success',
+        paidAt: now,
+        recordedBy: reviewerUserId,
+        note: 'Hoàn trả tiền cọc khi trả phòng KTX',
       });
-    } else {
-      // Tiền cọc bị trừ hết do nợ
-      contract.depositRefunded = 0;
-      contract.depositStatus = 'forfeited';
+      refundPaymentId = refundPayment._id;
+    }
 
-      if (refund < 0) {
-        // Sinh viên còn thiếu tiền nợ sau khi đã cấn trừ hết cọc
-        const studentStillOwes = Math.abs(refund);
-        settlementInvoice = await Invoice.create({
-          invoiceCode: `SETTLE-${Date.now()}`,
-          studentId: request.studentId,
-          contractId: contract._id,
-          type: 'settlement',
-          items: [
-            {
-              feeTypeCode: 'other',
-              name: 'Công nợ còn lại sau khi khấu trừ tiền cọc',
-              quantity: 1,
-              unitPrice: studentStillOwes,
-              amount: studentStillOwes,
-            },
-          ],
-          totalAmount: studentStillOwes,
-          paidAmount: 0,
-          dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
-          status: 'unpaid',
-        });
+    // Nếu nợ vượt quá cọc -> tạo hóa đơn settlement cho khoản chênh lệch
+    if (studentStillOwes > 0) {
+      const settleFeeType = await FeeType.findOne({ code: 'other' });
+      const settleInvoice = await Invoice.create({
+        invoiceCode: generateInvoiceCode(now),
+        studentId: contract.studentId,
+        contractId: contract._id,
+        type: 'settlement',
+        billingPeriod: null,
+        lineItems: [
+          {
+            feeTypeId: settleFeeType?._id || null,
+            description: 'Quyết toán công nợ còn thiếu sau khi trừ tiền cọc',
+            quantity: 1,
+            unitPrice: studentStillOwes,
+            amount: studentStillOwes,
+          },
+        ],
+        totalAmount: studentStillOwes,
+        paidAmount: 0,
+        dueDate: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
+        status: 'unpaid',
+        createdBy: reviewerUserId,
+      });
+      settlementInvoiceId = settleInvoice._id;
+    }
+
+    // Nếu tiền cọc đủ trừ nợ, tất toán các hóa đơn cũ chưa thanh toán
+    if (depositAmount >= outstandingDebt && outstandingDebt > 0) {
+      const unpaidInvoices = await Invoice.find({
+        studentId: contract.studentId,
+        status: { $in: ['unpaid', 'partial', 'overdue'] },
+      });
+      for (const inv of unpaidInvoices) {
+        inv.paidAmount = inv.totalAmount;
+        inv.status = 'paid';
+        await inv.save();
       }
     }
 
-    // 2. Cascade: Chấm dứt hợp đồng sang 'terminated'
+    // 5. Cập nhật hợp đồng Contract -> terminated
     contract.status = 'terminated';
+    contract.terminatedAt = checkoutDate;
+    contract.terminationReason = `Trả phòng theo yêu cầu ${request.requestCode}`;
+    contract.depositRefunded = refundAmount;
+    contract.history.push({
+      at: now,
+      type: 'request_checkout',
+      title: 'Duyệt trả phòng',
+      description: `Quyết toán cọc hoàn: ${refundAmount.toLocaleString('vi-VN')} đ`,
+    });
     await contract.save();
 
-    // 3. Cascade: Đóng bản ghi lưu trú sang 'ended' / 'closed'
-    if (residency) {
-      residency.status = 'ended';
-      residency.endDate = checkoutDate;
-      await residency.save();
+    // 6. Đóng lưu trú Residency
+    await Residency.findByIdAndUpdate(contract.residencyId, {
+      status: 'closed',
+      endDate: checkoutDate,
+    });
 
-      // 4. Cascade: Giải phóng giường về 'available'
-      if (residency.bedId) {
-        await Bed.findByIdAndUpdate(residency.bedId, { status: 'available' });
-      }
-    }
+    // 7. Giải phóng giường về available
+    await Bed.findByIdAndUpdate(contract.bedId, {
+      status: 'available',
+      note: null,
+    });
 
-    // 5. Lưu kết quả quyết toán vào Request
+    // 8. Hủy các yêu cầu khác đang pending của hợp đồng
+    await Request.updateMany(
+      { contractId: contract._id, _id: { $ne: request._id }, status: 'pending' },
+      { status: 'cancelled', reviewNote: 'Hợp đồng đã kết thúc do duyệt trả phòng' }
+    );
+
+    // 9. Cập nhật yêu cầu
     const settlementData = {
       outstandingDebt,
       depositAmount,
-      refundAmount: Math.max(0, refund),
-      studentStillOwes: refund < 0 ? Math.abs(refund) : 0,
-      settlementInvoiceId: settlementInvoice ? settlementInvoice._id : null,
-      refundPaymentId: refundPayment ? refundPayment._id : null,
-      settledAt: new Date(),
-      settledBy: actorId,
+      refundAmount,
+      studentStillOwes,
+      proratedRent: 0,
+      refundMethod,
+      settlementInvoiceId,
+      refundPaymentId,
+      cancelledSupplyOrders,
+      settledAt: now,
+      settledBy: reviewerUserId,
     };
 
     request.status = 'approved';
-    request.reviewedBy = actorId;
-    request.reviewedAt = new Date();
-    request.reviewNote = body.staffNote || 'Duyệt trả phòng và quyết toán cọc hoàn tất';
+    request.reviewedBy = reviewerUserId;
+    request.reviewedAt = now;
     request.settlement = settlementData;
     await request.save();
 
     return {
-      request,
-      settlement: settlementData,
+      request: {
+        id: request._id.toString(),
+        status: request.status,
+      },
+      settlement: {
+        outstandingDebt,
+        depositAmount,
+        refundAmount,
+        studentStillOwes,
+        proratedRent: 0,
+        refundMethod,
+        settlementInvoiceId: settlementInvoiceId ? settlementInvoiceId.toString() : null,
+        cancelledSupplyOrders,
+      },
     };
   }
 };
 
 /**
- * Nhân viên từ chối yêu cầu (API.md §9 PATCH /api/requests/:id/reject).
+ * Từ chối yêu cầu
  */
-const rejectRequest = async (id, body, actorId) => {
-  const request = await Request.findById(id);
+const rejectRequest = async (requestId, { reviewNote }, reviewerUserId) => {
+  const request = await Request.findById(requestId);
   if (!request) {
     throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy yêu cầu');
   }
 
   if (request.status !== 'pending') {
-    throw new ApiError(422, 'REQUEST_NOT_PENDING', 'Yêu cầu này đã được xử lý hoặc đã bị hủy');
-  }
-
-  if (!body.reviewNote || !body.reviewNote.trim()) {
-    throw new ApiError(400, 'BAD_REQUEST', 'Lý do từ chối là bắt buộc');
+    throw new ApiError(422, 'REQUEST_NOT_PENDING', 'Yêu cầu đã được xử lý hoặc bị hủy');
   }
 
   request.status = 'rejected';
-  request.reviewNote = body.reviewNote.trim();
-  request.reviewedBy = actorId;
+  request.reviewNote = reviewNote;
+  request.reviewedBy = reviewerUserId;
   request.reviewedAt = new Date();
   await request.save();
 
-  return request;
+  return {
+    id: request._id.toString(),
+    status: request.status,
+    reviewNote: request.reviewNote,
+    reviewedAt: request.reviewedAt,
+  };
+};
+
+/**
+ * Sinh viên hủy yêu cầu của chính mình (chỉ khi còn pending)
+ */
+const cancelRequest = async (requestId, studentId) => {
+  const request = await Request.findOne({ _id: requestId, studentId });
+  if (!request) {
+    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy yêu cầu');
+  }
+
+  if (request.status !== 'pending') {
+    throw new ApiError(
+      422,
+      'REQUEST_NOT_PENDING',
+      'Yêu cầu đã được xử lý hoặc bị hủy, không thể hủy tiếp'
+    );
+  }
+
+  request.status = 'cancelled';
+  await request.save();
+
+  return { message: 'Đã hủy yêu cầu thành công' };
+};
+
+/**
+ * Lấy danh sách yêu cầu của sinh viên cho cổng sinh viên
+ */
+const getMyRequests = async (studentId) => {
+  const requests = await Request.find({ studentId })
+    .populate({
+      path: 'contractId',
+      select: 'contractCode startDate endDate monthlyPrice depositAmount bedId',
+      populate: {
+        path: 'bedId',
+        select: 'bedCode roomId',
+        populate: {
+          path: 'roomId',
+          select: 'roomNumber buildingId',
+          populate: { path: 'buildingId', select: 'name code' },
+        },
+      },
+    })
+    .sort({ createdAt: -1 });
+
+  return requests.map((r) => {
+    const contract = r.contractId;
+    const bed = contract?.bedId;
+    const room = bed?.roomId;
+    const building = room?.buildingId;
+
+    return {
+      id: r._id.toString(),
+      requestCode: r.requestCode,
+      type: r.type,
+      reason: r.reason,
+      requestedEndDate: r.requestedEndDate,
+      contractCode: contract?.contractCode || '',
+      bedCode: bed?.bedCode || '',
+      roomNumber: room?.roomNumber || '',
+      buildingName: building?.name || '',
+      buildingCode: building?.code || '',
+      contractEndDate: contract?.endDate || null,
+      status: r.status,
+      createdAt: r.createdAt,
+      reviewedAt: r.reviewedAt,
+      reviewNote: r.reviewNote,
+      renewal: r.renewal,
+      settlement: r.settlement,
+    };
+  });
 };
 
 module.exports = {
-  createRequest,
   getRequests,
   getRequestById,
-  cancelRequest,
+  createRequest,
   approveRequest,
   rejectRequest,
+  cancelRequest,
+  getMyRequests,
 };

@@ -10,22 +10,55 @@ const ApiError = require('../../core/errors/api-error');
 const { generateToken } = require('../../core/utils/jwt');
 
 /**
+ * Sinh mật khẩu tạm thời ngẫu nhiên tuân thủ BR-85
+ * (Có ít nhất chữ hoa, chữ thường, chữ số, độ dài 10 ký tự)
+ */
+const generateTemporaryPassword = (length = 10) => {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const digits = '23456789';
+  const all = upper + lower + digits;
+
+  const chars = [
+    upper[crypto.randomInt(0, upper.length)],
+    lower[crypto.randomInt(0, lower.length)],
+    digits[crypto.randomInt(0, digits.length)],
+  ];
+
+  for (let i = 3; i < length; i++) {
+    chars.push(all[crypto.randomInt(0, all.length)]);
+  }
+
+  // Shuffle mảng ký tự
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+
+  return chars.join('');
+};
+
+/**
  * Đăng ký tài khoản tự phục vụ cho sinh viên.
  * Vai trò bắt buộc là 'student' ở phía server (API.md §2).
  */
 const register = async (data) => {
   const { email, password, fullName, studentCode, phone, gender, className, faculty } = data;
 
-  // 1. Kiểm tra trùng email
+  // 1. Kiểm tra trùng email (G5: DUPLICATE_ENTRY + data.errors)
   const existingUser = await User.findOne({ email: email.toLowerCase() });
   if (existingUser) {
-    throw new ApiError(409, 'EMAIL_ALREADY_EXISTS', 'Email này đã được sử dụng');
+    throw new ApiError(409, 'DUPLICATE_ENTRY', 'Email đã tồn tại trong hệ thống', {
+      errors: [{ field: 'email', message: 'Email này đã được sử dụng' }],
+    });
   }
 
   // 2. Kiểm tra trùng mã số sinh viên
   const existingStudent = await Student.findOne({ studentCode: studentCode.toUpperCase() });
   if (existingStudent) {
-    throw new ApiError(409, 'STUDENT_CODE_ALREADY_EXISTS', 'Mã số sinh viên này đã tồn tại trong hệ thống');
+    throw new ApiError(409, 'DUPLICATE_ENTRY', 'Mã sinh viên đã tồn tại', {
+      errors: [{ field: 'studentCode', message: 'Mã số sinh viên này đã tồn tại trong hệ thống' }],
+    });
   }
 
   // 3. Hash mật khẩu và tạo User
@@ -176,21 +209,26 @@ const changePassword = async (userId, { oldPassword, newPassword }) => {
 
 /**
  * Admin hoặc Staff đặt lại mật khẩu tạm thời cho người dùng (FR-09, API.md §2).
- * Quy tắc: Staff không được đặt lại mật khẩu của Admin!
+ * Quy tắc: Staff không được đặt lại mật khẩu của Admin (BR-84); không được tự reset mình.
  */
-const resetPassword = async (targetUserId, actorRole) => {
+const resetPassword = async (targetUserId, actorRole, actorUserId) => {
+  // Không được tự reset mật khẩu của chính mình
+  if (actorUserId && actorUserId.toString() === targetUserId.toString()) {
+    throw new ApiError(422, 'CANNOT_MODIFY_SELF', 'Không thể tự đặt lại mật khẩu cho chính mình (vui lòng sử dụng tính năng Đổi mật khẩu)');
+  }
+
   const targetUser = await User.findById(targetUserId);
   if (!targetUser) {
     throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy tài khoản người dùng cần reset mật khẩu');
   }
 
-  // Quy tắc kiểm tra phân quyền bảo mật (API.md §2)
+  // Quy tắc kiểm tra phân quyền bảo mật (API.md §2, BR-84)
   if (actorRole === 'staff' && targetUser.role === 'admin') {
     throw new ApiError(403, 'FORBIDDEN', 'Nhân viên không có quyền đặt lại mật khẩu cho tài khoản Quản trị viên');
   }
 
-  // Sinh mật khẩu ngẫu nhiên 10 ký tự gồm chữ và số
-  const temporaryPassword = crypto.randomBytes(5).toString('hex');
+  // Sinh mật khẩu ngẫu nhiên 10 ký tự tuân thủ BR-85 (gồm chữ hoa, chữ thường và số)
+  const temporaryPassword = generateTemporaryPassword(10);
   targetUser.passwordHash = await User.hashPassword(temporaryPassword);
   targetUser.mustChangePassword = true;
   await targetUser.save();
@@ -203,6 +241,7 @@ const resetPassword = async (targetUserId, actorRole) => {
 };
 
 module.exports = {
+  generateTemporaryPassword,
   register,
   login,
   getMe,

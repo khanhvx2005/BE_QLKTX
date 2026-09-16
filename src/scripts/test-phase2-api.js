@@ -110,40 +110,41 @@ async function runPhase2Tests() {
       const femaleStudentId = createFemaleRes.body.data.id;
       console.log(`  ✅ Tạo sinh viên Nữ thành công (ID: ${femaleStudentId}, Mã: ${studentCodeFemale})`);
 
-      // Test 1.3: Chặn trùng mã sinh viên
+      // Test 1.3: Chặn tạo trùng mã sinh viên (trả về DUPLICATE_ENTRY theo v1.2)
       console.log('▶ Test 1.3: Chặn tạo trùng mã sinh viên...');
       const duplicateRes = await request('/api/students', 'POST', authHeader, {
-        fullName: 'Người Trùng Mã',
         studentCode: studentCodeMale,
+        fullName: 'Sinh viên Trùng Mã',
+        email: `sv.trung.${Date.now()}@dorm.local`,
+        phone: '0909999999',
         gender: 'male',
-        phone: '0912345673',
       });
-      console.assert(duplicateRes.status === 409, 'Phải trả về lỗi 409 Conflict');
-      console.assert(duplicateRes.body.code === 'STUDENT_CODE_ALREADY_EXISTS', 'Code phải là STUDENT_CODE_ALREADY_EXISTS');
-      console.log('  ✅ Chặn trùng mã sinh viên thành công (409 STUDENT_CODE_ALREADY_EXISTS)!');
+      console.assert(duplicateRes.status === 409, 'Phải trả về 409 Conflict');
+      console.assert(duplicateRes.body.code === 'DUPLICATE_ENTRY', 'Code phải là DUPLICATE_ENTRY');
+      console.log('  ✅ Chặn trùng mã sinh viên thành công (409 DUPLICATE_ENTRY)!');
 
-      // Test 1.4: Lấy danh sách sinh viên có tìm kiếm & phân trang
+      // Test 1.4: Tìm kiếm và phân trang sinh viên
       console.log('▶ Test 1.4: Tìm kiếm và phân trang sinh viên...');
-      const listRes = await request(`/api/students?search=${studentCodeMale}&page=1&limit=10`, 'GET', authHeader);
-      console.assert(listRes.status === 200, 'Lấy danh sách phải 200');
-      console.assert(listRes.body.data.items.length >= 1, 'Phải tìm thấy ít nhất 1 sinh viên');
-      console.assert(listRes.body.data.total >= 1, 'Total phải >= 1');
-      console.log(`  ✅ Tìm kiếm phân trang thành công (Tìm thấy ${listRes.body.data.total} sinh viên)!`);
+      const searchRes = await request(`/api/students?search=${studentCodeMale}&page=1&limit=10`, 'GET', authHeader);
+      console.assert(searchRes.status === 200, 'Tìm kiếm sinh viên phải 200');
+      console.assert(searchRes.body.data.items.length === 1, 'Phải tìm thấy đúng 1 sinh viên');
+      console.log(`  ✅ Tìm kiếm phân trang thành công (Tìm thấy ${searchRes.body.data.items.length} sinh viên)!`);
 
       // Test 1.5: Cập nhật thông tin sinh viên
       console.log('▶ Test 1.5: Cập nhật thông tin sinh viên...');
       const updateRes = await request(`/api/students/${maleStudentId}`, 'PUT', authHeader, {
-        phone: '0988888888',
-        className: 'D21CNTT-VIP',
+        fullName: 'Nguyễn Văn Nam (Đã cập nhật)',
+        phone: '0912345678',
+        faculty: 'Khoa Học Máy Tính',
       });
-      console.assert(updateRes.status === 200, 'Cập nhật phải 200');
-      console.assert(updateRes.body.data.phone === '0988888888', 'Phone phải được cập nhật');
+      console.assert(updateRes.status === 200, 'Cập nhật sinh viên phải 200');
+      console.assert(updateRes.body.data.fullName === 'Nguyễn Văn Nam (Đã cập nhật)', 'Tên phải được cập nhật');
       console.log('  ✅ Cập nhật sinh viên thành công!');
 
-      // Test 1.6: Vô hiệu hóa sinh viên (Soft delete)
+      // Test 1.6: Vô hiệu hóa sinh viên (soft delete)
       console.log('▶ Test 1.6: Vô hiệu hóa sinh viên...');
       const deactivateRes = await request(`/api/students/${femaleStudentId}/deactivate`, 'PATCH', authHeader);
-      console.assert(deactivateRes.status === 200, 'Vô hiệu hóa phải 200');
+      console.assert(deactivateRes.status === 200, 'Vô hiệu hóa sinh viên phải 200');
       console.assert(deactivateRes.body.data.status === 'inactive', 'Trạng thái phải là inactive');
       console.log('  ✅ Vô hiệu hóa sinh viên thành công (status: inactive)!');
 
@@ -164,54 +165,55 @@ async function runPhase2Tests() {
 
       const buildingId = buildingA.id || buildingA._id;
 
-      // Test 2.2: Tạo phòng mới có ràng buộc giới tính (A1, PRD §2.9)
-      console.log('▶ Test 2.2: Tạo phòng mới (yêu cầu bắt buộc gender)...');
+      // Lấy danh sách loại phòng để tạo phòng chuẩn v1.2
+      const roomTypesRes = await request('/api/room-types', 'GET', authHeader);
+      console.assert(roomTypesRes.status === 200, 'Lấy loại phòng phải 200');
+      const testRoomType = roomTypesRes.body.data.items[0];
+      const roomTypeId = testRoomType.id;
+
+      // Test 2.2: Tạo phòng mới có ràng buộc loại phòng và giới tính (v1.2)
+      console.log('▶ Test 2.2: Tạo phòng mới (yêu cầu roomTypeId và gender)...');
       const roomNumberTest = `102_${Date.now().toString().slice(-4)}`;
       const createRoomRes = await request('/api/rooms', 'POST', authHeader, {
         buildingId,
+        roomTypeId,
         roomNumber: roomNumberTest,
+        floor: 1,
         gender: 'male',
-        capacity: 6,
-        pricePerBed: 650000,
         status: 'active',
       });
       console.assert(createRoomRes.status === 201, 'Tạo phòng phải 201');
       console.assert(createRoomRes.body.data.gender === 'male', 'Giới tính phòng phải là male');
       const newRoomId = createRoomRes.body.data.id || createRoomRes.body.data._id;
-      console.log(`  ✅ Tạo phòng thành công: Phòng ${roomNumberTest} (Nam, sức chứa 6 giường)!`);
+      console.log(`  ✅ Tạo phòng thành công: Phòng ${roomNumberTest} (Nam, sức chứa ${testRoomType.capacity} giường tự sinh)!`);
 
       // Test 2.3: Chặn tạo trùng số phòng trong cùng 1 tòa nhà
       console.log('▶ Test 2.3: Chặn tạo trùng số phòng trong 1 tòa...');
       const duplicateRoomRes = await request('/api/rooms', 'POST', authHeader, {
         buildingId,
+        roomTypeId,
         roomNumber: roomNumberTest,
+        floor: 1,
         gender: 'male',
-        capacity: 4,
-        pricePerBed: 600000,
       });
       console.assert(duplicateRoomRes.status === 409, 'Phải trả về 409 Conflict');
-      console.assert(duplicateRoomRes.body.code === 'ROOM_NUMBER_ALREADY_EXISTS', 'Code phải là ROOM_NUMBER_ALREADY_EXISTS');
-      console.log('  ✅ Chặn trùng số phòng thành công (409 ROOM_NUMBER_ALREADY_EXISTS)!');
+      console.assert(duplicateRoomRes.body.code === 'DUPLICATE_ENTRY', 'Code phải là DUPLICATE_ENTRY');
+      console.log('  ✅ Chặn trùng số phòng thành công (409 DUPLICATE_ENTRY)!');
 
-      // Test 2.4: Tự động sinh danh sách giường theo sức chứa capacity (generateBeds)
-      console.log('▶ Test 2.4: Tự động sinh giường theo sức chứa (capacity 6)...');
-      const generateBedsRes = await request(`/api/rooms/${newRoomId}/beds/generate`, 'POST', authHeader);
-      console.assert(generateBedsRes.status === 201, 'Sinh giường phải 201');
-      console.assert(generateBedsRes.body.data.length === 6, 'Phải sinh đúng 6 giường');
-      console.log(`  ✅ Tự động sinh thành công 6 giường (Giường số 1 đến 6)!`);
+      // Test 2.4: Xem chi tiết phòng và danh sách giường tự động sinh ra (v1.2: GET /api/rooms/:id)
+      console.log('▶ Test 2.4: Chi tiết phòng và danh sách giường tự sinh...');
+      const roomDetailRes = await request(`/api/rooms/${newRoomId}`, 'GET', authHeader);
+      console.assert(roomDetailRes.status === 200, 'Lấy chi tiết phòng phải 200');
+      console.assert(roomDetailRes.body.data.beds.length === testRoomType.capacity, `Phải có đúng ${testRoomType.capacity} giường`);
+      const testBed = roomDetailRes.body.data.beds[0];
+      const testBedId = testBed.id;
+      console.log(`  ✅ Phòng tự sinh chuẩn ${roomDetailRes.body.data.beds.length} giường (${testBed.bedCode})!`);
 
-      // Test 2.5: Lấy danh sách giường trong phòng
-      console.log('▶ Test 2.5: Lấy danh sách giường trong phòng...');
-      const listBedsRes = await request(`/api/rooms/${newRoomId}/beds`, 'GET', authHeader);
-      console.assert(listBedsRes.status === 200, 'Lấy giường phải 200');
-      console.assert(listBedsRes.body.data.length === 6, 'Danh sách phải có 6 giường');
-      const testBedId = listBedsRes.body.data[0].id || listBedsRes.body.data[0]._id;
-      console.log('  ✅ Lấy danh sách giường thành công!');
-
-      // Test 2.6: Đổi trạng thái giường thủ công sang maintenance
-      console.log('▶ Test 2.6: Đổi trạng thái giường sang bảo trì (maintenance)...');
+      // Test 2.5: Đổi trạng thái giường sang bảo trì (maintenance)
+      console.log('▶ Test 2.5: Đổi trạng thái giường sang bảo trì (maintenance)...');
       const updateBedRes = await request(`/api/beds/${testBedId}/status`, 'PATCH', authHeader, {
         status: 'maintenance',
+        note: 'Hỏng dát giường cần sửa chữa',
       });
       console.assert(updateBedRes.status === 200, 'Đổi trạng thái giường phải 200');
       console.assert(updateBedRes.body.data.status === 'maintenance', 'Trạng thái phải là maintenance');

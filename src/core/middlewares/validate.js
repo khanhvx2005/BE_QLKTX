@@ -22,8 +22,8 @@ const validate = (schema, source = 'body') => {
     const dataToValidate = req[source] || {};
     const { error, value } = schema.validate(dataToValidate, {
       abortEarly: false, // Thu thập tất cả các lỗi thay vì dừng ở lỗi đầu tiên
-      allowUnknown: true, // Cho phép các trường không định nghĩa nếu cần
-      stripUnknown: false,
+      allowUnknown: true,
+      stripUnknown: true, // G2: Loại bỏ triệt để các trường ngoài schema (chống mass-assignment)
     });
 
     if (error) {
@@ -42,8 +42,21 @@ const validate = (schema, source = 'body') => {
       );
     }
 
-    // Gán lại giá trị đã qua sanitize / type coercion của Joi
-    req[source] = value;
+    // G1: Express 5 xử lý req.query an toàn (req.query là getter-only trong Express 5)
+    if (source === 'query') {
+      req.validatedQuery = value;
+      try {
+        for (const k of Object.keys(req.query)) {
+          delete req.query[k];
+        }
+        Object.assign(req.query, value);
+      } catch (e) {
+        // Nếu req.query bị đóng băng hoặc không cho sửa, req.validatedQuery sẽ là nguồn chính
+      }
+    } else {
+      req[source] = value;
+    }
+
     return next();
   };
 };

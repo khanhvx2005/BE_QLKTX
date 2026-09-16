@@ -49,23 +49,28 @@ app.get('/api/health', (req, res) => {
 });
 
 // 5. Nơi đăng ký các router của từng module (ARCHITECTURE.md §3.3)
-const authRoutes = require('./modules/auth/auth.routes');
-const authController = require('./modules/auth/auth.controller');
-const { authenticate, authorize } = require('./core/middlewares/auth');
 
+// Mount module auth (API.md §2)
+const authRoutes = require('./modules/auth/auth.routes');
 app.use('/api/auth', authRoutes);
-// Hỗ trợ endpoint reset-password theo đúng chuẩn API.md §2: POST /api/users/:id/reset-password
-app.post('/api/users/:id/reset-password', authenticate, authorize('admin', 'staff'), authController.resetPassword);
+
+// Mount module users: quản lý tài khoản (API.md §2.1, SCR-81)
+const userRoutes = require('./modules/auth/user.routes');
+app.use('/api/users', userRoutes);
 
 // Mount module students (API.md §3)
 const studentRoutes = require('./modules/students/student.routes');
 app.use('/api/students', studentRoutes);
 
-// Mount module rooms: buildings, rooms, beds (API.md §4)
+// Mount module rooms: buildings, room-types, rooms, beds (API.md §4)
 const roomRoutes = require('./modules/rooms/room.routes');
 app.use('/api', roomRoutes);
 
-// Mount module residencies (API.md §5)
+// Mount module applications: đơn đăng ký phòng (API.md §5.1)
+const applicationRoutes = require('./modules/residencies/application.routes');
+app.use('/api/applications', applicationRoutes);
+
+// Mount module residencies: tra cứu lưu trú (API.md §5)
 const residencyRoutes = require('./modules/residencies/residency.routes');
 app.use('/api/residencies', residencyRoutes);
 
@@ -81,12 +86,19 @@ app.use('/api', feeRoutes);
 const paymentRoutes = require('./modules/payments/payment.routes');
 app.use('/api/payments', paymentRoutes);
 
-// Mount module requests (API.md §9 & §10)
+// Mount module requests: yêu cầu gia hạn / trả phòng cho cán bộ (API.md §9)
 const requestRoutes = require('./modules/requests/request.routes');
 app.use('/api/requests', requestRoutes);
-app.use('/api/portal/my-requests', requestRoutes);
 
-// Mount module dashboard (API.md §11)
+// Mount module portal: cổng sinh viên tự phục vụ (API.md §10)
+const portalRoutes = require('./modules/portal/portal.routes');
+app.use('/api/portal', portalRoutes);
+
+// Mount module supplies: supply-items, supply-orders (API.md §11)
+const supplyRoutes = require('./modules/supplies/supply.routes');
+app.use('/api', supplyRoutes);
+
+// Mount module dashboard (API.md §12)
 const dashboardRoutes = require('./modules/dashboard/dashboard.routes');
 app.use('/api/dashboard', dashboardRoutes);
 

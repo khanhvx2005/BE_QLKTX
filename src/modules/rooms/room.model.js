@@ -1,7 +1,6 @@
 /**
- * Mongoose Schema cho collection Rooms.
- * Quản lý thông tin phòng KTX.
- * Tuân thủ theo DATA-SCHEMA.md §3.4 và PRD.md §2.9 (Quy tắc giới tính phòng A1).
+ * Mongoose Schema cho collection Rooms (DATA-SCHEMA.md §3.4, API.md §4).
+ * Quản lý thông tin phòng KTX theo mô hình v1.2 (gắn với RoomType, giường tự sinh).
  */
 
 const mongoose = require('mongoose');
@@ -14,11 +13,22 @@ const roomSchema = new mongoose.Schema(
       ref: 'Building',
       required: [true, 'Tòa nhà là bắt buộc'],
     },
+    roomTypeId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'RoomType',
+      required: [true, 'Loại phòng là bắt buộc'],
+    },
     roomNumber: {
       type: String,
       required: [true, 'Số phòng là bắt buộc'],
       trim: true,
       maxLength: [20, 'Số phòng tối đa 20 ký tự'],
+    },
+    floor: {
+      type: Number,
+      required: [true, 'Tầng là bắt buộc'],
+      min: [1, 'Tầng tối thiểu là 1'],
+      default: 1,
     },
     gender: {
       type: String,
@@ -33,11 +43,6 @@ const roomSchema = new mongoose.Schema(
       required: [true, 'Sức chứa của phòng là bắt buộc'],
       min: [1, 'Sức chứa tối thiểu 1 giường'],
       max: [20, 'Sức chứa tối đa 20 giường'],
-    },
-    pricePerBed: {
-      type: Number,
-      required: [true, 'Đơn giá thuê 1 giường là bắt buộc'],
-      min: [0, 'Đơn giá giường không được âm'],
     },
     status: {
       type: String,

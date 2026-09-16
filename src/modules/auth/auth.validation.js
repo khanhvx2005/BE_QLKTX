@@ -1,9 +1,12 @@
 /**
  * Validation schema cho Module Auth sử dụng Joi.
- * Định dạng lỗi trả về tuân thủ API.md §1.1.
+ * Định dạng lỗi trả về tuân thủ API.md §1.1 và quy tắc BR-81.
  */
 
 const Joi = require('joi');
+
+// BR-81: Mật khẩu tối thiểu 8 ký tự, gồm cả chữ và số
+const passwordRegex = /^(?=.*[a-zA-Z])(?=.*\d).{8,}$/;
 
 const registerSchema = Joi.object({
   fullName: Joi.string().trim().max(150).required().messages({
@@ -15,8 +18,8 @@ const registerSchema = Joi.object({
     'string.empty': 'Email không được để trống',
     'any.required': 'Email là bắt buộc',
   }),
-  password: Joi.string().min(6).max(100).required().messages({
-    'string.min': 'Mật khẩu phải có ít nhất 6 ký tự',
+  password: Joi.string().pattern(passwordRegex).required().messages({
+    'string.pattern.base': 'Mật khẩu phải có ít nhất 8 ký tự, bao gồm cả chữ và số',
     'string.empty': 'Mật khẩu không được để trống',
     'any.required': 'Mật khẩu là bắt buộc',
   }),
@@ -58,12 +61,11 @@ const changePasswordSchema = Joi.object({
     'any.required': 'Mật khẩu hiện tại là bắt buộc',
   }),
   newPassword: Joi.string()
-    .min(6)
-    .max(100)
+    .pattern(passwordRegex)
     .invalid(Joi.ref('oldPassword'))
     .required()
     .messages({
-      'string.min': 'Mật khẩu mới phải có ít nhất 6 ký tự',
+      'string.pattern.base': 'Mật khẩu mới phải có ít nhất 8 ký tự, bao gồm cả chữ và số',
       'any.invalid': 'Mật khẩu mới không được trùng với mật khẩu hiện tại',
       'string.empty': 'Mật khẩu mới không được để trống',
       'any.required': 'Mật khẩu mới là bắt buộc',

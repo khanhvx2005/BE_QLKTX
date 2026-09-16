@@ -1,13 +1,15 @@
 /**
  * Validation schemas cho Module Fees (Biểu phí, Điện nước, Hóa đơn) sử dụng Joi.
- * Tuân thủ theo API.md §7.
+ * Tuân thủ theo API.md §7 và DATA-SCHEMA.md §3.8 - 3.10.
  */
 
 const Joi = require('joi');
+const { FEE_TYPE_CODES, INVOICE_TYPE, INVOICE_STATUS } = require('../../shared/constants/enums');
 
 // 1. Fee Types
 const createFeeTypeSchema = Joi.object({
-  code: Joi.string().trim().uppercase().required().messages({
+  code: Joi.string().valid(...FEE_TYPE_CODES).required().messages({
+    'any.only': 'Mã loại phí không hợp lệ',
     'any.required': 'Mã loại phí là bắt buộc',
   }),
   name: Joi.string().trim().required().messages({
@@ -16,16 +18,18 @@ const createFeeTypeSchema = Joi.object({
   unit: Joi.string().trim().required().messages({
     'any.required': 'Đơn vị tính là bắt buộc',
   }),
-  unitPrice: Joi.number().integer().min(0).required().messages({
-    'any.required': 'Đơn giá là bắt buộc',
+  defaultAmount: Joi.number().integer().min(0).required().messages({
+    'any.required': 'Đơn giá mặc định là bắt buộc',
   }),
-  isMetered: Joi.boolean().optional(),
+  isRecurring: Joi.boolean().default(true),
+  isActive: Joi.boolean().default(true),
 });
 
 const updateFeeTypeSchema = Joi.object({
   name: Joi.string().trim().optional(),
   unit: Joi.string().trim().optional(),
-  unitPrice: Joi.number().integer().min(0).optional(),
+  defaultAmount: Joi.number().integer().min(0).optional(),
+  isRecurring: Joi.boolean().optional(),
   isActive: Joi.boolean().optional(),
 });
 
@@ -55,6 +59,20 @@ const createUtilityReadingSchema = Joi.object({
   }),
 });
 
+const updateUtilityReadingSchema = Joi.object({
+  electricityStart: Joi.number().min(0).optional(),
+  electricityEnd: Joi.number().optional(),
+  waterStart: Joi.number().min(0).optional(),
+  waterEnd: Joi.number().optional(),
+});
+
+const queryUtilityReadingSchema = Joi.object({
+  billingPeriod: Joi.string().pattern(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
+  buildingId: Joi.string().hex().length(24).optional(),
+  page: Joi.number().integer().min(1).default(1),
+  limit: Joi.number().integer().min(1).max(100).default(20),
+});
+
 // 3. Invoices
 const generateInvoicesSchema = Joi.object({
   billingPeriod: Joi.string().pattern(/^\d{4}-(0[1-9]|1[0-2])$/).required().messages({
@@ -73,16 +91,14 @@ const createInvoiceSchema = Joi.object({
   }),
   contractId: Joi.string().hex().length(24).optional(),
   billingPeriod: Joi.string().pattern(/^\d{4}-(0[1-9]|1[0-2])$/).optional().allow(null, ''),
-  type: Joi.string().valid('deposit', 'monthly', 'settlement', 'other').default('monthly'),
-  items: Joi.array()
+  type: Joi.string().valid(...INVOICE_TYPE).default('monthly'),
+  lineItems: Joi.array()
     .items(
       Joi.object({
         feeTypeId: Joi.string().hex().length(24).optional(),
-        name: Joi.string().trim().required(),
-        quantity: Joi.number().min(0.01).default(1),
-        unit: Joi.string().trim().optional().allow(''),
+        description: Joi.string().trim().required(),
+        quantity: Joi.number().min(1).default(1),
         unitPrice: Joi.number().integer().min(0).required(),
-        amount: Joi.number().integer().min(0).required(),
       })
     )
     .min(1)
@@ -99,8 +115,8 @@ const createInvoiceSchema = Joi.object({
 const queryInvoiceSchema = Joi.object({
   studentId: Joi.string().hex().length(24).optional(),
   billingPeriod: Joi.string().optional(),
-  status: Joi.string().valid('unpaid', 'partial', 'paid', 'overdue', 'cancelled').optional(),
-  type: Joi.string().valid('deposit', 'monthly', 'settlement', 'other').optional(),
+  status: Joi.string().valid(...INVOICE_STATUS).optional(),
+  type: Joi.string().valid(...INVOICE_TYPE).optional(),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
 });
@@ -109,6 +125,8 @@ module.exports = {
   createFeeTypeSchema,
   updateFeeTypeSchema,
   createUtilityReadingSchema,
+  updateUtilityReadingSchema,
+  queryUtilityReadingSchema,
   generateInvoicesSchema,
   createInvoiceSchema,
   queryInvoiceSchema,
