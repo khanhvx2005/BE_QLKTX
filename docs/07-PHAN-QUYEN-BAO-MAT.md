@@ -1,488 +1,236 @@
 # 07 – PHÂN QUYỀN & BẢO MẬT
 
-**Hệ thống:** DMS-KTX
-**Phiên bản:** v2.0 (MongoDB + Mongoose)
+**Hệ thống:** DMS-KTX HaUI  
+**Phiên bản:** v2.0 (Chuẩn hóa ma trận RBAC 4 vai trò, Bảo mật JWT & Chống IDOR)  
+**Ngày cập nhật:** 03/10/2026  
 
 ---
 
-## 1. Mô hình phân quyền
+## 1. Mô hình phân quyền (RBAC)
 
-Hệ thống dùng **RBAC (Role-Based Access Control)** với 4 vai trò cố định, không có quyền tùy biến theo từng người dùng trong v1.
+Hệ thống áp dụng mô hình **Kiểm soát truy cập dựa trên vai trò (Role-Based Access Control - RBAC)** với **4 vai trò nghiệp vụ cố định**:
 
 ```mermaid
 flowchart TB
-    A["ADMIN<br/>Toàn quyền"] --> S["STAFF<br/>Nghiệp vụ hằng ngày"]
-    S --> V["VIEWER<br/>Chỉ đọc"]
-    ST["STUDENT<br/>Chỉ dữ liệu của chính mình"]
+    A["ADMIN<br/>Quản trị kỹ thuật hệ thống"]
+    M["MANAGER<br/>Lãnh đạo / Trưởng ban KTX"]
+    S["STAFF<br/>Cán bộ KTX vận hành & hỗ trợ"]
+    ST["STUDENT<br/>Sinh viên nội trú"]
 
-    A -.->|"kế thừa toàn bộ"| S
-    S -.->|"kế thừa quyền đọc"| V
+    A -.->|"Phân quyền & Cấu hình"| M
+    M -->|"Phê duyệt kế hoạch & chỉ tiêu"| S
+    S <--->|"Vận hành, tiếp nhận, hỗ trợ"| ST
 
     style A fill:#c62828,color:#fff
+    style M fill:#6a1b9a,color:#fff
     style S fill:#1565c0,color:#fff
-    style V fill:#616161,color:#fff
     style ST fill:#2e7d32,color:#fff
 ```
 
-| Vai trò | Nguyên tắc | Phạm vi dữ liệu |
-|---------|------------|-----------------|
-| `admin` | Toàn quyền, bao gồm quản lý tài khoản và cấu hình hệ thống | Toàn bộ |
-| `staff` | Mọi nghiệp vụ vận hành, **trừ** quản lý tài khoản, cấu hình, xóa cứng | Toàn bộ dữ liệu nghiệp vụ |
-| `viewer` | Chỉ đọc, không thay đổi bất cứ dữ liệu nào | Toàn bộ (chỉ đọc) |
-| `student` | Chỉ thao tác trên dữ liệu của chính mình | Giới hạn theo `studentId` trong JWT |
+| Vai trò | Tên vai trò | Trách nhiệm & Quyền hạn cốt lõi | Phạm vi dữ liệu |
+| :--- | :--- | :--- | :--- |
+| `admin` | **System Administrator** | Quản trị kỹ thuật toàn hệ thống: quản lý tài khoản, phân quyền, cấu hình hệ thống, sao lưu CSDL, giám sát bảo mật | Toàn bộ hệ thống |
+| `manager` | **Trưởng Ban QLKTX** | Lãnh đạo phê duyệt: mở đợt tiếp nhận, duyệt danh sách trúng tuyển, duyệt chuyển phòng, duyệt thanh lý/hoàn cọc, xem báo cáo doanh thu tài chính | Toàn bộ dữ liệu nghiệp vụ |
+| `staff` | **Cán bộ KTX vận hành** | Vận hành hằng ngày: kiểm tra hồ sơ, quét mã QR Check-in bàn giao giường, chốt chỉ số điện nước theo lô, lập hóa đơn, điều phối bảo trì sự cố, lập biên bản vi phạm, trực chat hỗ trợ | Dữ liệu nghiệp vụ được phân công |
+| `student` | **Sinh viên HaUI** | Người thụ hưởng dịch vụ: xem thông tin phòng ở, thanh toán VietQR tiền phòng/điện nước, nhận phòng bằng mã QR, gửi báo hỏng thiết bị, gửi đơn xin chuyển/trả phòng, nhắn tin trực tuyến với cán bộ | **Chỉ dữ liệu của chính mình** |
 
-> **Lưu ý:** `student` **không** kế thừa quyền của `viewer`. Đây là nhánh quyền hoàn toàn tách biệt — sinh viên không được xem danh sách sinh viên khác, không xem dashboard tổng hợp.
+> ⚠️ **Lưu ý đặc biệt:** Vai trò `student` thuộc một nhánh quyền hoàn toàn độc lập. Sinh viên **tuyệt đối không** được đọc dữ liệu của sinh viên khác hoặc xem các báo cáo tổng quan của KTX (áp dụng nguyên tắc Least Privilege).
 
 ---
 
-## 2. Ma trận phân quyền chi tiết
+## 2. Ma trận phân quyền chi tiết (RBAC Matrix)
 
-**Ký hiệu:** ✅ Toàn quyền · 👁 Chỉ đọc · 🔒 Chỉ dữ liệu của mình · ❌ Không có quyền
+**Ký hiệu quy ước:**
+- ✅ **Toàn quyền:** Được phép Xem, Thêm, Sửa, Duyệt, Xóa/Hủy theo thẩm quyền
+- 👁 **Chỉ đọc:** Được xem dữ liệu hoặc xem danh sách
+- 🔒 **Sở hữu riêng:** Chỉ được thao tác hoặc xem dữ liệu gắn với ID của chính mình (`req.user.studentId`)
+- ❌ **Cấm tuyệt đối:** Không có quyền truy cập (hệ thống chặn ở tầng Router bằng HTTP 403 Forbidden)
 
-### 2.1. Quản trị hệ thống
+### 2.1. Quản trị hệ thống & Cấu hình cơ sở
 
-| Chức năng | admin | staff | viewer | student |
-|-----------|-------|-------|--------|---------|
-| Xem danh sách tài khoản | ✅ | ❌ | ❌ | ❌ |
-| Tạo/sửa tài khoản | ✅ | ❌ | ❌ | ❌ |
-| Khóa/mở khóa tài khoản | ✅ | ❌ | ❌ | ❌ |
-| Gán vai trò | ✅ | ❌ | ❌ | ❌ |
-| Liên kết tài khoản ↔ hồ sơ sinh viên | ✅ | ✅ | ❌ | ❌ |
-| Xem/sửa cấu hình hệ thống | ✅ | ❌ | ❌ | ❌ |
-| Xem nhật ký hệ thống | ✅ (đọc file log của máy chủ) | ❌ | ❌ | ❌ |
-| Đổi mật khẩu của chính mình | ✅ | ✅ | ✅ | ✅ |
-| Đặt lại mật khẩu cho người khác (FR-09) | ✅ | ✅ (trừ tài khoản Admin) | ❌ | ❌ |
+| Chức năng chi tiết | admin | manager | staff | student |
+| :--- | :---: | :---: | :---: | :---: |
+| Quản lý tài khoản người dùng (`User`) | ✅ | 👁 | ❌ | ❌ |
+| Phân quyền & Khóa/Mở khóa tài khoản | ✅ | ❌ | ❌ | ❌ |
+| Đặt lại mật khẩu cho cán bộ | ✅ | ❌ | ❌ | ❌ |
+| Đặt lại mật khẩu cho sinh viên | ✅ | ✅ | ✅ | ❌ |
+| Cấu hình Cơ sở (Campuses), Tòa nhà (Buildings) | ✅ | 👁 | 👁 | 👁 *(công khai)* |
+| Cấu hình Phòng (Rooms), Giường (Beds) | ✅ | 👁 | 👁 | 👁 *(công khai)* |
+| Đổi trạng thái bảo trì phòng/giường | ✅ | ✅ | ✅ | ❌ |
+| Cấu hình năm học, bảng giá & tham số hệ thống | ✅ | 👁 | ❌ | ❌ |
 
-### 2.2. Quản lý sinh viên
+### 2.2. Đợt mở KTX, Nộp đơn & Xét duyệt trúng tuyển
 
-| Chức năng | admin | staff | viewer | student |
-|-----------|-------|-------|--------|---------|
-| Xem danh sách sinh viên | ✅ | ✅ | 👁 | ❌ |
-| Xem chi tiết hồ sơ | ✅ | ✅ | 👁 | 🔒 |
-| Thêm hồ sơ sinh viên | ✅ | ✅ | ❌ | ❌ |
-| Sửa hồ sơ sinh viên | ✅ | ✅ | ❌ | ❌ (FR-90) |
-| Vô hiệu hóa hồ sơ | ✅ | ✅ | ❌ | ❌ |
-| Export danh sách (CSV) | ✅ | ✅ | 👁 | ❌ |
-| Xem thông tin nhạy cảm (CCCD, SĐT người thân) | ✅ | ✅ | ❌ | 🔒 |
+| Chức năng chi tiết | admin | manager | staff | student |
+| :--- | :---: | :---: | :---: | :---: |
+| Tạo / Cập nhật đợt nộp đơn (`ApplicationPeriod`) | ✅ | ✅ | 👁 | 👁 |
+| Nộp đơn đăng ký KTX công khai (không cần login) | — | — | — | ✅ *(Công khai)* |
+| Tra cứu kết quả nộp đơn công khai | — | — | — | ✅ *(Công khai)* |
+| Xem danh sách đơn đăng ký KTX | ✅ | ✅ | ✅ | ❌ |
+| Thẩm tra hồ sơ minh chứng ưu tiên / thể chất | ✅ | ✅ | ✅ | ❌ |
+| Phê duyệt trúng tuyển & Tự động gán giường | ✅ | ✅ | ❌ | ❌ |
+| Kích hoạt tự động sinh tài khoản & gửi Email | ✅ | ✅ | ❌ | ❌ |
 
-### 2.3. Quản lý cơ sở vật chất
+### 2.3. Quản lý Sinh viên nội trú & Hợp đồng
 
-| Chức năng | admin | staff | viewer | student |
-|-----------|-------|-------|--------|---------|
-| Xem tòa nhà / phòng / giường | ✅ | ✅ | 👁 | 👁 (thông tin công khai) |
-| Thêm/sửa tòa nhà | ✅ | ✅ | ❌ | ❌ |
-| Ngừng hoạt động tòa nhà | ✅ | ❌ | ❌ | ❌ |
-| Thêm/sửa phòng | ✅ | ✅ | ❌ | ❌ |
-| Ngừng hoạt động phòng | ✅ | ❌ | ❌ | ❌ |
-| Thêm/sửa giường | ✅ | ✅ | ❌ | ❌ |
-| Xóa giường | ✅ | ❌ | ❌ | ❌ |
-| Đổi trạng thái giường (bảo trì) | ✅ | ✅ | ❌ | ❌ |
-| Tra cứu giường trống | ✅ | ✅ | 👁 | 👁 |
-| Xem sơ đồ tòa nhà | ✅ | ✅ | 👁 | ❌ |
-| Xem danh sách người ở trong phòng | ✅ | ✅ | 👁 | 🔒 (chỉ phòng mình, chỉ tên + MSSV) |
-
-### 2.4. Quản lý hợp đồng
-
-| Chức năng | admin | staff | viewer | student |
-|-----------|-------|-------|--------|---------|
-| Xem danh sách hợp đồng | ✅ | ✅ | 👁 | 🔒 |
-| Tạo đăng ký lưu trú (Residency) | ✅ | ✅ | ❌ | ❌ |
-| Kích hoạt hợp đồng `pending` → `active` | ✅ | ✅ | ❌ | ❌ |
-| Tạo hợp đồng trực tiếp | ✅ | ✅ | ❌ | ❌ |
-| Đóng đăng ký lưu trú (checkout) | ✅ | ✅ | ❌ | ❌ |
+| Chức năng chi tiết | admin | manager | staff | student |
+| :--- | :---: | :---: | :---: | :---: |
+| Xem danh sách sinh viên nội trú | ✅ | ✅ | ✅ | ❌ |
+| Xem chi tiết hồ sơ cá nhân sinh viên | ✅ | ✅ | ✅ | 🔒 |
+| Xem danh sách bạn cùng phòng | ✅ | ✅ | ✅ | 🔒 *(chỉ xem họ tên + MSSV)* |
+| Tạo hợp đồng lưu trú | ✅ | ✅ | ✅ | ❌ |
+| Quét mã QR Check-in bàn giao giường nhận phòng | ✅ | ❌ | ✅ | ❌ |
+| Hiển thị mã QR Check-in của cá nhân | ❌ | ❌ | ❌ | 🔒 |
 | Chấm dứt hợp đồng trước hạn | ✅ | ✅ | ❌ | ❌ |
-| ~~Chuyển phòng~~ (ngoài phạm vi v1) | ❌ | ❌ | ❌ | ❌ |
-| Xem hợp đồng sắp hết hạn | ✅ | ✅ | ❌ | 🔒 (của mình) |
-| In hợp đồng (qua trình duyệt) | ✅ | ✅ | ❌ | 🔒 |
 
-### 2.5. Tài chính
+### 2.4. Điện nước, Tài chính & Thanh toán
 
-| Chức năng | admin | staff | viewer | student |
-|-----------|-------|-------|--------|---------|
-| Quản lý danh mục loại phí | ✅ | 👁 | 👁 | ❌ |
-| Nhập chỉ số điện nước | ✅ | ✅ | 👁 | ❌ |
-| Xem danh sách hóa đơn | ✅ | ✅ | 👁 | 🔒 |
-| Tạo hóa đơn thủ công | ✅ | ✅ | ❌ | ❌ |
-| Lập hóa đơn hàng loạt theo kỳ | ✅ | ✅ | ❌ | ❌ |
-| Sửa hóa đơn | ✅ | ✅ | ❌ | ❌ |
-| Hủy hóa đơn | ✅ | ✅ | ❌ | ❌ |
-| Ghi nhận thanh toán thủ công | ✅ | ✅ | ❌ | ❌ |
-| Thanh toán trực tuyến | ❌ | ❌ | ❌ | 🔒 |
-| Xem lịch sử thanh toán | ✅ | ✅ | 👁 | 🔒 |
-| Đối soát giao dịch | ✅ | ✅ | ❌ | ❌ |
+| Chức năng chi tiết | admin | manager | staff | student |
+| :--- | :---: | :---: | :---: | :---: |
+| Nhập chỉ số điện nước theo lô (Tòa / Tầng) | ✅ | 👁 | ✅ | ❌ |
+| Sinh hóa đơn tiền phòng / hóa đơn điện nước | ✅ | ✅ | ✅ | ❌ |
+| Xem danh sách toàn bộ hóa đơn | ✅ | ✅ | ✅ | 🔒 |
+| Tạo mã VietQR động thanh toán hóa đơn | ❌ | ❌ | ❌ | 🔒 |
+| Ghi nhận thanh toán thủ công (tiền mặt) | ✅ | ✅ | ✅ | ❌ |
+| Xử lý Webhook thanh toán tự động (IPN) | ✅ *(Hệ thống)* | — | — | — |
+| Hủy hóa đơn sai lệch | ✅ | ✅ | ❌ | ❌ |
 
-### 2.6. Yêu cầu gia hạn / trả phòng
+### 2.5. Nghiệp vụ phát sinh (Chuyển phòng, Báo hỏng, Kỷ luật)
 
-| Chức năng | admin | staff | viewer | student |
-|-----------|-------|-------|--------|---------|
-| Gửi yêu cầu | ❌ | ❌ | ❌ | 🔒 |
-| Tự hủy yêu cầu khi chờ xử lý | ❌ | ❌ | ❌ | 🔒 |
-| Xem danh sách yêu cầu | ✅ | ✅ | 👁 | 🔒 |
-| Duyệt / từ chối yêu cầu | ✅ | ✅ | ❌ | ❌ |
+| Chức năng chi tiết | admin | manager | staff | student |
+| :--- | :---: | :---: | :---: | :---: |
+| Nộp đơn xin chuyển phòng | ❌ | ❌ | ❌ | 🔒 |
+| Phê duyệt đơn xin chuyển phòng | ✅ | ✅ | ❌ | ❌ |
+| Gửi phiếu báo hỏng thiết bị (Maintenance Request) | ❌ | ❌ | ❌ | 🔒 |
+| Tiếp nhận, điều phối & hoàn thành bảo trì | ✅ | 👁 | ✅ | ❌ |
+| Lập biên bản vi phạm nội quy KTX | ✅ | 👁 | ✅ | ❌ |
+| Xem danh sách vi phạm nội quy | ✅ | ✅ | ✅ | 🔒 *(của mình)* |
+| Nộp đơn xin trả phòng & hoàn cọc | ❌ | ❌ | ❌ | 🔒 |
+| Kiểm kê tài sản phòng khi trả | ✅ | ❌ | ✅ | ❌ |
+| Phê duyệt quyết toán hoàn tiền cọc | ✅ | ✅ | ❌ | ❌ |
 
-### 2.7. Dashboard & báo cáo
+### 2.6. Tương tác KTX 4.0, Chat & Báo cáo
 
-| Chức năng | admin | staff | viewer | student |
-|-----------|-------|-------|--------|---------|
-| Dashboard tổng quan | ✅ | ✅ | 👁 | ❌ |
-| Biểu đồ doanh thu | ✅ | 👁 | 👁 | ❌ |
-| Báo cáo giường trống | ✅ | ✅ | 👁 | ❌ |
-| Báo cáo công nợ | ✅ | ✅ | 👁 | ❌ |
-| Báo cáo doanh thu | ✅ | 👁 | 👁 | ❌ |
-| Xuất CSV các báo cáo | ✅ | ✅ | 👁 | ❌ |
+| Chức năng chi tiết | admin | manager | staff | student |
+| :--- | :---: | :---: | :---: | :---: |
+| Đăng thông báo bảng tin chung KTX | ✅ | ✅ | ✅ | 👁 |
+| Nhắn tin trực tuyến thời gian thực (Socket.io) | ✅ | 👁 | ✅ | 🔒 *(Chat với cán bộ)* |
+| Nhận chuông thông báo cá nhân | ✅ | ✅ | ✅ | 🔒 |
+| Xem Dashboard tổng hợp (tỷ lệ lấp đầy, số liệu) | ✅ | ✅ | ✅ | ❌ |
+| Xem biểu đồ doanh thu tài chính & công nợ | ✅ | ✅ | 👁 | ❌ |
+| Xuất báo cáo thống kê ra Excel/CSV | ✅ | ✅ | ✅ | ❌ |
 
 ---
 
-## 3. Cài đặt kiểm soát truy cập
+## 3. Cài đặt kỹ thuật bảo mật & phân quyền
 
-### 3.1. Ba tầng kiểm soát
+### 3.1. Middleware xác thực và phân quyền (Backend)
 
-| Tầng | Cách làm | Mục đích |
-|------|----------|----------|
-| **1. Giao diện (FE)** | Ẩn menu/nút theo vai trò | Trải nghiệm tốt — **không** phải biện pháp bảo mật |
-| **2. Route (FE)** | `<RoleRoute allowed={['admin','staff']}>` chặn truy cập URL | Ngăn người dùng gõ URL trực tiếp |
-| **3. API (BE)** | Middleware `authenticate` + `authorize` trên từng route | **Biện pháp bảo mật thực sự** |
+```javascript
+// core/middlewares/auth.middleware.js
+const jwt = require('jsonwebtoken');
+const User = require('../../modules/users/user.model');
+const { ApiError } = require('../errors/api.error');
 
-> ⚠️ **Nguyên tắc bất di bất dịch:** frontend chỉ làm nhiệm vụ hiển thị. Kẻ tấn công có thể gọi thẳng API bằng Postman. Mọi quyền hạn **phải** được kiểm tra ở backend.
-
-### 3.2. Middleware backend
-
-```js
-// middlewares/auth.middleware.js
-export const authenticate = asyncHandler(async (req, res, next) => {
-  const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
-    throw new ApiError(401, 'Bạn chưa đăng nhập', 'UNAUTHORIZED');
-  }
-  const token = header.slice(7);
-  let payload;
+// 1. Xác thực danh tính qua JWT
+const authenticate = async (req, res, next) => {
   try {
-    payload = jwt.verify(token, env.JWT_SECRET);
-  } catch (err) {
-    const code = err.name === 'TokenExpiredError' ? 'TOKEN_EXPIRED' : 'INVALID_TOKEN';
-    throw new ApiError(401, 'Phiên đăng nhập đã hết hạn', code);
-  }
-  // Kiểm tra lại tài khoản còn hoạt động (phòng trường hợp bị khóa sau khi cấp token)
-  const user = await mongoose.user.findFirst({ where: { id: payload.userId, isActive: true } });
-  if (!user) throw new ApiError(401, 'Tài khoản không còn hiệu lực', 'ACCOUNT_INACTIVE');
-
-  req.user = { id: user.id, role: user.role, studentId: user.studentId, mustChangePassword: user.mustChangePassword };
-  next();
-});
-
-// Cùng file auth.middleware.js (v1-lite gộp chung, không tách rbac.middleware.js)
-export const authorize = (...allowedRoles) => (req, res, next) => {
-  if (!allowedRoles.includes(req.user.role)) {
-    throw new ApiError(403, 'Bạn không có quyền thực hiện thao tác này', 'FORBIDDEN');
-  }
-  next();
-};
-
-// Middleware riêng cho cổng sinh viên
-export const requireLinkedStudent = (req, res, next) => {
-  if (req.user.role !== 'student' || !req.user.studentId) {
-    throw new ApiError(403, 'Tài khoản chưa được liên kết với hồ sơ sinh viên', 'STUDENT_NOT_LINKED');
-  }
-  next();
-};
-```
-
-**Cách dùng trong route:**
-```js
-router.get('/students',        authenticate, authorize('admin','staff','viewer'), studentController.list);
-router.post('/students',       authenticate, authorize('admin','staff'),          studentController.create);
-router.delete('/buildings/:id',authenticate, authorize('admin'),                  buildingController.remove);
-router.use('/portal',          authenticate, authorize('student'), requireLinkedStudent, portalRoutes);
-```
-
-### 3.3. Kiểm soát quyền sở hữu dữ liệu (Ownership Check)
-
-Đây là lỗ hổng phổ biến nhất (**IDOR – Insecure Direct Object Reference**): sinh viên A đổi ID trên URL để xem hóa đơn của sinh viên B.
-
-**Cách làm SAI:**
-```js
-// ❌ NGUY HIỂM: lấy studentId từ query của client
-const invoices = await invoiceService.findByStudent(req.query.studentId);
-```
-
-**Cách làm ĐÚNG:**
-```js
-// ✅ Luôn lấy studentId từ JWT (BR-85)
-const invoices = await invoiceService.findByStudent(req.user.studentId);
-
-// ✅ Với truy cập theo id cụ thể, phải kiểm tra quyền sở hữu
-export const getMyInvoiceDetail = asyncHandler(async (req, res) => {
-  const invoice = await invoiceService.findById(req.params.id);
-  if (!invoice) throw new ApiError(404, 'Không tìm thấy hóa đơn', 'NOT_FOUND');
-  if (invoice.studentId !== req.user.studentId) {
-    // Trả 403, KHÔNG trả 404 khác biệt để tránh lộ sự tồn tại của bản ghi
-    throw new ApiError(403, 'Bạn không có quyền truy cập dữ liệu này', 'FORBIDDEN_RESOURCE');
-  }
-  res.json(ApiResponse.success(invoice));
-});
-```
-
-**Danh sách endpoint bắt buộc kiểm tra ownership:**
-
-| Endpoint | Kiểm tra |
-|----------|----------|
-| `GET /portal/my-invoices/:id` | `invoice.studentId === req.user.studentId` |
-| `POST /portal/my-invoices/:id/pay` | như trên |
-| `DELETE /api/portal/my-requests/:id` | `request.studentId === req.user.studentId` và `status = 'pending'` |
-| `DELETE /portal/my-requests/:id` | `request.studentId === req.user.studentId` và `status = 'pending'` |
-| `GET /portal/my-roommates` | Lấy `roomId` từ hợp đồng của chính sinh viên |
-
-### 3.4. Bảo vệ route phía Frontend
-
-```jsx
-// routes/RoleRoute.jsx
-export function RoleRoute({ allowed, children }) {
-  const { user, isAuthenticated } = useAuthStore();
-  const location = useLocation();
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-  if (!allowed.includes(user.role)) {
-    return <Navigate to="/403" replace />;
-  }
-  return children;
-}
-```
-
-```jsx
-// Cách dùng trong AppRoutes
-<Route element={<RoleRoute allowed={['admin','staff','viewer']}><AdminLayout /></RoleRoute>}>
-  <Route path="/admin/dashboard" element={<DashboardPage />} />
-  <Route path="/admin/students"  element={<StudentListPage />} />
-  <Route element={<RoleRoute allowed={['admin']}><Outlet /></RoleRoute>}>
-    <Route path="/admin/users"   element={<UserListPage />} />
-    <Route path="/admin/settings" element={<SettingsPage />} />
-  </Route>
-</Route>
-
-<Route element={<RoleRoute allowed={['student']}><PortalLayout /></RoleRoute>}>
-  <Route path="/portal/home" element={<PortalHomePage />} />
-</Route>
-```
-
-**Ẩn nút theo quyền:**
-```jsx
-// utils/permission.js — dùng chung một nguồn quy tắc
-const PERMISSIONS = {
-  'student:create':   ['admin', 'staff'],
-  'student:delete':   ['admin', 'staff'],
-  'building:delete':  ['admin'],
-  'contract:approve': ['admin', 'staff'],
-  'invoice:create':   ['admin', 'staff'],
-  'payment:record':   ['admin', 'staff'],
-  'user:manage':      ['admin'],
-};
-
-export const can = (user, action) => PERMISSIONS[action]?.includes(user?.role) ?? false;
-
-// Trong component
-{can(user, 'contract:approve') && <Button onClick={handleApprove}>Duyệt</Button>}
-```
-
----
-
-## 4. Luồng xác thực JWT
-
-```mermaid
-sequenceDiagram
-    participant FE as Frontend
-    participant API as Backend
-    participant DB as CSDL
-
-    Note over FE,DB: Đăng nhập
-    FE->>API: POST /api/auth/login {email, password}
-    API->>DB: Tìm user theo email/MSSV
-    API->>API: bcrypt.compare(password, password_hash)
-    API->>API: Kiểm tra is_active, locked_until
-    API->>API: Sinh 1 JWT hạn 7 ngày
-    API-->>FE: {token, user}
-    FE->>FE: Lưu token vào localStorage, cập nhật AuthContext
-
-    Note over FE,DB: Gọi API thông thường
-    FE->>API: GET /students (Authorization: Bearer accessToken)
-    API->>API: authenticate → verify token
-    API->>API: authorize('admin','staff','viewer')
-    API-->>FE: 200 {data}
-
-    Note over FE,DB: Token hết hạn (sau 7 ngày)
-    FE->>API: GET /students (token cũ)
-    API-->>FE: 401 TOKEN_EXPIRED
-    FE->>FE: Xóa token, chuyển về /login
-    Note over FE: v1-lite không có refresh token — người dùng đăng nhập lại
-
-    Note over FE,DB: Đăng xuất
-    FE->>API: POST /auth/logout
-    API-->>FE: 204
-    FE->>FE: Xóa token, chuyển về /login
-```
-
-### 4.1. Nội dung JWT payload
-
-```json
-{
-  "userId": 12,
-  "role": "STUDENT",
-  "studentId": 45,
-  "iat": 1789012345,
-  "exp": 1789015945
-}
-```
-> **Không** đưa email, họ tên, hay bất kỳ thông tin nhạy cảm nào vào payload — JWT chỉ được ký, **không** được mã hóa; ai cũng giải mã đọc được nội dung.
-
-### 4.2. Lưu token ở đâu trên Frontend?
-
-| Cách lưu | Ưu điểm | Nhược điểm | Quyết định |
-|----------|---------|------------|-----------|
-| `localStorage` | Đơn giản, sống qua reload | Dễ bị đánh cắp nếu có lỗ hổng XSS | ✅ **Chọn cho v1** — đơn giản, phù hợp phạm vi đồ án |
-| `httpOnly cookie` | An toàn trước XSS | Cần xử lý CSRF, cấu hình CORS phức tạp hơn | Cân nhắc cho v2 |
-
-> ⚠️ **v1-lite:** token có hạn **7 ngày** (không dùng refresh token). Đánh đổi: nếu token bị lộ, kẻ tấn công dùng được lâu hơn so với phương án access token 60 phút. Ghi rõ điều này vào mục "Hạn chế" của báo cáo.
-| Memory (biến) | An toàn nhất | Mất khi reload trang | Không phù hợp |
-
-**Quyết định:** dùng `localStorage`, đồng thời **phải** phòng XSS nghiêm ngặt (mục 5.2) vì đây là đánh đổi đi kèm.
-
-### 4.3. Axios interceptor xử lý token
-
-```js
-// api/axiosClient.js
-axiosClient.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().accessToken;
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
-
-let refreshPromise = null; // Gộp nhiều request cùng lúc vào 1 lần refresh
-
-axiosClient.interceptors.response.use(
-  (res) => res,
-  async (error) => {
-    const original = error.config;
-    const errorCode = error.response?.data?.errorCode;
-
-    if (error.response?.status === 401 && errorCode === 'TOKEN_EXPIRED' && !original._retry) {
-      original._retry = true;
-      refreshPromise ??= authApi.refresh().finally(() => { refreshPromise = null; });
-      try {
-        const { accessToken } = await refreshPromise;
-        useAuthStore.getState().setAccessToken(accessToken);
-        original.headers.Authorization = `Bearer ${accessToken}`;
-        return axiosClient(original);
-      } catch {
-        useAuthStore.getState().logout();
-        window.location.href = '/login';
-      }
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new ApiError(401, 'UNAUTHORIZED', 'Bạn chưa đăng nhập hoặc thiếu Bearer Token');
     }
-    return Promise.reject(error);
+
+    const token = authHeader.split(' ')[1];
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      if (err.name === 'TokenExpiredError') {
+        throw new ApiError(401, 'TOKEN_EXPIRED', 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại');
+      }
+      throw new ApiError(401, 'INVALID_TOKEN', 'Mã xác thực không hợp lệ');
+    }
+
+    // Kiểm tra tài khoản trong DB để tránh trường hợp token còn hạn nhưng user đã bị khóa
+    const user = await User.findById(decoded.userId).select('+mustChangePassword');
+    if (!user || !user.isActive) {
+      throw new ApiError(401, 'ACCOUNT_INACTIVE', 'Tài khoản không tồn tại hoặc đã bị khóa');
+    }
+
+    // Gắn thông tin người dùng vào request context
+    req.user = {
+      userId: user._id.toString(),
+      role: user.role,
+      studentId: user.studentId ? user.studentId.toString() : null,
+      mustChangePassword: user.mustChangePassword
+    };
+
+    next();
+  } catch (error) {
+    next(error);
   }
-);
+};
+
+// 2. Kiểm tra vai trò RBAC
+const authorize = (...allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+      return next(new ApiError(403, 'FORBIDDEN', 'Bạn không có quyền thực hiện thao tác này'));
+    }
+    next();
+  };
+};
+
+// 3. Rào chắn cưỡng bức đổi mật khẩu lần đầu
+const requirePasswordChanged = (req, res, next) => {
+  if (req.user && req.user.mustChangePassword) {
+    return next(new ApiError(403, 'MUST_CHANGE_PASSWORD', 'Vui lòng đổi mật khẩu mới để tiếp tục sử dụng hệ thống'));
+  }
+  next();
+};
+
+module.exports = { authenticate, authorize, requirePasswordChanged };
 ```
 
----
+### 3.2. Cơ chế phòng chống lỗ hổng IDOR (Insecure Direct Object Reference)
 
-## 5. Biện pháp bảo mật bắt buộc
+Lỗ hổng IDOR xảy ra khi sinh viên thay đổi ID trên URL (ví dụ: `GET /portal/my-invoices/60d...`) để xem hoặc thao tác trên dữ liệu của người khác.
 
-### 5.1. Mật khẩu
-
-| Biện pháp | Cài đặt |
-|-----------|---------|
-| Băm mật khẩu | `bcrypt` với `saltRounds = 10` (NFR-05) |
-| Độ mạnh tối thiểu | ≥ 8 ký tự, có ít nhất 1 chữ cái và 1 chữ số (BR-81) |
-| Không bao giờ trả về `passwordHash` | Đặt `select: false` trên trường này trong Mongoose schema, để mặc định mọi truy vấn đều không lấy nó |
-| Không ghi mật khẩu vào log | Cấu hình logger lọc các trường `password`, `token`, `secret`, `temporaryPassword` |
-| Đặt lại mật khẩu (FR-09) | Chỉ Admin/Staff; mật khẩu tạm sinh ngẫu nhiên ≥ 10 ký tự bằng `crypto.randomBytes`, **không** dùng `Math.random()`; trả về đúng **một lần** trong response, không lưu dạng rõ ở đâu; bật `mustChangePassword` (BR-85) |
-| Chống leo thang đặc quyền | Staff **không** được reset mật khẩu tài khoản có `role = 'admin'` — nếu không, một Staff có thể chiếm quyền Admin |
-| Đổi mật khẩu | Bắt buộc nhập lại mật khẩu hiện tại (FR-07) |
-| Chống dò mật khẩu | Khóa 15 phút sau 5 lần sai (FR-05) + rate limit trên `/auth/login` |
-
-### 5.2. Chống XSS
-
-| Biện pháp | Cài đặt |
-|-----------|---------|
-| React tự escape | Mặc định an toàn — **tuyệt đối không** dùng `dangerouslySetInnerHTML` với dữ liệu người dùng nhập |
-| Làm sạch đầu vào | Cắt khoảng trắng, loại bỏ thẻ HTML với các trường văn bản tự do (`note`, `reason`, `description`) |
-| Content Security Policy | Bật qua `helmet()` ở backend |
-| Escape khi xuất file | Khi xuất Excel/CSV, tránh lỗ hổng CSV injection: thêm dấu `'` trước các giá trị bắt đầu bằng `=`, `+`, `-`, `@` |
-
-### 5.3. Chống SQL Injection
-
-| Biện pháp | Cài đặt |
-|-----------|---------|
-| Dùng ORM | Mongoose tự tham số hóa toàn bộ truy vấn |
-| Truy vấn thô | Nếu buộc phải dùng `$queryRaw`, **bắt buộc** dùng template literal có tham số: `` mongoose.$queryRaw`SELECT * FROM student WHERE id = ${id}` `` — **không** nối chuỗi |
-| Whitelist cho sắp xếp | `sortBy` phải nằm trong danh sách cột cho phép, không truyền thẳng vào truy vấn |
-
-### 5.4. Cấu hình bảo mật HTTP
-
-```js
-// app.js
-app.use(helmet());                                    // Các header bảo mật cơ bản
-app.use(cors({
-  origin: env.CORS_ORIGIN.split(','),                  // Whitelist, KHÔNG dùng '*'
-  credentials: true,
-}));
-app.use(express.json({ limit: '1mb' }));               // Chặn payload quá lớn
-
-// Rate limit riêng cho các endpoint nhạy cảm
-app.use('/api/auth/login',    rateLimit({ windowMs: 15*60*1000, max: 10 }));
-app.use('/api/auth/register', rateLimit({ windowMs: 60*60*1000, max: 5  }));
-app.use('/api',               rateLimit({ windowMs: 15*60*1000, max: 300 }));
-```
-
-### 5.5. Bảo mật thanh toán
-
-| Rủi ro | Biện pháp | Quy tắc |
-|--------|-----------|---------|
-| Giả mạo IPN | Xác thực chữ ký HMAC bằng secret key trước mọi xử lý | BR-61 |
-| Nhận kết quả trùng lặp | Kiểm tra trạng thái giao dịch bên trong transaction; nếu đã `success` thì bỏ qua, không ghi nhận lần hai | BR-56 |
-| Sửa số tiền | So sánh số tiền trong IPN với số tiền của giao dịch đã tạo | BR-63 |
-| Giả mạo kết quả tại Return URL | Ở v1-lite, kết quả **được** nhận qua Return URL nhưng **bắt buộc xác thực chữ ký HMAC ở backend** trước khi ghi nhận — không có `VNP_HASH_SECRET` thì không giả mạo được (`14` mục 4.10) | BR-61 |
-| Lộ secret key | Để trong `.env`, không commit; ở production dùng biến môi trường của nền tảng | – |
-| Thanh toán hộ người khác | Kiểm tra ownership hóa đơn trước khi tạo URL thanh toán | BR-85 |
-
-### 5.6. Bảo vệ dữ liệu cá nhân
-
-| Dữ liệu | Ai được xem | Cách xử lý |
-|---------|-------------|------------|
-| CCCD | Admin, Staff | Không trả trong API danh sách, chỉ ở API chi tiết |
-| SĐT sinh viên | Admin, Staff, chính sinh viên | Che một phần khi hiển thị cho Viewer: `09xxxxx678` |
-| SĐT người liên hệ khẩn cấp | Admin, Staff | Không lộ cho vai trò khác |
-| Danh sách bạn cùng phòng | Sinh viên trong cùng phòng | **Chỉ** trả họ tên + MSSV, không trả SĐT/email/CCCD |
-| Mật khẩu | Không ai | Chỉ lưu dạng băm |
+**Quy tắc phòng thủ 2 lớp bắt buộc:**
+1. **Lớp 1 - API dạng danh sách:** Tuyệt đối không nhận `studentId` từ query string hay request body từ phía client. Luôn trích xuất `req.user.studentId` trực tiếp từ JWT Token đã được xác thực an toàn.
+   ```javascript
+   // ĐÚNG:
+   const invoices = await invoiceService.findByStudent(req.user.studentId);
+   ```
+2. **Lớp 2 - API chi tiết theo ID:** Khi truy vấn một tài nguyên cụ thể (hóa đơn, hợp đồng, đơn từ), dịch vụ backend bắt buộc phải kiểm tra quyền sở hữu trước khi trả dữ liệu:
+   ```javascript
+   const invoice = await Invoice.findById(req.params.id);
+   if (!invoice) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn');
+   
+   // Bảo vệ IDOR
+   if (req.user.role === 'student' && invoice.studentId.toString() !== req.user.studentId) {
+     throw new ApiError(403, 'FORBIDDEN_RESOURCE', 'Bạn không có quyền truy cập hóa đơn này');
+   }
+   ```
 
 ---
 
-## 6. Checklist bảo mật trước khi bàn giao
+## 4. Các giải pháp an toàn thông tin bắt buộc
 
-| # | Hạng mục | Cách kiểm tra | Đạt |
-|---|----------|---------------|-----|
-| 1 | Mọi endpoint (trừ nhóm công khai) đều có `authenticate` | Rà toàn bộ file route | ☐ |
-| 2 | Mọi endpoint đều có `authorize` đúng theo ma trận mục 2 | Đối chiếu bảng mục 15 của `API.md` | ☐ |
-| 3 | Mọi endpoint `/portal/*` lấy `studentId` từ JWT, không từ client | `grep -rn "req.query.studentId\|req.body.studentId" src/` phải không có kết quả | ☐ |
-| 4 | Đã kiểm tra ownership ở các endpoint theo bảng mục 3.3 | Test thủ công: đăng nhập SV A, gọi API với ID của SV B → phải trả 403 | ☐ |
-| 5 | Không có mật khẩu/token nào lọt vào response hoặc log | Rà response mẫu + đọc file log | ☐ |
-| 6 | `.env` nằm trong `.gitignore` và chưa từng bị commit | `git log --all --full-history -- .env` phải trống | ☐ |
-| 7 | Không còn secret key hardcode trong mã nguồn | `grep -rn "secret\|password\|apiKey" src/ --include=*.js` rà thủ công | ☐ |
-| 8 | CORS chỉ whitelist domain frontend, không dùng `*` | Đọc `app.js` | ☐ |
-| 9 | Rate limit đã bật cho `/auth/login` và `/auth/register` | Gọi 11 lần liên tiếp → lần cuối phải trả 429 | ☐ |
-| 10 | Chữ ký IPN được xác thực trước khi cập nhật dữ liệu | Gửi IPN giả với chữ ký sai → hóa đơn không đổi, có log cảnh báo | ☐ |
-| 11 | Mật khẩu mặc định của tài khoản seed đã đổi trên production | Thử đăng nhập bằng `Admin@123` → phải thất bại | ☐ |
-| 12 | Production chạy trên HTTPS | Kiểm tra URL deploy | ☐ |
-| 13 | Thông báo lỗi không lộ chi tiết kỹ thuật (stack trace) ra client | Gây lỗi 500 chủ ý, kiểm tra response | ☐ |
-| 14 | Đã chạy `npm audit` và xử lý lỗ hổng mức high/critical | `npm audit --audit-level=high` | ☐ |
+1. **Băm mật khẩu (Password Hashing):** Sử dụng `bcrypt` với `saltRounds = 10`. Mật khẩu dạng rõ tuyệt đối không bao giờ được ghi vào CSDL hoặc in ra file log. Trường `passwordHash` trong Mongoose model luôn có cấu hình `select: false`.
+2. **Bảo mật thanh toán & Idempotency:**
+   - Mã VietQR được ký dữ liệu chuẩn hóa;
+   - Webhook tiếp nhận thanh toán bắt buộc kiểm tra trạng thái giao dịch ngân hàng theo nguyên lý Idempotent: nếu giao dịch đã hoàn tất, không cập nhật hóa đơn lần thứ hai;
+   - Secret key của cổng VNPay được lưu an toàn trong biến môi trường `.env`.
+3. **Chống tấn công Brute-Force & DoS:**
+   - Giới hạn tần suất (Rate Limiting) trên các endpoint nhạy cảm: `POST /api/auth/login` tối đa 5 lần sai trong 15 phút; `POST /api/portal/apply-public` tối đa 10 đơn/phút từ 1 IP;
+   - Sử dụng thư viện `helmet` thiết lập các HTTP headers bảo mật (CSP, X-Content-Type-Options, HSTS).
 
 ---
 
-## 7. Lịch sử phiên bản
+## 5. Lịch sử phiên bản tài liệu
 
 | Phiên bản | Ngày | Người thực hiện | Nội dung thay đổi |
 |-----------|------|------------------|-------------------|
-| v1.0 | 11/09/2026 | Cả nhóm | Chốt ma trận RBAC 4 vai trò, luồng JWT, checklist bảo mật |
-| v1.1 | 12/09/2026 | BE Lead | Thêm quyền đặt lại mật khẩu (FR-09) kèm rào chặn leo thang đặc quyền Staff → Admin |
-| **v2.0** | **12/09/2026** | BE Lead | **Rà soát theo bộ tài liệu v2.0:** vai trò và trạng thái đổi sang chữ thường; bỏ quyền chuyển phòng và nộp đơn của sinh viên (ngoài phạm vi v1); thêm quyền tạo Residency và kích hoạt hợp đồng; đăng nhập bằng email; `passwordHash` dùng `select: false` của Mongoose |
-| v1.2 | 12/09/2026 | BE Lead | **Áp dụng v1-lite:** 1 JWT hạn 7 ngày (bỏ refresh token); gộp `rbac.middleware.js` vào `auth.middleware.js`; ghi nhật ký ra file thay bảng `audit_log`; xuất CSV thay Excel; làm rõ vì sao nhận kết quả thanh toán qua Return URL vẫn an toàn. Xem `14` |
+| v1.0 | 11/09/2026 | Nhóm phát triển | Bản khởi tạo đầu tiên (mô hình 4 vai trò có `viewer`) |
+| **v2.0** | **03/10/2026** | **Lead Kỹ thuật & BA** | **Cập nhật toàn diện ma trận RBAC theo 4 vai trò chuẩn:** `admin`, `manager`, `staff`, `student` (loại bỏ `viewer`). Bổ sung phân quyền cho 10 phân hệ nghiệp vụ hoàn chỉnh (Nộp đơn công khai, Quét mã QR Check-in, Báo hỏng thiết bị, Kỷ luật vi phạm, Chat trực tuyến Socket.io, Bảng tin KTX, VietQR). Chuẩn hóa cơ chế cưỡng bức đổi mật khẩu và rào chắn chống IDOR. |

@@ -71,6 +71,17 @@ flowchart TD
   if (!bed) throw new ApiError(409, 'BED_NOT_AVAILABLE', 'Giường đã có người ở');
   ```
 - **BR-03 (Sức chứa phòng):** Tổng số giường = `Room.capacity`.
+- **BR-04 (Chuyển đổi giới tính phòng an toàn):** Phòng chỉ được chuyển đổi `Room.gender` (`male` ↔ `female`) khi phòng đó đang hoàn toàn trống (số sinh viên đang ở = 0).
+- **BR-05 (Thuật toán phân vùng giới tính thông minh - Smart Gender Zoning):**
+  Căn cứ theo số lượng đơn trúng tuyển thực tế của Nam và Nữ theo đợt, hệ thống tự động tính toán nhu cầu số phòng cần thiết và tự động đề xuất/chuyển đổi giới tính phòng trống theo 3 cấp độ ưu tiên an ninh và 4 ràng buộc đặc biệt:
+  1. *Cấp 1 - Tối ưu theo Tòa nhà:* Ưu tiên dồn tối đa cùng giới tính về cùng một Tòa nhà riêng biệt (Tòa thuần Nam, Tòa thuần Nữ).
+  2. *Cấp 2 - Phân tách theo Tầng:* Nếu là tòa dùng chung (`Building.gender == 'mixed'`), gom trọn vẹn từng Tầng cho một giới tính (ví dụ Tầng 1, 2, 3 thuần Nam; Tầng 4, 5, 6 thuần Nữ).
+  3. *Cấp 3 - Phân tách theo Dãy liền kề (Contiguous Block):* Ở tầng giao thoa, các phòng cùng giới tính bắt buộc phải nằm liền kề nhau theo dãy (ví dụ phòng 301→305 là Nam, 306→310 là Nữ); tuyệt đối cấm xếp phòng nam xen kẽ so le với phòng nữ.
+  *Các ràng buộc nghiệp vụ bắt buộc:*
+  - *Ràng buộc 1:* Chỉ hoán đổi trên các phòng hoàn toàn trống (0 người ở).
+  - *Ràng buộc 2 (Ưu tiên thể chất BR-16):* Luôn bảo lưu cụm phòng Tầng 1 hoặc 2 cho sinh viên có vấn đề thể chất của cả 2 giới (tòa không có thang máy).
+  - *Ràng buộc 3 (Kiểu nhà vệ sinh):* Chỉ áp dụng Cấp 3 nếu phòng có WC khép kín. Nếu tòa dùng WC chung ở đầu hồi hành lang, bắt buộc phân tách ở Cấp 2 (theo tầng hoặc theo cánh riêng biệt).
+  - *Ràng buộc 4 (Cân đối loại phòng):* Đảm bảo phân bổ cân đối số lượng phòng có điều hòa/quạt theo đúng tỷ lệ nguyện vọng nộp đơn của cả hai giới.
 
 ### 3.2. Nộp đơn công khai, Hàng đợi Queue & Phân bổ giường theo Thể chất
 - **BR-10 (Nộp đơn công khai không cần tài khoản):** Sinh viên nộp đơn online trong đợt mở (`RegistrationPeriod.status == 'open'`) bằng MSSV và thông tin cá nhân. Hệ thống tự động gửi email xác nhận đã tiếp nhận đơn.

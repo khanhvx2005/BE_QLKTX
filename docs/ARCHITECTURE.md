@@ -1,367 +1,220 @@
-# Project Architecture Overview
-**Project:** Dormitory Management System
-**Version:** 1.2
-**Pattern:** Modular Monolith — Feature-Based (Vertical Slice) Organization
-**Audience:** Developers (new hires + AI coding assistants)
+# Project Architecture Overview (Kiến trúc Hệ thống)
 
-> This document defines **how the codebase is organized**, not what each feature does. See `PRD.md` for feature scope. Every new feature (Student, Room/Bed, Residency/Contract, Fee/Payment, Auth, Dashboard, Renewal/Checkout Request) must follow the structure described here.
-
-> **📦 Two repositories.** The project lives in two GitHub repos; all five team members have access to both.
->
-> | Repo | Contents | Primary owners |
-> |------|----------|----------------|
-> | `FE_QuanLyKTX` | React + Vite app · **plus the whole `docs/` folder** | 2 frontend members |
-> | `BE_QuanLyKTX` | Node.js + Express + Mongoose API | 3 backend members |
->
-> Documentation is **not duplicated** — `BE_QuanLyKTX/README.md` links to `docs/` in the frontend repo. Two copies would diverge within days.
+**Project:** Dormitory Management System - HaUI (DMS-KTX HaUI)  
+**Version:** v2.0 (Hợp nhất theo kiến trúc KTX 4.0 chịu tải cao)  
+**Pattern:** Modular Monolith — Feature-Based (Vertical Slice) Organization  
+**Audience:** Developers (Backend, Frontend) & Hội đồng đánh giá đồ án KTPM  
 
 ---
 
-## 1. Guiding Principles
+## 1. Nguyên tắc kiến trúc cốt lõi
 
-- **Feature-based, not layer-based at the top level.** Group code by business domain (`students`, `rooms`, `contracts`...) instead of by technical type (`controllers/`, `models/`) at the root — this scales better with a 5-person team working in parallel.
-- **Each feature is a self-contained module** with its own routes/controllers/services/models (backend) or components/hooks/api (frontend). Features should be as decoupled as possible.
-- **Shared code lives in a `common`/`core` layer** — never duplicated across features, never reached into directly from one feature into another feature's internals.
-- **One-way dependency rule:** `feature → shared/core` is allowed. `feature → feature` is discouraged (use shared services or events instead).
-- **Monolith today, extractable tomorrow.** Feature boundaries are drawn so that, if needed later, a feature (e.g., `payments`) could be lifted into its own service with minimal rewrite.
+1. **Tổ chức theo tính năng (Feature-Driven Vertical Slice):** Nhóm mã nguồn theo nghiệp vụ (`applications`, `rooms`, `contracts`, `invoices`, `utilities`, `chats`...) thay vì nhóm kỹ thuật thuần túy (`controllers/`, `models/`). Mỗi module tự quản lý schema, route, controller, service và validation.
+2. **Kiến trúc chịu tải cao (High Concurrency & Flash-Spike Resilience):**
+   - Sử dụng **Redis In-Memory** làm bộ nhớ đệm (Cache-Aside) cho dữ liệu tra cứu phòng trống (`rooms:available:campus:{id}`) với độ trễ < 2ms;
+   - Sử dụng **Hàng đợi Message Queue (BullMQ trên nền Redis)** để tiếp nhận đơn nộp đợt cao điểm trong 5ms và dàn phẳng tải (Traffic Smoothing) xuống MongoDB.
+3. **Tính toàn vẹn dữ liệu & Cập nhật nguyên tử (Atomicity without Distributed Locks):** Sử dụng thao tác `findOneAndUpdate` có điều kiện nguyên tử của MongoDB (`{ _id: bedId, status: 'available' }`) để triệt tiêu 100% nguy cơ xếp trùng giường.
+4. **Giao tiếp thời gian thực (Real-time Engine):** Tích hợp **Socket.io** trên nền Redis Adapter phục vụ kênh chat trực tuyến giữa sinh viên và cán bộ trực KTX cũng như đẩy thông báo chuông cá nhân.
 
 ---
 
-## 2. High-Level System Diagram
+## 2. Sơ đồ kiến trúc tổng thể (High-Level System Diagram)
 
 ```
-┌─────────────────────────┐      HTTPS/JSON       ┌──────────────────────────┐
-│   Frontend (React+Vite) │ ─────────────────────► │  Backend (Express API)   │
-│   Feature-based SPA     │ ◄───────────────────── │  Feature-based Monolith  │
-└─────────────────────────┘                        └───────────┬──────────────┘
-                                                               │ Mongoose ODM
-                                                               ▼
-                                                     ┌──────────────────┐
-                                                     │     MongoDB       │
-                                                     └──────────────────┘
-                                                               ▲
-                                                               │ webhook callback
-                                                   VNPay / ZaloPay Gateway
+┌──────────────────────────────────────┐                ┌──────────────────────────────────────┐
+│       Frontend (React + Vite)        │   HTTPS/JSON   │        Backend (Express.js)          │
+│ • Admin/Staff Portal (/admin/*)      │ ─────────────► │        Modular Monolith              │
+│ • Public & Student Portal (/portal/*)│ ◄───────────── │ • RESTful Controllers                │
+│ • Socket.io-client (Chat & Notif)    │ ◄──WebSocket──►│ • Core Services & Middlewares (RBAC) │
+└──────────────────────────────────────┘                └───────────┬──────────────┬───────────┘
+                                                                    │              │
+                                                   Mongoose ODM     │              │ BullMQ / Cache
+                                                                    ▼              ▼
+                                                        ┌────────────────┐   ┌────────────────┐
+                                                        │    MongoDB     │   │     Redis      │
+                                                        │ 19 Collections │   │ • Job Queues   │
+                                                        │ Partial Unique │   │ • Cache-Aside  │
+                                                        │    Indexes     │   │ • Socket.io    │
+                                                        └────────────────┘   └────────────────┘
+                                                                    ▲              ▲
+                                                                    │              │
+                                                       ┌────────────┴──────────────┴───────────┐
+                                                       │            External Services          │
+                                                       │ • VietQR Napas247 (Dynamic QR)        │
+                                                       │ • VNPay Sandbox Gateway (Webhook)     │
+                                                       │ • SMTP Server (Nodemailer Queue)      │
+                                                       └───────────────────────────────────────┘
 ```
 
 ---
 
-## 3. Backend Architecture (Express + Mongoose)
-
-### 3.1 Root Structure
+## 3. Cấu trúc thư mục Backend (`backend/src`)
 
 ```
 backend/
 ├── src/
-│   ├── modules/                # feature-based modules (business domain)
-│   │   ├── auth/
-│   │   ├── students/
-│   │   ├── rooms/              # buildings + rooms + beds
-│   │   ├── residencies/
-│   │   ├── contracts/
-│   │   ├── fees/               # fee types + utility readings + invoices
-│   │   ├── payments/
-│   │   ├── requests/           # renewal/checkout requests
-│   │   └── dashboard/
-│   ├── core/                   # cross-cutting infrastructure
-│   │   ├── config/             # env, db connection, app config
-│   │   ├── middlewares/        # auth guard, error handler, validator
-│   │   ├── errors/             # custom error classes
-│   │   ├── utils/              # pure helper functions
-│   │   └── logger/
-│   ├── shared/                 # shared reusable business pieces
-│   │   ├── constants/          # enums: role, status, etc.
-│   │   └── types/ (or jsdoc)   # shared DTO shapes
-│   ├── app.js                  # express app assembly (mounts modules)
-│   └── server.js               # entry point
+│   ├── modules/                      # 14 Feature-based Business Modules
+│   │   ├── auth/                     # Đăng nhập, đổi mật khẩu lần đầu, hồ sơ cá nhân
+│   │   ├── users/                    # Quản trị tài khoản & phân quyền (admin)
+│   │   ├── campuses/                 # Quản lý 3 cơ sở (CS1, CS2, CS3) & Tòa nhà
+│   │   ├── rooms/                    # Quản lý phòng & giường tầng (lower/upper)
+│   │   ├── applications/             # Đợt mở KTX, nộp đơn công khai, BullMQ Worker
+│   │   ├── students/                 # Hồ sơ sinh viên nội trú & liên hệ khẩn cấp
+│   │   ├── contracts/                # Hợp đồng lưu trú, tạo mã QR Check-in nhận phòng
+│   │   ├── utilities/                # Nhập số điện nước theo lô (Grid) & đơn giá
+│   │   ├── invoices/                 # Lập hóa đơn, thuật toán chia đều Math.floor
+│   │   ├── payments/                 # VietQR động, VNPay IPN Webhook, đối soát
+│   │   ├── requests/                 # Đơn xin chuyển phòng, trả phòng & hoàn cọc
+│   │   ├── maintenance/              # Phiếu báo hỏng thiết bị & điều phối sửa chữa
+│   │   ├── violations/               # Biên bản vi phạm nội quy & điểm rèn luyện
+│   │   ├── chats/                    # Socket.io chat thời gian thực sinh viên - cán bộ
+│   │   ├── announcements/            # Bảng tin thông báo chung KTX
+│   │   ├── notifications/            # Chuông thông báo đẩy cá nhân
+│   │   └── reports/                  # Dashboard thống kê, tỷ lệ lấp đầy & xuất file
+│   │
+│   ├── core/                         # Hạ tầng dùng chung
+│   │   ├── config/                   # env, database (MongoDB), redis, mailer
+│   │   ├── middlewares/              # authenticate (JWT), authorize (RBAC), validate
+│   │   ├── errors/                   # ApiError class, global error handler
+│   │   ├── queues/                   # BullMQ queues definition (applicationQueue, mailQueue)
+│   │   ├── socket/                   # Socket.io server initialization & handlers
+│   │   └── utils/                    # vietqr-generator, date-helpers, math-allocator
+│   │
+│   ├── shared/                       # Hằng số và định dạng dùng chung
+│   │   ├── constants/                # enums: roles, statuses (bed, contract, invoice)
+│   │   └── types/                    # DTO shapes
+│   │
+│   ├── app.js                        # Express app assembly & route registration
+│   └── server.js                     # Khởi tạo DB, Redis, Socket.io & HTTP server
 ├── tests/
 └── package.json
 ```
 
-### 3.2 Inside Each Feature Module
-
-Each module is a self-contained vertical slice:
-
-```
-modules/students/
-├── student.model.js         # Mongoose schema
-├── student.routes.js        # Express router for this feature
-├── student.controller.js    # HTTP layer: parse req, call service, format res
-├── student.service.js       # business logic (validation, orchestration)
-├── student.validation.js    # request schema validation
-└── student.routes.test.js
-```
-
-- **Routes** register endpoints and delegate to controllers only.
-- **Controllers** never contain business logic — only I/O translation.
-- **Services** hold business rules (e.g., "room cannot exceed bed capacity").
-
-> **📌 v1 simplification (12/09/2026).** The original design also listed a `*.repository.js` layer. **We do not use it.** Mongoose models are already a data-access abstraction; adding a repository on top produces pass-through code with no benefit at this team size. Services call Mongoose models directly. If a module ever grows complex enough to justify one, add it to that module only.
-
-### 3.3 Module Registration (keeps `app.js` thin)
-
-```js
-// app.js
-const studentRoutes = require('./modules/students/student.routes');
-const roomRoutes = require('./modules/rooms/room.routes');
-
-app.use('/api/students', studentRoutes);
-app.use('/api/rooms', roomRoutes);
-```
-
-### 3.4 Cross-Feature Communication
-
-- If `contracts` needs to update `rooms` (bed status), call the **room service function** directly (`bedService.markBedAvailable(bedId)`), not the room model. This keeps data access private to each module.
-- Avoid circular imports between modules — if two features need to share logic, extract it into `shared/`.
-
-### 3.5 ⚠️ Atomicity without MongoDB transactions
-
-**MongoDB transactions require a replica set.** A plain local `mongod` cannot run `session.startTransaction()` — it fails at runtime. Rather than force every developer to configure a replica set, v1 uses **atomic conditional updates**, which are a native single-document guarantee in MongoDB and need no transaction at all.
-
-```js
-// Claim a bed — atomic. Two simultaneous requests: only one gets a document back.
-const bed = await Bed.findOneAndUpdate(
-  { _id: bedId, status: 'available' },   // the condition lives in the query
-  { status: 'occupied' },
-  { new: true }
-);
-if (!bed) {
-  throw new ApiError(409, 'BED_NOT_AVAILABLE', 'Bed is no longer available');
-}
-```
-
-This is the mechanism that prevents double-booking. A **partial unique index** on `Residency` (see `DATA-SCHEMA.md` §3.6) backs it up as a second line of defense.
-
-**When a real transaction is genuinely needed** (checkout approval touches Request + Contract + Residency + Bed + Invoice), either:
-1. Use **MongoDB Atlas** (free tier is a replica set) — recommended, and needed for deployment anyway; or
-2. Run local MongoDB as a single-node replica set: `mongod --replSet rs0` then `rs.initiate()`; or
-3. Order the writes so the **riskiest one happens first** and later failures are recoverable by re-running — acceptable for v1.
-
-Whichever is chosen, write it down in `13-LO-TRINH-TRIEN-KHAI.md` so the whole team sets up the same way.
-
 ---
 
-## 4. Frontend Architecture (React + Vite)
-
-### 4.1 Root Structure
+## 4. Kiến trúc Frontend (`frontend/src`)
 
 ```
 frontend/
 ├── src/
-│   ├── features/                 # feature-based modules
-│   │   ├── auth/
-│   │   ├── students/
-│   │   ├── rooms/
-│   │   ├── residencies/
-│   │   ├── contracts/
-│   │   ├── fees/
-│   │   ├── payments/
-│   │   ├── requests/
-│   │   ├── dashboard/
-│   │   └── portal/               # student self-service screens
-│   ├── components/               # shared/dumb UI components (StatusTag, MoneyText...)
-│   ├── layouts/                  # AdminLayout, PortalLayout
-│   ├── routes/                   # route definitions, role guards
-│   ├── lib/                      # axios instance, config
-│   ├── hooks/                    # shared cross-feature hooks (useApi, useDebounce)
-│   ├── context/                  # global state (auth session)
-│   ├── utils/                    # formatters, permission helper
-│   ├── constants/                # roles, statuses, routes
+│   ├── features/                     # Feature-based UI Modules
+│   │   ├── auth/                     # Đăng nhập, đổi mật khẩu lần đầu
+│   │   ├── portal/                   # Giao diện dành riêng cho sinh viên
+│   │   ├── applications/             # Form nộp đơn công khai & Xét duyệt đơn
+│   │   ├── campuses/                 # Quản lý cơ sở, tòa nhà
+│   │   ├── rooms/                    # Sơ đồ phòng, giường tầng
+│   │   ├── students/                 # Danh sách sinh viên nội trú
+│   │   ├── contracts/                # Hợp đồng, quét mã QR Check-in
+│   │   ├── utilities/                # Bảng nhập điện nước theo lô
+│   │   ├── invoices/                 # Hóa đơn & hiển thị mã VietQR động
+│   │   ├── payments/                 # Lịch sử giao dịch & đối soát
+│   │   ├── requests/                 # Đơn chuyển phòng, trả phòng
+│   │   ├── maintenance/              # Báo hỏng thiết bị
+│   │   ├── violations/               # Biên bản vi phạm
+│   │   ├── chat/                     # Cửa sổ chat Socket.io
+│   │   ├── announcements/            # Bảng tin KTX
+│   │   └── dashboard/                # Báo cáo biểu đồ
+│   │
+│   ├── components/                   # UI components dùng chung (StatusTag, MoneyText...)
+│   ├── layouts/                      # AdminLayout (Sidebar), PortalLayout (Mobile-First)
+│   ├── routes/                       # AppRoutes, RoleRoute (Guarded route per role)
+│   ├── lib/                          # axiosClient, socketClient
+│   ├── hooks/                        # useApi, useAuth, useSocket
+│   ├── context/                      # AuthContext, NotificationContext
+│   ├── constants/                    # colors, statuses, API endpoints
 │   ├── App.jsx
 │   └── main.jsx
 ├── public/
 └── package.json
 ```
 
-### 4.2 Inside Each Feature Folder
+---
 
+## 5. Các giải pháp kỹ thuật nâng cao
+
+### 5.1. Dàn phẳng tải cao điểm bằng BullMQ Queue
+- Khi mở cổng nộp đơn KTX, hàng nghìn sinh viên truy cập cùng lúc. Endpoint `POST /api/portal/apply-public` chỉ validate nhanh cấu trúc dữ liệu rồi đẩy payload vào Queue `dorm-application-queue` trên Redis trong ~5ms.
+- Background Worker nhặt từng job từ hàng đợi xử lý tuần tự xuống MongoDB với tốc độ kiểm soát (ví dụ: tối đa 80–100 req/s), bảo vệ hoàn toàn cơ sở dữ liệu không bị sập.
+
+### 5.2. Caching Redis giảm tải truy vấn phòng trống
+- Sinh viên và phụ huynh liên tục tra cứu danh sách phòng còn trống tại các cơ sở. Hệ thống lưu kết quả truy vấn vào Redis với key `rooms:available:campus:{campusId}` (TTL 30 giây).
+- Khi có bất kỳ giao dịch duyệt đơn hoặc nhận phòng làm thay đổi trạng thái giường, cache tự động bị vô hiệu hóa (Cache Invalidation).
+
+### 5.3. Xếp giường nguyên tử (Atomic Conditional Update)
+- Để tránh tranh chấp dữ liệu khi nhiều cán bộ cùng thao tác phân phòng, hệ thống áp dụng câu lệnh cập nhật nguyên tử:
+```javascript
+const bed = await Bed.findOneAndUpdate(
+  { _id: bedId, status: 'available' },
+  { status: 'occupied' },
+  { new: true }
+);
+if (!bed) {
+  throw new ApiError(409, 'BED_NOT_AVAILABLE', 'Giường này vừa được gán cho sinh viên khác');
+}
 ```
-features/students/
-├── api/
-│   └── student.api.js         # axios calls to /api/students
-├── components/
-│   ├── StudentTable.jsx
-│   └── StudentFormModal.jsx
-├── pages/
-│   └── StudentsPage.jsx       # route-level page, composes components
-└── index.js                   # public exports of this feature
-```
-
-- Only `index.js`/exported members should be imported by other features or routes — internal files are private to the feature.
-- Each feature owns its own API calls and components; no shared "god" API file.
-
-> **📌 v1 simplification (12/09/2026).** Two departures from the original sketch, both to reduce file count for a small team:
-> 1. **No per-feature `hooks/` folder** unless a feature actually needs one. Data fetching goes through the shared `hooks/useApi.js`; a one-line `useApi(() => studentApi.getList(filters), [filters])` inside the page is enough.
-> 2. **Create/edit forms are modals inside the list page**, not separate routed pages. This removes ~11 screens and ~11 routes across the project.
-
-### 4.3 Role-Based Access (Frontend)
-
-- `routes/` defines guarded routes per role (`admin`, `staff`, `student`, `viewer`).
-- Student self-service pages live under `features/portal/` with their own `PortalLayout`.
-- ⚠️ Frontend guards are **UX only, never security**. Every endpoint re-checks the role server-side (`API.md` §1.3).
 
 ---
 
-## 5. Cross-Cutting Concerns
+## 6. Biến môi trường hệ thống
 
-| Concern | Where it lives | Example |
-|---|---|---|
-| Auth/session | `core/middlewares/auth.js` (BE), `context/AuthContext` + route guards (FE) | JWT verify middleware, `RoleRoute` |
-| Error handling | `core/errors/` + global error middleware (BE), axios interceptor (FE) | Consistent `{ code, message, data }` response shape |
-| Validation | `*.validation.js` per module (BE), antd `Form` `rules` per feature (FE) | One validation file per entity |
-| Environment config | `core/config/` | `.env` → `config.js` single source |
-| Logging | `core/logger/` | Request logging middleware, `[AUDIT]` action lines |
-| Status enums (bed/contract/invoice) | `shared/constants/enums.js` (BE), `constants/statuses.js` (FE) | Single source of truth to avoid string typos across modules |
-
----
-
-## 6. Naming & Conventions
-
-- **Files:** `kebab-case` for plain JS files (`student.service.js`, `use-api.js`); `PascalCase.jsx` for React component files (`StudentsPage.jsx`).
-- **Code:** `PascalCase` for React components and classes, `camelCase` for functions/variables, `UPPER_SNAKE_CASE` for constants.
-- **Enum values are lowercase strings** (`'active'`, `'admin'`, `'available'`) — matches MongoDB convention used throughout `DATA-SCHEMA.md`.
-- **REST endpoints:** `/api/<feature>` (plural), nested only where hierarchy is genuinely needed (e.g., `/api/rooms/:roomId/beds`).
-- **Mongoose schema file** = `<entity>.model.js`; one collection per core entity.
-- Every module exposes a single entry point (`index.js` or `*.routes.js`) — no reaching into another module's internal files.
-- **Git branches and commit messages are in English**; UI strings and code comments are in Vietnamese. See `10-QUY-TRINH-LAM-VIEC.md`.
-
----
-
-## 7. Scalability Path (Future-Proofing)
-
-- Because each backend module is self-contained (own model/service/routes), a high-load feature like `payments` (gateway webhooks) can later be **extracted into a separate service** without touching other modules — only its route mount point changes.
-- Adding a new feature = adding a new folder under `modules/` (BE) and `features/` (FE) + one route registration line — no existing code is modified.
-- This structure also keeps AI coding assistants scoped: when asked to work on "payments," the assistant only needs context from `modules/payments/` + `shared/`, not the entire codebase.
-
----
-
-## 8. Next Steps
-
-1. Scaffold `backend/` root structure above. *(Frontend is already scaffolded — see `README.md` §5.)*
-2. Set up `core/config`, DB connection, and `app.js` module registration skeleton (backend).
-3. Implement modules in PRD priority order: `auth` → `students` → `rooms` (Building/Room/Bed) → `residencies`/`contracts` → `fees`/`payments` → `requests` → `dashboard`.
-4. Build **one module end to end first** (`students`), verify it works, then clone the structure for the rest. See `14-PHIEN-BAN-DON-GIAN-HOA.md` §15.
-
----
-
-## 9. Environment Variables
-
-### 9.1 Backend — `backend/.env`
+### 6.1. Backend (`backend/.env`)
 
 ```bash
-# --- App ---
+# --- App Configuration ---
 NODE_ENV=development
 PORT=5000
+APP_NAME=DMS_KTX_HaUI
 
-# --- Database ---
-# Atlas:  mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/dms_ktx?retryWrites=true&w=majority
-# Local:  mongodb://localhost:27017/dms_ktx
-MONGODB_URI=mongodb://localhost:27017/dms_ktx
+# --- Database MongoDB ---
+# Kết nối MongoDB cục bộ hoặc MongoDB Atlas replica set
+MONGODB_URI=mongodb://localhost:27017/dms_ktx_haui
 
-# --- Auth ---
-# Generate with: node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"
-JWT_SECRET=change_me_to_a_long_random_string
+# --- Redis Configuration ---
+# Caching, BullMQ Queues và Socket.io Adapter
+REDIS_URL=redis://localhost:6379
+
+# --- Authentication (JWT) ---
+JWT_SECRET=super_secret_jwt_key_haui_dormitory_2026
 JWT_EXPIRES_IN=7d
 BCRYPT_SALT_ROUNDS=10
 
-# --- Security ---
-CORS_ORIGIN=http://localhost:5173
+# --- Email Service (SMTP Nodemailer) ---
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_USER=ktx.haui.edu@gmail.com
+MAIL_PASS=your_app_password
+MAIL_FROM="Ban Quản lý KTX HaUI <ktx.haui.edu@gmail.com>"
 
-# --- VNPay sandbox ---
-VNP_TMN_CODE=
-VNP_HASH_SECRET=
+# --- VietQR NAPAS 247 ---
+VIETQR_BANK_ID=970422
+VIETQR_ACCOUNT_NO=112233445566
+VIETQR_ACCOUNT_NAME=BAN QUAN LY KTX HAUI
+VIETQR_TEMPLATE=compact2
+
+# --- VNPay Sandbox Gateway ---
+VNP_TMN_CODE=YOUR_VNP_CODE
+VNP_HASH_SECRET=YOUR_VNP_SECRET
 VNP_URL=https://sandbox.vnpayment.vn/paymentv2/vpcpay.html
 VNP_RETURN_URL=http://localhost:5173/portal/payment-result
 
-# --- Scheduler ---
-ENABLE_CRON=true
-TZ=Asia/Ho_Chi_Minh
+# --- CORS & Security ---
+CORS_ORIGIN=http://localhost:5173
 ```
 
-### 9.2 Frontend — `frontend/.env`
+### 6.2. Frontend (`frontend/.env`)
 
 ```bash
 VITE_API_BASE_URL=http://localhost:5000/api
-VITE_APP_NAME=He thong quan ly ky tuc xa
+VITE_SOCKET_URL=http://localhost:5000
+VITE_APP_NAME=Hệ thống Quản lý Ký túc xá - ĐH Công nghiệp Hà Nội
 VITE_USE_MOCK=false
 ```
 
-> ⚠️ `.env` **must never be committed** — it is in `.gitignore`. Commit `.env.example` with every key present but every value blank, so a new team member knows what to configure.
->
-> ⚠️ The **database name must be in the URI path** (`/dms_ktx` before the `?`). Without it Mongoose silently writes to a database called `test`.
-
 ---
 
-## 10. MongoDB Connection
+## 7. Lịch sử phiên bản tài liệu
 
-`core/config/database.js` — connect once at startup, fail fast if it cannot.
-
-```js
-const mongoose = require('mongoose');
-
-async function connectDatabase() {
-  const uri = process.env.MONGODB_URI;
-  if (!uri) {
-    console.error('[DB] Missing MONGODB_URI in .env');
-    process.exit(1);
-  }
-
-  // Mongoose 8 needs no legacy options (useNewUrlParser, useUnifiedTopology)
-  mongoose.set('strictQuery', true);
-
-  try {
-    await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 10000,   // fail in 10s instead of hanging
-      maxPoolSize: 10,
-    });
-    console.log(`[DB] MongoDB connected → ${mongoose.connection.name}`);
-  } catch (err) {
-    console.error('[DB] MongoDB connection failed:', err.message);
-    process.exit(1);   // do not start the server without a database
-  }
-
-  mongoose.connection.on('disconnected', () => console.warn('[DB] MongoDB disconnected'));
-  mongoose.connection.on('error', (e) => console.error('[DB] MongoDB error:', e.message));
-}
-
-module.exports = { connectDatabase };
-```
-
-```js
-// server.js
-const app = require('./app');
-const { connectDatabase } = require('./core/config/database');
-const { startJobs } = require('./core/jobs/daily-job');
-
-(async () => {
-  await connectDatabase();          // connect BEFORE listening
-  startJobs();
-  app.listen(process.env.PORT || 5000, () =>
-    console.log(`[APP] Listening on ${process.env.PORT || 5000}`));
-})();
-```
-
-> 💡 The log line prints `mongoose.connection.name` — the actual database being used. If it says `test`, the URI is missing the database name.
-
-### 10.1 Index creation
-
-Mongoose builds the indexes declared in each schema automatically on first connect — **there is no migration step**. Two consequences:
-
-1. Index creation is **asynchronous**. In development, verify with `db.<collection>.getIndexes()` in `mongosh` or Compass rather than assuming.
-2. Changing an index definition does **not** drop the old one. On a development database, drop the collection and let it rebuild; on production, drop the stale index explicitly.
-
-```js
-// Verify the two indexes that protect core business rules
-db.residencies.getIndexes()   // { bedId: 1 } unique, partialFilterExpression: { status: 'active' }
-db.invoices.getIndexes()      // { studentId, type, billingPeriod } unique partial
-```
-
----
-
-## 11. Change Log
-
-| Version | Date | Change |
-|---|---|---|
-| 1.0 | 12/09/2026 | Initial architecture |
-| 1.2 | 12/09/2026 | Added §9 Environment Variables and §10 MongoDB Connection: connection helper with fail-fast startup, the database-name-in-URI pitfall, and how Mongoose builds indexes without migrations. |
-| 1.1 | 12/09/2026 | Dropped the optional repository layer and per-feature hooks folder (v1 simplification). Added §3.5 on achieving atomicity without MongoDB transactions. Added `portal` frontend feature. Clarified naming: lowercase enum values, English branches/commits, Vietnamese UI/comments. |
+| Phiên bản | Ngày | Người thực hiện | Nội dung thay đổi |
+|-----------|------|------------------|-------------------|
+| v1.0 | 12/09/2026 | Nhóm phát triển | Khởi tạo cấu trúc kiến trúc Monolith ban đầu |
+| **v2.0** | **03/10/2026** | **Lead Kỹ thuật** | **Cập nhật toàn diện kiến trúc KTX 4.0:** Bổ sung Redis In-memory (Cache-Aside + BullMQ Queue chịu tải cao), Socket.io real-time engine, Nodemailer tự động hóa email, VietQR động, mở rộng 14 module chức năng hoàn chỉnh, chuẩn hóa biến môi trường. |

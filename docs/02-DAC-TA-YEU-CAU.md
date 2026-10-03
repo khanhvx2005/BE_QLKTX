@@ -63,9 +63,10 @@
 - **FR-22:** Quản lý Phòng (`Room`): số phòng, tầng (`floor`), giới tính (`male`/`female`), loại phòng (`four_beds`, `six_beds`, `eight_beds`), có điều hòa (`hasAirConditioner`), sức chứa (`capacity`), đơn giá quy định (`pricePerMonth`).
 - **FR-23 (Phân định vị trí giường tầng):** Quản lý Giường (`Bed`): mã giường (VD: `P302-G01D`, `P302-G01T`), **vị trí tầng** (`position`: `lower` - tầng dưới, `upper` - tầng trên), trạng thái (`available`, `occupied`, `maintenance`).
 - **FR-24:** Tự động sinh danh sách giường theo sức chứa khi khởi tạo phòng (tự chia đều giường tầng dưới và giường tầng trên); không cho phép số giường thực tế vượt quá sức chứa.
-- **FR-25:** Kiểm tra giới tính nghiêm ngặt: Chặn xếp sinh viên vào phòng không trùng giới tính (`422 GENDER_MISMATCH`).
-- **FR-26:** Chuyển trạng thái bảo trì giường: Giường đang `occupied` không được chuyển sang `maintenance`.
-- **FR-27:** Tối ưu hóa tra cứu: Danh sách phòng trống (`/api/rooms/available`) được Caching bằng Redis để chịu tải khi hàng nghìn sinh viên cùng xem phòng.
+- **FR-25 (Tối ưu hóa phân vùng giới tính động - Smart Gender Zoning):** Cho phép hệ thống tự động tính toán nhu cầu số chỗ ở của Nam và Nữ từ số lượng đơn trúng tuyển thực tế để đề xuất/chuyển đổi giới tính hàng loạt các phòng trống theo 3 cấp độ ưu tiên (Cấp 1: Tách theo Tòa nhà thuần giới; Cấp 2: Tách trọn vẹn theo Tầng; Cấp 3: Tách theo Dãy phòng liền kề nếu phòng có WC khép kín) kết hợp bảo lưu cụm phòng tầng thấp cho sinh viên có vấn đề thể chất.
+- **FR-26:** Kiểm tra giới tính nghiêm ngặt: Chặn xếp sinh viên vào phòng không trùng giới tính (`422 GENDER_MISMATCH`).
+- **FR-27:** Chuyển trạng thái bảo trì giường: Giường đang `occupied` không được chuyển sang `maintenance`.
+- **FR-28:** Tối ưu hóa tra cứu: Danh sách phòng trống (`/api/rooms/available`) được Caching bằng Redis để chịu tải khi hàng nghìn sinh viên cùng xem phòng.
 
 ### 2.4. M4 – Năm học & Đợt đăng ký KTX
 - **FR-30:** Quản lý Năm học (`AcademicYear`): thiết lập năm học (VD: `2026-2027`), ngày bắt đầu, ngày kết thúc.

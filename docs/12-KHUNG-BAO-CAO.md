@@ -1,16 +1,18 @@
-# 12 – KHUNG BÁO CÁO ĐỒ ÁN
+# 12 – KHUNG BÁO CÁO ĐỒ ÁN CHUYÊN NGÀNH
 
-**Hệ thống:** DMS-KTX
-**Phiên bản:** v2.0
-**Mục đích:** Hướng dẫn chuyển bộ tài liệu kỹ thuật (01–11, 13, 14) thành báo cáo đồ án hoàn chỉnh.
-
-> 💡 **Nguyên tắc cốt lõi:** bộ tài liệu này đã chứa ~90% nội dung báo cáo. Việc còn lại là **sắp xếp lại theo mạch kể chuyện học thuật**, bổ sung phần mở đầu/kết luận và chèn ảnh chụp màn hình thật. **Không viết lại từ đầu.**
+**Học phần:** Đồ án chuyên ngành — Ngành Kỹ thuật phần mềm  
+**Đề tài:** Xây dựng hệ thống web quản lý Ký túc xá Trường Đại học Công nghiệp Hà Nội (DMS-KTX HaUI)  
+**Quy mô báo cáo:** 50 – 70 trang A4 (theo đúng đề cương hướng dẫn môn học)  
+**Phiên bản:** v4.0 (Đồng bộ toàn diện với bản chuẩn hóa nghiệp vụ HaUI & Smart KTX 4.0)  
+**Ngày cập nhật:** 03/10/2026
 
 ---
 
-## 1. Mục lục báo cáo đề xuất
+## 1. Cấu trúc Mục lục Báo cáo chuẩn (50 – 70 trang A4)
 
-```
+```text
+TRANG BÌA (Theo mẫu chuẩn Khoa CNTT - HaUI)
+NHẬN XÉT CỦA GIẢNG VIÊN HƯỚNG DẪN
 LỜI CẢM ƠN
 LỜI CAM ĐOAN
 MỤC LỤC
@@ -18,360 +20,228 @@ DANH MỤC HÌNH VẼ
 DANH MỤC BẢNG BIỂU
 DANH MỤC TỪ VIẾT TẮT
 
-MỞ ĐẦU
-  1. Lý do chọn đề tài
-  2. Mục tiêu đề tài
-  3. Đối tượng và phạm vi nghiên cứu
-  4. Phương pháp thực hiện
-  5. Bố cục báo cáo
+CHƯƠNG 1. GIỚI THIỆU ĐỀ TÀI                                      (~6 - 8 trang)
+  1.1. Lý do chọn đề tài
+       1.1.1. Bối cảnh công tác quản lý KTX tại Trường Đại học Công nghiệp Hà Nội (HaUI)
+       1.1.2. Những khó khăn, bất cập trong quy trình quản lý thủ công hiện nay
+       1.1.3. Tính cấp thiết của đề tài và giải pháp số hóa KTX 4.0
+  1.2. Mục tiêu đề tài
+       1.2.1. Mục tiêu tổng quát
+       1.2.2. Mục tiêu cụ thể (Đo lường bằng chỉ số KPI)
+       1.2.3. Mục tiêu học thuật và kỹ năng ngành Kỹ thuật phần mềm
+  1.3. Phạm vi đề tài
+       1.3.1. Phạm vi chức năng triển khai (3 cơ sở: CS1, CS2, CS3 của HaUI)
+       1.3.2. Giới hạn ngoài phạm vi
+       1.3.3. Các giả định và ràng buộc nghiệp vụ
+  1.4. Đối tượng sử dụng (4 Tác nhân hệ thống)
+       1.4.1. System Administrator (admin - Quản trị kỹ thuật hệ thống)
+       1.4.2. Manager (manager - Lãnh đạo / Trưởng Ban quản lý KTX)
+       1.4.3. Staff (staff - Cán bộ KTX vận hành, hỗ trợ & bảo trì)
+       1.4.4. Student (student - Sinh viên HaUI)
+  1.5. Công nghệ dự kiến
+       1.5.1. Công nghệ Frontend: React SPA, Vite, Ant Design, Socket.io-client
+       1.5.2. Công nghệ Backend: Node.js, Express.js, JWT, Socket.io, Nodemailer
+       1.5.3. Công nghệ Cơ sở dữ liệu & Caching: MongoDB, Mongoose ODM, Redis In-Memory
+       1.5.4. Công nghệ Hàng đợi & Nâng cao: Redis BullMQ (Queue chịu tải), VietQR động, VNPay Sandbox
 
-CHƯƠNG 1: TỔNG QUAN VÀ CƠ SỞ LÝ THUYẾT          (~15 trang)
-  1.1. Khảo sát hiện trạng quản lý ký túc xá
-       1.1.1. Thực trạng tại các trường đại học Việt Nam
-       1.1.2. Các vấn đề tồn tại
-       1.1.3. Khảo sát các hệ thống tương tự
-       1.1.4. Đề xuất giải pháp
-  1.2. Cơ sở lý thuyết
-       1.2.1. Kiến trúc Client–Server và mô hình SPA
-       1.2.2. REST API và các nguyên tắc thiết kế
-       1.2.3. Thư viện React và hệ sinh thái
-       1.2.4. Node.js và Express Framework
-       1.2.5. Cơ sở dữ liệu quan hệ và giao dịch (transaction)
-       1.2.6. Xác thực JWT và phân quyền RBAC
-       1.2.7. Tích hợp cổng thanh toán điện tử tại Việt Nam
+CHƯƠNG 2. KHẢO SÁT VÀ PHÂN TÍCH                                  (~15 - 18 trang)
+  2.1. Mô tả bài toán quản lý KTX HaUI
+       2.1.1. Cơ cấu không gian 4 cấp: Cơ sở (Campus) → Tòa (Building) → Phòng (Room) → Giường (Bed)
+       2.1.2. Chu kỳ tài chính thực tế: Thu tiền phòng theo đợt hợp đồng (8.5T hoặc 10-12T), điện nước hàng tháng
+  2.2. Quy trình nghiệp vụ thực tế
+       2.2.1. Quy trình mở đợt, nộp đơn công khai và xét duyệt ưu tiên
+       2.2.2. Quy trình tự động cấp tài khoản, gửi Email trúng tuyển và đổi mật khẩu lần đầu
+       2.2.3. Quy trình thanh toán VietQR và quét mã QR Check-in nhận phòng
+       2.2.4. Quy trình chốt chỉ số điện nước theo tòa và lập hóa đơn chia đều
+       2.2.5. Quy trình xử lý các nghiệp vụ phát sinh: Chuyển phòng, Báo hỏng, Kỷ luật vi phạm
+       2.2.6. Quy trình trả phòng, kiểm kê tài sản và quyết toán hoàn cọc
+  2.3. Yêu cầu chức năng (Functional Requirements - FR)
+       2.3.1. Bảng tổng hợp các yêu cầu chức năng (10 nhóm FR: M1 đến M10)
+       2.3.2. Chi tiết các nhóm chức năng
+  2.4. Yêu cầu phi chức năng (Non-Functional Requirements - NFR)
+       2.4.1. Hiệu năng & Khả năng chịu tải cao (High Concurrency & Flash-Spike)
+       2.4.2. Tính an toàn và bảo mật dữ liệu (RBAC, IDOR, Password Hash)
+       2.4.3. Tính khả dụng và tương thích thiết bị (Web responsive)
+  2.5. Xác định các tác nhân (Actors) & Phân cấp vai trò
+  2.6. Sơ đồ ca sử dụng (Use Case Diagram)
+       2.6.1. Sơ đồ Use Case tổng quát toàn hệ thống
+       2.6.2. Sơ đồ Use Case phân hệ Đăng ký, Xét duyệt & Hợp đồng
+       2.6.3. Sơ đồ Use Case phân hệ Điện nước, Tài chính & Thanh toán
+       2.6.4. Sơ đồ Use Case phân hệ Nghiệp vụ phát sinh (Chuyển phòng, Báo hỏng, Kỷ luật)
+       2.6.5. Sơ đồ Use Case phân hệ Tương tác Smart KTX (Chat, Thông báo, Check-in QR)
+  2.7. Đặc tả ca sử dụng chi tiết (Use Case Descriptions - 8 UC trọng tâm)
+       2.7.1. UC-01: Nộp đơn đăng ký KTX công khai qua hàng đợi Queue
+       2.7.2. UC-02: Phê duyệt đơn trúng tuyển và tự động cấp tài khoản qua Email
+       2.7.3. UC-03: Đăng nhập lần đầu và cưỡng bức đổi mật khẩu
+       2.7.4. UC-04: Thanh toán tiền phòng và cọc qua mã VietQR động
+       2.7.5. UC-05: Quét mã QR Check-in bàn giao giường nhận phòng
+       2.7.6. UC-06: Nhập chỉ số điện nước theo lô và lập hóa đơn chia đều
+       2.7.7. UC-07: Xử lý đơn chuyển phòng và bù trừ tiền chênh lệch
+       2.7.8. UC-08: Trả phòng, kiểm kê tài sản và quyết toán hoàn cọc
 
-CHƯƠNG 2: PHÂN TÍCH VÀ ĐẶC TẢ YÊU CẦU           (~25 trang)
-  2.1. Tổng quan hệ thống
-       2.1.1. Mục tiêu
-       2.1.2. Phạm vi hệ thống
-       2.1.3. Các bên liên quan
-  2.2. Xác định tác nhân
-  2.3. Yêu cầu chức năng
-       2.3.1. Quản lý sinh viên
-       2.3.2. Quản lý tòa nhà, phòng, giường
-       2.3.3. Đăng ký lưu trú và hợp đồng
-       2.3.4. Quản lý phí và thanh toán
-       2.3.5. Dashboard và báo cáo
-       2.3.6. Xác thực và phân quyền
-       2.3.7. Cổng sinh viên
-       2.3.8. Gia hạn và trả phòng
-  2.4. Yêu cầu phi chức năng
-  2.5. Mô hình hóa use case
-       2.5.1. Sơ đồ use case tổng quát
-       2.5.2. Đặc tả các use case chính
-  2.6. Phân tích nghiệp vụ
-       2.6.1. Quy tắc nghiệp vụ
-       2.6.2. Máy trạng thái các đối tượng
-       2.6.3. Sơ đồ luồng quy trình
+CHƯƠNG 3. THIẾT KẾ HỆ THỐNG                                      (~15 - 18 trang)
+  3.1. Kiến trúc hệ thống ở mức cơ bản và nâng cao
+       3.1.1. Kiến trúc tổng thể Client - Server (RESTful API + WebSocket)
+       3.1.2. Mô hình kiến trúc Modular Monolith (Vertical Slice theo tính năng)
+       3.1.3. Mô hình Caching và Hàng đợi chịu tải cao (Redis + BullMQ)
+       3.1.4. Mô hình phân quyền RBAC và cơ chế bảo mật JWT
+  3.2. Sơ đồ hoạt động (Activity Diagrams)
+       3.2.1. Sơ đồ hoạt động quy trình nộp đơn đợt cao điểm qua hàng đợi Queue
+       3.2.2. Sơ đồ hoạt động quy trình duyệt đơn, gán giường và gửi email tự động
+       3.2.3. Sơ đồ hoạt động quy trình tính toán và phân bổ tiền điện nước
+       3.2.4. Sơ đồ hoạt động quy trình trả phòng và quyết toán hoàn cọc
+  3.3. Sơ đồ tuần tự (Sequence Diagrams)
+       3.3.1. Sequence Diagram: Nộp đơn công khai và đẩy vào Redis Queue
+       3.3.2. Sequence Diagram: Duyệt đơn, cập nhật giường nguyên tử và gửi Email tài khoản
+       3.3.3. Sequence Diagram: Đăng nhập và cưỡng bức đổi mật khẩu lần đầu
+       3.3.4. Sequence Diagram: Thanh toán qua VietQR / VNPay và xử lý Webhook Idempotent
+       3.3.5. Sequence Diagram: Quét mã QR Check-in nhận phòng
+       3.3.6. Sequence Diagram: Nhắn tin trực tuyến thời gian thực (Socket.io)
+  3.4. Thiết kế cơ sở dữ liệu
+       3.4.1. Sơ đồ quan hệ thực thể (ERD CSDL MongoDB)
+       3.4.2. Từ điển dữ liệu chi tiết (19 Collections chuẩn hóa tiếng Anh)
+       3.4.3. Các ràng buộc toàn vẹn, Compound Index và Partial Unique Index
+  3.5. Thiết kế giao diện (UI/UX)
+       3.5.1. Sơ đồ cấu trúc điều hướng hệ thống (Sitemap Quản trị & Cổng sinh viên)
+       3.5.2. Thiết kế giao diện phía Quản trị (Admin / Manager / Staff Portal)
+       3.5.3. Thiết kế giao diện phía Sinh viên (Student Portal)
 
-CHƯƠNG 3: THIẾT KẾ HỆ THỐNG                     (~30 trang)
-  3.1. Thiết kế kiến trúc
-       3.1.1. Kiến trúc tổng thể
-       3.1.2. Kiến trúc frontend
-       3.1.3. Kiến trúc backend phân tầng
-       3.1.4. Lựa chọn công nghệ và lý do
-  3.2. Thiết kế cơ sở dữ liệu
-       3.2.1. Sơ đồ thực thể quan hệ (ERD)
-       3.2.2. Từ điển dữ liệu
-       3.2.3. Ràng buộc toàn vẹn
-       3.2.4. Thiết kế index
-  3.3. Thiết kế API
-       3.3.1. Quy ước chung
-       3.3.2. Danh sách endpoint theo module
-       3.3.3. Xử lý lỗi và mã lỗi nghiệp vụ
-  3.4. Thiết kế phân quyền và bảo mật
-       3.4.1. Mô hình RBAC và ma trận phân quyền
-       3.4.2. Luồng xác thực JWT
-       3.4.3. Các biện pháp bảo mật
-  3.5. Thiết kế giao diện
-       3.5.1. Nguyên tắc thiết kế
-       3.5.2. Sitemap
-       3.5.3. Thiết kế các màn hình chính
-
-CHƯƠNG 4: CÀI ĐẶT VÀ TRIỂN KHAI                 (~25 trang)
+CHƯƠNG 4. XÂY DỰNG HỆ THỐNG                                       (~10 - 12 trang)
   4.1. Môi trường phát triển
-  4.2. Cấu trúc mã nguồn
-  4.3. Cài đặt các chức năng chính (kèm ảnh chụp màn hình)
-       4.3.1. Chức năng xác thực và phân quyền
-       4.3.2. Chức năng quản lý sinh viên
-       4.3.3. Chức năng quản lý cơ sở vật chất
-       4.3.4. Chức năng quản lý hợp đồng
-       4.3.5. Chức năng quản lý hóa đơn và thanh toán
-       4.3.6. Tích hợp cổng thanh toán VNPay
-       4.3.7. Cổng sinh viên
-       4.3.8. Dashboard và báo cáo
-  4.4. Xử lý các vấn đề kỹ thuật nổi bật
-       4.4.1. Chống xếp trùng giường bằng transaction và cập nhật có điều kiện
-       4.4.2. Đảm bảo idempotent khi xử lý kết quả thanh toán
-       4.4.3. Thuật toán chia đều chi phí điện nước
-       4.4.4. Tác vụ nền tự động hóa nghiệp vụ
-  4.5. Triển khai hệ thống
+       4.1.1. Môi trường phần cứng, phần mềm và công cụ phát triển
+       4.1.2. Cấu hình Docker & Docker Compose (Node.js, MongoDB, Redis)
+  4.2. Công nghệ sử dụng trong hiện thực hóa
+       4.2.1. Tổ chức mã nguồn Frontend (React + Vite + Ant Design)
+       4.2.2. Tổ chức mã nguồn Backend (Node.js + Express theo Feature Module)
+  4.3. Các chức năng đã xây dựng
+       4.3.1. Phân hệ Cơ cấu không gian (Cơ sở, Tòa nhà, Phòng, Giường tầng)
+       4.3.2. Phân hệ Đợt mở KTX, Nộp đơn công khai & Hàng đợi BullMQ
+       4.3.3. Phân hệ Tự động cấp tài khoản, gửi Email và Đổi mật khẩu
+       4.3.4. Phân hệ Hợp đồng lưu trú & Check-in QR
+       4.3.5. Phân hệ Ghi số điện nước theo lô & Lập hóa đơn chia đều
+       4.3.6. Phân hệ Thanh toán VietQR động và Cổng VNPay
+       4.3.7. Phân hệ Đơn phát sinh: Chuyển phòng, Báo hỏng thiết bị, Kỷ luật vi phạm
+       4.3.8. Phân hệ Smart KTX: Chat Socket.io, Thông báo chuông, Bảng tin KTX
+       4.3.9. Dashboard thống kê và xuất báo cáo
+  4.4. Một số giao diện chính của hệ thống (Hình ảnh chụp thực tế)
+  4.5. Một số xử lý thuật toán và kỹ thuật quan trọng
+       4.5.1. Giải pháp dàn phẳng tải cao điểm bằng Redis Queue (BullMQ)
+       4.5.2. Kỹ thuật Caching Redis giảm 95% tải tra cứu phòng trống
+       4.5.3. Thuật toán tự động ưu tiên gán giường tầng dưới theo chỉ định thể chất (BR-16)
+       4.5.4. Thuật toán cập nhật nguyên tử chống xếp trùng giường (`Bed.status`)
+       4.5.5. Thuật toán chia đều làm tròn tiền điện nước chính xác đến từng đồng
+       4.5.6. Kỹ thuật sinh mã VietQR động và xử lý Webhook Idempotent
 
-CHƯƠNG 5: KIỂM THỬ VÀ ĐÁNH GIÁ                  (~15 trang)
-  5.1. Chiến lược kiểm thử
-  5.2. Kết quả kiểm thử chức năng
-  5.3. Kết quả kiểm thử phi chức năng
-  5.4. Đánh giá kết quả đạt được
-  5.5. Hạn chế của hệ thống
+CHƯƠNG 5. KIỂM THỬ VÀ ĐÁNH GIÁ                                    (~6 - 8 trang)
+  5.1. Kế hoạch và phương pháp kiểm thử
+       5.1.1. Phương pháp kiểm thử chức năng (Black-box Testing)
+       5.1.2. Môi trường và công cụ kiểm thử (Postman, Jest, k6 / Apache JMeter)
+  5.2. Các kịch bản kiểm thử (Test Cases tiêu biểu)
+       5.2.1. Test Case luồng nộp đơn cao điểm qua hàng đợi Queue
+       5.2.2. Test Case chống xếp trùng giường đồng thời (Race condition)
+       5.2.3. Test Case tự động ưu tiên giường tầng dưới cho sinh viên có vấn đề thể chất
+       5.2.4. Test Case tự cấp tài khoản, gửi email và cưỡng bức đổi mật khẩu lần đầu
+       5.2.5. Test Case thuật toán chia đều tiền điện nước không lệch đồng nào
+       5.2.6. Test Case thanh toán VietQR, xử lý Webhook trùng lặp (Idempotent)
+       5.2.7. Test Case kiểm tra phân quyền RBAC và chống lỗ hổng IDOR
+  5.3. Kết quả kiểm thử thực tế
+       5.3.1. Bảng tổng hợp kết quả kiểm thử chức năng (Pass/Fail)
+       5.3.2. Đánh giá kiểm thử tải cao (Stress test với k6/JMeter)
+  5.4. Những chức năng đã hoàn thành
+  5.5. Những hạn chế còn tồn tại
 
-KẾT LUẬN VÀ HƯỚNG PHÁT TRIỂN
-  1. Kết quả đạt được
-  2. Hạn chế
-  3. Hướng phát triển
+CHƯƠNG 6. KẾT LUẬN VÀ HƯỚNG PHÁT TRIỂN                            (~2 - 3 trang)
+  6.1. Kết quả đạt được so với mục tiêu ban đầu
+  6.2. Hạn chế của đề tài
+  6.3. Hướng phát triển trong tương lai (Tích hợp thẻ từ RFID, Ứng dụng Mobile App, AI Chatbot)
 
 TÀI LIỆU THAM KHẢO
-PHỤ LỤC
-  A. Bảng tổng hợp yêu cầu chức năng
-  B. Danh sách API đầy đủ
-  C. Bảng test case chi tiết
-  D. Hướng dẫn cài đặt và sử dụng
-  E. Phân công công việc và đóng góp của thành viên
+PHỤ LỤC (Hướng dẫn cài đặt & Chạy demo hệ thống)
 ```
 
-**Tổng dung lượng ước tính:** 110–130 trang (chưa kể phụ lục).
+---
+
+## 2. Bảng Ánh xạ: Tài liệu trong thư mục `docs/` $\rightarrow$ 6 Chương báo cáo
+
+| Chương báo cáo | Thu thập nội dung từ các file tài liệu | Nội dung trọng tâm cần lấy vào báo cáo |
+| :--- | :--- | :--- |
+| **Chương 1: Giới thiệu đề tài** | `docs/PRD.md`<br>`docs/01-TONG-QUAN-DU-AN.md` | Bối cảnh 3 cơ sở HaUI, thực trạng sổ sách/Excel, mục tiêu KPI, phạm vi 4 cấp không gian, 4 vai trò tác nhân (`admin`, `manager`, `staff`, `student`), công nghệ (React, Node.js, MongoDB, Redis, Socket.io, BullMQ, VietQR). |
+| **Chương 2: Khảo sát và phân tích** | `docs/01-TONG-QUAN-DU-AN.md`<br>`docs/02-DAC-TA-YEU-CAU.md`<br>`docs/03-PHAN-TICH-NGHIEP-VU.md` | Bài toán HaUI, quy trình 8 bước, bảng FR (10 nhóm M1-M10), NFR (chịu tải, bảo mật), Use Case Diagrams, 8 Use Case Description chi tiết (Queue nộp đơn, Duyệt cấp tài khoản qua email, Đổi pass, VietQR, QR Checkin, Điện nước, Chuyển phòng, Trả phòng). |
+| **Chương 3: Thiết kế hệ thống** | `docs/ARCHITECTURE.md`<br>`docs/DATA-SCHEMA.md`<br>`docs/07-PHAN-QUYEN-BAO-MAT.md`<br>`docs/08-THIET-KE-GIAO-DIEN.md` | Kiến trúc Modular Monolith, JWT, RBAC 4 vai trò, Redis Cache + BullMQ, Activity Diagrams, Sequence Diagrams, ERD CSDL MongoDB (**19 Collections** tiếng Anh chuẩn), thiết kế Sitemap UI. |
+| **Chương 4: Xây dựng hệ thống** | `docs/ARCHITECTURE.md`<br>`docs/13-LO-TRINH-TRIEN-KHAI.md`<br>`docs/03-PHAN-TICH-NGHIEP-VU.md`<br>`src/` (Mã nguồn thực tế) | Cấu hình Docker, tổ chức thư mục code, ảnh chụp các màn hình chức năng, giải thuật sâu: Queue BullMQ, Caching Redis, Thuật toán ưu tiên giường tầng dưới (BR-16), Atomic update chống trùng giường, chia tiền điện nước, VietQR động. |
+| **Chương 5: Kiểm thử và đánh giá** | `docs/11-KE-HOACH-KIEM-THU.md`<br>`docs/02-DAC-TA-YEU-CAU.md` | Bảng Test Case tiêu biểu (Queue tải cao, Race condition giường, Ưu tiên giường dưới, Email cấp tài khoản, Chia tiền điện nước, Webhook thanh toán, IDOR), kết quả đo tải, đánh giá mức độ hoàn thành. |
+| **Chương 6: Kết luận** | `docs/PRD.md`<br>`docs/01-TONG-QUAN-DU-AN.md` | Kết quả đạt được so với yêu cầu, hạn chế, hướng mở rộng (Mobile app, Thẻ từ RFID, AI Chatbot). |
 
 ---
 
-## 2. Bảng ánh xạ: tài liệu → chương báo cáo
+## 3. Danh mục Sơ đồ UML & Hình vẽ bắt buộc trong báo cáo
 
-| Chương/Mục báo cáo | Lấy nội dung từ | Cần bổ sung thêm |
-|--------------------|------------------|-------------------|
-| **Mở đầu – Lý do chọn đề tài** | `01` mục 1.1, 1.2 | Viết lại theo văn phong học thuật |
-| **Mở đầu – Mục tiêu** | `01` mục 2 | – |
-| **Mở đầu – Phạm vi** | `01` mục 3 | – |
-| **Mở đầu – Phương pháp** | `09` mục 6.1 + `10` mục 1 | Nêu rõ quy trình Agile/Scrum rút gọn |
-| **1.1 Khảo sát hiện trạng** | `01` mục 1.1, 1.2, 1.3 | Ảnh chụp các website tham khảo |
-| **1.2 Cơ sở lý thuyết** | `ARCHITECTURE.md` mục 1, 2 | **Viết mới** — lý thuyết nền về React, Node, REST, JWT, RBAC (tra cứu tài liệu chính thức, có trích dẫn) |
-| **2.1 Tổng quan hệ thống** | `01` mục 2, 3, 4 | – |
-| **2.2 Tác nhân** | `02` mục 1 | – |
-| **2.3 Yêu cầu chức năng** | `02` mục 3 | Chuyển bảng thành đoạn văn mô tả + giữ bảng tóm tắt |
-| **2.4 Yêu cầu phi chức năng** | `02` mục 4 | – |
-| **2.5 Use case** | `02` mục 2, 5 | Xuất sơ đồ Mermaid thành ảnh PNG |
-| **2.6 Phân tích nghiệp vụ** | `03` toàn bộ | Xuất máy trạng thái và luồng quy trình thành ảnh |
-| **3.1 Kiến trúc** | `ARCHITECTURE.md` mục 1, 2, 3 | Mục 3.1.4 "Lựa chọn công nghệ và lý do": lấy lập luận từ `14` mục 10 |
-| **3.2 Cơ sở dữ liệu** | `DATA-SCHEMA.md` mục 1, 2, 3, 7 | Xuất ERD thành ảnh chất lượng cao |
-| **3.3 API** | `API.md` mục 1, 15 + chọn lọc ví dụ | Không đưa toàn bộ 53 endpoint vào thân bài — để ở Phụ lục B |
-| **3.4 Phân quyền & bảo mật** | `07` mục 1, 2, 3, 4, 5 | – |
-| **3.5 Giao diện** | `08` mục 1, 2, 4, 6 | Thay wireframe ASCII bằng ảnh chụp màn hình thật |
-| **4.1 Môi trường phát triển** | `ARCHITECTURE.md` mục 2 + `13` mục 3 | Ảnh chụp VS Code, cấu hình |
-| **4.2 Cấu trúc mã nguồn** | `ARCHITECTURE.md` mục 3 | Ảnh chụp cây thư mục thật |
-| **4.3 Cài đặt chức năng** | `08` mục 6 | **Viết mới** — mỗi chức năng: mô tả + ảnh chụp + đoạn code tiêu biểu |
-| **4.4 Vấn đề kỹ thuật nổi bật** | `03` mục 3, `DATA-SCHEMA.md` mục 7, `14` mục 4.6 và 4.10 | **Phần ăn điểm nhất** — xem mục 4 bên dưới |
-| **4.5 Triển khai** | `13` mục 6 | Ảnh chụp trang quản trị Vercel/Render |
-| **5.1 Chiến lược kiểm thử** | `11` mục 1, 2, 3 | – |
-| **5.2, 5.3 Kết quả kiểm thử** | `11` mục 4, 6 | **Điền kết quả thật** sau khi chạy test |
-| **5.4 Đánh giá** | `01` mục 6 | Đối chiếu KPI G1–G7 với thực tế đạt được |
-| **5.5 Hạn chế** | `01` mục 3.2 + `14` (các ô "Đánh đổi") | Nêu trung thực: chưa có IPN, token hạn 7 ngày, chia điện nước không theo ngày, cấu hình phải sửa code |
-| **Kết luận** | Tổng hợp | **Viết mới** |
-| **Hướng phát triển** | `01` mục 3.2 (cột "Dự kiến v2") | – |
-| **Phụ lục A** | `02` mục 3 (bảng đầy đủ) | – |
-| **Phụ lục B** | `API.md` mục 15 | – |
-| **Phụ lục C** | `11` mục 4 | – |
-| **Phụ lục D** | `13` mục 3, 7 | – |
-| **Phụ lục E** | `09` mục 1, 3, 5 | Bảng % đóng góp từng thành viên |
+| Mã hình | Tên sơ đồ / Hình vẽ | Vị trí trong báo cáo | Nguồn tư liệu trực tiếp |
+| :--- | :--- | :--- | :--- |
+| **Hình 1.1** | Kiến trúc tổng thể hệ thống (Client - Server - Redis - MongoDB) | Mục 1.5 | `docs/ARCHITECTURE.md` |
+| **Hình 2.1** | Sơ đồ Use Case tổng quát hệ thống DMS-KTX HaUI (4 Actors) | Mục 2.6.1 | `docs/02-DAC-TA-YEU-CAU.md` §1-2 |
+| **Hình 2.2** | Sơ đồ Use Case phân hệ Đăng ký, Xét duyệt & Hợp đồng | Mục 2.6.2 | `docs/02-DAC-TA-YEU-CAU.md` §2.5 |
+| **Hình 2.3** | Sơ đồ Use Case phân hệ Điện nước, Tài chính & Thanh toán VietQR | Mục 2.6.3 | `docs/02-DAC-TA-YEU-CAU.md` §2.7 |
+| **Hình 2.4** | Sơ đồ Use Case phân hệ Nghiệp vụ phát sinh (Chuyển phòng, Báo hỏng, Kỷ luật) | Mục 2.6.4 | `docs/02-DAC-TA-YEU-CAU.md` §2.8 |
+| **Hình 2.5** | Sơ đồ Use Case phân hệ Tương tác Smart KTX (Chat, Thông báo, Check-in QR) | Mục 2.6.5 | `docs/02-DAC-TA-YEU-CAU.md` §2.9 |
+| **Hình 3.1** | Kiến trúc Modular Monolith và cơ chế Hàng đợi Redis Queue | Mục 3.1.2 | `docs/ARCHITECTURE.md` |
+| **Hình 3.2** | Sơ đồ ma trận phân quyền RBAC 4 vai trò | Mục 3.1.4 | `docs/07-PHAN-QUYEN-BAO-MAT.md` |
+| **Hình 3.3** | Activity Diagram: Nộp đơn đợt cao điểm qua hàng đợi BullMQ | Mục 3.2.1 | `docs/03-PHAN-TICH-NGHIEP-VU.md` §1 |
+| **Hình 3.4** | Activity Diagram: Duyệt đơn, gán giường và tự sinh tài khoản qua Email | Mục 3.2.2 | `docs/03-PHAN-TICH-NGHIEP-VU.md` §1 |
+| **Hình 3.5** | Activity Diagram: Tính toán và phân bổ tiền điện nước phòng | Mục 3.2.3 | `docs/03-PHAN-TICH-NGHIEP-VU.md` §3.4 |
+| **Hình 3.6** | Activity Diagram: Trả phòng, kiểm kê và quyết toán hoàn cọc | Mục 3.2.4 | `docs/03-PHAN-TICH-NGHIEP-VU.md` §3.8 |
+| **Hình 3.7** | Sequence Diagram: Nộp đơn công khai và đẩy vào hàng đợi Queue | Mục 3.3.1 | `docs/03-PHAN-TICH-NGHIEP-VU.md` §3.2 |
+| **Hình 3.8** | Sequence Diagram: Duyệt trúng tuyển, chiếm giường nguyên tử và gửi Email | Mục 3.3.2 | `docs/03-PHAN-TICH-NGHIEP-VU.md` §3.2 |
+| **Hình 3.9** | Sequence Diagram: Đăng nhập và cưỡng bức đổi mật khẩu lần đầu | Mục 3.3.3 | `docs/03-PHAN-TICH-NGHIEP-VU.md` §3.2 |
+| **Hình 3.10** | Sequence Diagram: Thanh toán qua VietQR/VNPay và xử lý Webhook Idempotent | Mục 3.3.4 | `docs/03-PHAN-TICH-NGHIEP-VU.md` §3.5 |
+| **Hình 3.11** | Sequence Diagram: Quét mã QR Check-in nhận phòng tại KTX | Mục 3.3.5 | `docs/03-PHAN-TICH-NGHIEP-VU.md` §3.6 |
+| **Hình 3.12** | Sequence Diagram: Nhắn tin trực tuyến thời gian thực (Socket.io) | Mục 3.3.6 | `docs/03-PHAN-TICH-NGHIEP-VU.md` §3.7 |
+| **Hình 3.13** | Sơ đồ quan hệ thực thể CSDL (ERD MongoDB - 19 Collections) | Mục 3.4.1 | `docs/DATA-SCHEMA.md` §2 |
+| **Hình 3.14** | Sơ đồ cấu trúc điều hướng giao diện (Sitemap Quản trị & Cổng sinh viên) | Mục 3.5.1 | `docs/08-THIET-KE-GIAO-DIEN.md` |
+| **Hình 4.1 – 4.15** | Ảnh chụp màn hình giao diện các chức năng thực tế của hệ thống | Mục 4.4 | Chụp trực tiếp từ ứng dụng chạy thực tế |
 
 ---
 
-## 3. Danh mục hình vẽ cần chuẩn bị
+## 4. Các điểm kỹ thuật nâng cao "Ghi điểm tuyệt đối" trong Chương 4
 
-> Xuất các sơ đồ Mermaid thành ảnh PNG bằng [mermaid.live](https://mermaid.live) hoặc extension "Markdown Preview Mermaid Support" trong VS Code (độ phân giải tối thiểu 1920px chiều rộng).
+Hội đồng chấm đồ án ngành Kỹ thuật phần mềm HaUI luôn đánh giá rất cao các giải pháp kỹ thuật giải quyết bài toán thực tế thay vì chỉ CRUD thông thường. Cần trình bày chi tiết ở **Mục 4.5**:
 
-| Hình | Tên | Nguồn |
-|------|-----|-------|
-| 1.1 | Sơ đồ quy trình quản lý KTX thủ công hiện tại | **Vẽ mới** (draw.io) |
-| 1.2 | Kiến trúc Client–Server | **Vẽ mới** |
-| 2.1 | Sơ đồ use case tổng quát | `02` mục 2 |
-| 2.2 | Vòng đời sinh viên trong hệ thống | `03` mục 1.2 |
-| 2.3 | Máy trạng thái giường | `03` mục 2.1 |
-| 2.4 | Máy trạng thái hợp đồng | `03` mục 2.2 |
-| 2.5 | Máy trạng thái hóa đơn | `03` mục 2.3 |
-| 2.6 | Luồng đăng ký lưu trú (sequence) | `03` mục 4.1 |
-| 2.7 | Luồng lập hóa đơn định kỳ | `03` mục 4.2 |
-| 2.8 | Luồng thanh toán trực tuyến | `03` mục 4.3 |
-| 2.9 | Luồng trả phòng và thanh lý | `03` mục 4.4 |
-| 3.1 | Kiến trúc tổng thể hệ thống | `ARCHITECTURE.md` mục 1 |
-| 3.2 | Sơ đồ thực thể quan hệ (ERD) | `DATA-SCHEMA.md` mục 1 |
-| 3.3 | Mô hình phân quyền RBAC | `07` mục 1 |
-| 3.4 | Luồng xác thực JWT | `07` mục 4 |
-| 3.5 | Sitemap hệ thống | `08` mục 2 |
-| 3.6 | Cấu trúc thư mục frontend | `ARCHITECTURE.md` mục 3.1 |
-| 3.7 | Cấu trúc thư mục backend | `ARCHITECTURE.md` mục 3.2 |
-| 4.1–4.20 | Ảnh chụp màn hình các chức năng | **Chụp từ hệ thống thật** |
-| 4.21 | Sơ đồ triển khai | `13` mục 6 |
-| 5.1 | Biểu đồ kết quả kiểm thử | **Vẽ từ số liệu thật** |
+### 4.5.1. Dàn phẳng tải cao điểm bằng Redis Queue (BullMQ)
+* **Vấn đề:** Vào thời điểm mở cổng KTX, hàng nghìn sinh viên cùng bấm nộp đơn trong 5 phút. Nếu ghi trực tiếp vào MongoDB sẽ gây Connection Pool Exhaustion, khóa DB và sập máy chủ.
+* **Giải pháp:** API nộp đơn chỉ xác thực sơ bộ rồi đẩy payload vào Queue `queue:dorm-application` (mất ~5ms) và phản hồi mã vé hàng đợi cho người dùng. Worker chạy ngầm tuần tự nhặt từng đơn xử lý xuống MongoDB với tốc độ tối đa 100 req/s, đảm bảo hệ thống mượt mà 100%.
 
-**Quy tắc chụp màn hình:**
-- Dùng dữ liệu demo trông thật (tên Việt Nam, số tiền hợp lý) — **không** để "test123", "aaa".
-- Chụp toàn bộ trình duyệt hoặc vùng nội dung, độ phân giải ≥ 1920×1080.
-- Che hoặc thay dữ liệu nhạy cảm nếu có.
-- Đánh số và chú thích đầy đủ: *Hình 4.5: Màn hình duyệt đơn đăng ký lưu trú*.
+### 4.5.2. Caching Redis danh sách phòng trống
+* **Vấn đề:** Sinh viên liên tục F5 để tra cứu xem còn phòng/giường trống nào. Việc chạy lệnh đếm và populate liên tục trên MongoDB gây quá tải CPU.
+* **Giải pháp:** Áp dụng mô hình Cache-Aside trên Redis với key `rooms:available:campus:{id}`, TTL 15–30 giây. Khi có thay đổi trạng thái giường, hệ thống tự động xóa cache. Tốc độ đọc từ RAM đạt < 2ms, giảm 95% tải truy vấn cơ sở dữ liệu.
+
+### 4.5.3. Thuật toán tự động ưu tiên giường tầng dưới cho Sinh viên có vấn đề thể chất (BR-16)
+* **Tính nhân văn & Accessibility:** Khi sinh viên khai báo `hasHealthCondition: true` (khuyết tật vận động, bệnh tim mạch, chấn thương...) kèm giấy xác nhận y tế, thuật toán tự động lọc và **chỉ cho phép gán giường tầng dưới (`Bed.position == 'lower'`)**, tuyệt đối chặn xếp lên tầng trên (`upper`). Với tòa không có thang máy (`hasElevator == false`), tự động ưu tiên xếp phòng Tầng 1 hoặc Tầng 2.
+
+### 4.5.4. Chống xếp trùng giường bằng Cập nhật nguyên tử (Atomic Conditional Update)
+* Sử dụng thao tác `findOneAndUpdate({ _id: bedId, status: 'available' }, { status: 'occupied' })` ở tầng database. Cơ chế đơn luồng nguyên tử của MongoDB trên 1 document triệt tiêu hoàn toàn khả năng 2 sinh viên bị xếp cùng 1 giường dù request đến cùng 1 mili-giây.
+
+### 4.5.5. Thuật toán chia đều làm tròn tiền điện nước không lệch một đồng
+* Áp dụng hàm `Math.floor` cho từng người và dồn phần tiền dư lẻ vào sinh viên có MSSV nhỏ nhất trong phòng (BR-32). Đảm bảo tổng số tiền thu từ các sinh viên luôn khớp 100% với hóa đơn tổng của phòng.
+
+### 4.5.6. Thanh toán VietQR động và Xử lý Webhook Idempotent
+* Tự động sinh mã VietQR động theo chuẩn NAPAS nhúng sẵn STK KTX, số tiền chính xác và mã hóa đơn làm nội dung chuyển khoản.
+* Webhook thanh toán từ cổng được đẩy vào `queue:payment-webhook`. Sử dụng mã giao dịch ngân hàng và trạng thái hóa đơn để đảm bảo Idempotent, chống việc nhận tiền 2 lần khi cổng bắn lại webhook.
 
 ---
 
-## 4. Mục 4.4 – Phần ăn điểm nhất của báo cáo
+## 5. Danh mục Câu hỏi Phản biện thường gặp & Gợi ý trả lời
 
-Giảng viên đánh giá cao những chỗ nhóm **giải quyết vấn đề kỹ thuật thực sự**, không phải CRUD đơn thuần. Bốn chủ đề dưới đây nên viết kỹ, mỗi chủ đề 2–3 trang:
+1. **"Vì sao hệ thống không cho sinh viên tự do đăng ký tài khoản mà phải nộp đơn công khai trước rồi mới cấp tài khoản qua Email?"**
+   * *Gợi ý trả lời:* Đây là quy trình nghiệp vụ thực tế của trường đại học công lập. KTX không phải mạng xã hội để đăng ký tự do, làm vậy sẽ bị spam tài khoản ảo và rác CSDL. Sinh viên nộp đơn công khai bằng MSSV, chỉ khi Ban quản lý KTX duyệt trúng tuyển thì hệ thống mới tự sinh tài khoản (`Username = MSSV`, pass tạm thời, `mustChangePassword = true`) và gửi Email thông báo. Khi đăng nhập lần đầu, sinh viên bị cưỡng bức đổi mật khẩu mới để bảo mật tuyệt đối.
 
-### 4.4.1. Chống xếp trùng giường
+2. **"Hệ thống giải quyết bài toán hàng nghìn sinh viên cùng F5 và nộp đơn trong ngày mở cổng KTX như thế nào để không bị sập?"**
+   * *Gợi ý trả lời:* Nhóm áp dụng 2 kỹ thuật cốt lõi: (1) Caching danh sách phòng trống trên Redis In-memory giúp phục vụ hàng nghìn lượt tra cứu/giây với độ trễ < 2ms mà không chạm vào MongoDB; (2) Sử dụng Message Queue (BullMQ trên nền Redis) để nhận request nộp đơn trong 5ms rồi xếp hàng xử lý tuần tự xuống DB, dàn phẳng đỉnh tải (Traffic Smoothing) giúp máy chủ luôn ổn định.
 
-**Cấu trúc trình bày:**
-1. **Nêu vấn đề:** hai sinh viên cùng chọn một giường tại cùng thời điểm → race condition. Vẽ sơ đồ thời gian minh họa cách hai request xen kẽ nhau gây lỗi.
-2. **Phân tích các giải pháp:**
-   - Chỉ kiểm tra ở tầng ứng dụng → **không đủ**, vì có khoảng trống giữa lúc kiểm tra và lúc ghi.
-   - Khóa toàn bảng → an toàn nhưng chặn hết các thao tác khác, hiệu năng kém.
-   - Khóa hàng bi quan (`SELECT ... FOR UPDATE`) + partial unique index → đúng, nhưng cần SQL thô, cần migration thủ công và **chỉ chạy trên MongoDB**.
-   - **Giải pháp đã chọn:** `UPDATE bed SET status=... WHERE id=? AND status='available'` trong transaction, rồi kiểm tra số dòng bị ảnh hưởng. Một câu `UPDATE` là thao tác nguyên tử nên chỉ một trong hai người đổi được dòng.
-3. **Cài đặt:** trích đoạn code `ContractService.approve()` và câu lệnh tạo index.
-4. **Kiểm chứng:** mô tả test case TC-72 (hai Staff cùng xếp sinh viên vào một giường) và kết quả.
+3. **"Làm thế nào để hệ thống đảm bảo tính nhân văn trong việc xếp chỗ ở cho sinh viên có hoàn cảnh đặc biệt?"**
+   * *Gợi ý trả lời:* Hệ thống tích hợp quy tắc nghiệp vụ BR-16: Sinh viên có vấn đề về sức khỏe/vận động kèm giấy xác nhận y tế sẽ được hệ thống tự động khóa và chỉ cho phép gán vào giường tầng dưới (`Bed.position == 'lower'`), chặn tuyệt đối xếp lên tầng trên; đồng thời ưu tiên xếp vào phòng ở Tầng 1 hoặc Tầng 2 đối với các tòa KTX không có thang máy.
 
-### 4.4.2. Đảm bảo idempotent khi xử lý kết quả thanh toán
+4. **"Tại sao nhóm sử dụng MongoDB cho hệ thống KTX thay vì CSDL quan hệ như SQL Server hay PostgreSQL?"**
+   * *Gợi ý trả lời:* MongoDB cung cấp cấu trúc Document BSON linh hoạt, hỗ trợ lưu trữ các đối tượng phức hợp lồng nhau (như danh sách chi tiết các dòng phí trong hóa đơn, lịch sử hợp đồng, thông tin liên hệ khẩn cấp) mà không cần JOIN nhiều bảng nặng nề. Đồng thời, thao tác cập nhật nguyên tử `findOneAndUpdate` của MongoDB cực kỳ tối ưu cho bài toán chiếm giường tức thời.
 
-1. **Nêu vấn đề:** kết quả thanh toán có thể đến nhiều lần (người dùng tải lại trang kết quả, hoặc cổng thử lại). Nếu xử lý ngây thơ → ghi nhận thanh toán 2 lần → sinh viên được cộng tiền gấp đôi.
-2. **Phân tích:** vì sao chữ ký HMAC là thứ bảo vệ thật sự (không có secret thì không giả mạo được), và vì sao Return URL kém bền hơn IPN (người dùng đóng trình duyệt thì không ai báo về).
-3. **Giải pháp:** xác thực chữ ký HMAC trước mọi thứ, kiểm tra trạng thái giao dịch trong transaction để đảm bảo idempotent, đối chiếu số tiền, và bổ sung chức năng đối soát thủ công để bù cho đánh đổi trên.
-4. **Cài đặt:** trích code `PaymentService.handleIpn()`.
-5. **Kiểm chứng:** TC-103, TC-104, TC-105.
-
-### 4.4.3. Thuật toán chia đều chi phí điện nước
-
-1. **Nêu vấn đề:** tiền điện phòng chia cho N sinh viên thường không chia hết. Nếu làm tròn tùy tiện → tổng các phần không bằng tổng thực tế, gây lệch sổ sách.
-2. **Phân tích:** so sánh `Math.round()` (có thể làm tổng lớn hơn thực tế) với `Math.floor()` + dồn phần dư.
-3. **Giải pháp:** dùng `floor` cho từng người, phần dư dồn vào sinh viên có MSSV nhỏ nhất (BR-51) — đảm bảo bất biến: `Σ phần chia = tổng tiền phòng`.
-4. **Cài đặt + chứng minh:** đưa ví dụ số cụ thể ở `03` mục 5.2 (7 sinh viên, 576.000đ).
-5. **Kiểm chứng:** TC-86, TC-87 và unit test.
-
-### 4.4.4. Tự động hóa nghiệp vụ bằng tác vụ nền
-
-1. **Nêu vấn đề:** hợp đồng hết hạn, hóa đơn quá hạn, giao dịch treo — nếu chờ người dùng thao tác thì dữ liệu sẽ luôn lệch so với thực tế.
-2. **Giải pháp:** 6 cron job (JOB-01 → JOB-06), mỗi job **idempotent** để chạy lại không gây sai.
-3. **Vấn đề phát sinh:** khi deploy nhiều instance, job có thể chạy trùng → dùng cờ `ENABLE_CRON`.
-4. **Cài đặt:** trích code một job tiêu biểu.
-5. **Kiểm chứng:** TC-77, TC-78, TC-96, TC-108.
-
----
-
-## 5. Tài liệu tham khảo mẫu
-
-Định dạng theo chuẩn IEEE hoặc theo yêu cầu của khoa. Ví dụ:
-
-```
-[1]  Meta Open Source, "React Documentation", https://react.dev, truy cập ngày 15/09/2026.
-[2]  OpenJS Foundation, "Node.js Documentation", https://nodejs.org/docs, truy cập ngày 15/09/2026.
-[3]  OpenJS Foundation, "Express.js Guide", https://expressjs.com, truy cập ngày 15/09/2026.
-[4]  MongoDB Global Development Group, "MongoDB 15 Documentation",
-     https://www.postgresql.org/docs/15/, truy cập ngày 20/09/2026.
-[5]  Mongoose Data Inc., "Mongoose ORM Documentation", https://www.mongoose.io/docs,
-     truy cập ngày 20/09/2026.
-[6]  M. Jones, J. Bradley, N. Sakimura, "RFC 7519: JSON Web Token (JWT)",
-     Internet Engineering Task Force, 2015.
-[7]  R. Fielding, "Architectural Styles and the Design of Network-based Software
-     Architectures", Luận án Tiến sĩ, Đại học California, Irvine, 2000.
-[8]  VNPAY, "Tài liệu tích hợp cổng thanh toán VNPAY",
-     https://sandbox.vnpayment.vn/apis/, truy cập ngày 01/10/2026.
-[10] OWASP Foundation, "OWASP Top 10:2021", https://owasp.org/Top10/,
-     truy cập ngày 05/11/2026.
-[11] D. F. Ferraiolo, D. R. Kuhn, "Role-Based Access Control", Proceedings of
-     15th NIST-NCSC National Computer Security Conference, 1992.
-[12] Ant Design Team, "Ant Design 5.0 Documentation", https://ant.design/docs/react/introduce,
-     truy cập ngày 25/09/2026.
-```
-
-> **Lưu ý:** phải trích dẫn `[n]` trong thân bài tại đúng chỗ dùng đến, không chỉ liệt kê ở cuối.
-
----
-
-## 6. Checklist trước khi nộp
-
-### 6.1. Nội dung
-
-| # | Hạng mục | ☐ |
-|---|----------|---|
-| 1 | Đủ các chương theo mục lục, không chương nào quá sơ sài | ☐ |
-| 2 | Mọi hình vẽ đều được đánh số, có chú thích và **được nhắc đến trong thân bài** | ☐ |
-| 3 | Mọi bảng biểu đều được đánh số và có chú thích | ☐ |
-| 4 | Ảnh chụp màn hình dùng dữ liệu trông thật, rõ nét | ☐ |
-| 5 | Mục 4.4 (vấn đề kỹ thuật) viết đủ sâu, có code minh họa | ☐ |
-| 6 | Kết quả kiểm thử là số liệu **thật**, không bịa | ☐ |
-| 7 | Phần hạn chế nêu trung thực | ☐ |
-| 8 | Tài liệu tham khảo có trích dẫn trong thân bài | ☐ |
-| 9 | Phụ lục E ghi rõ đóng góp từng thành viên | ☐ |
-
-### 6.2. Hình thức
-
-| # | Hạng mục | ☐ |
-|---|----------|---|
-| 1 | Đúng mẫu định dạng của khoa (font, cỡ chữ, lề, giãn dòng) | ☐ |
-| 2 | Mục lục tự động, số trang khớp | ☐ |
-| 3 | Danh mục hình vẽ, bảng biểu tự động | ☐ |
-| 4 | Đánh số trang đầy đủ | ☐ |
-| 5 | Không sai chính tả (dùng công cụ kiểm tra + đọc chéo giữa các thành viên) | ☐ |
-| 6 | Thuật ngữ nhất quán xuyên suốt (không lúc "giường" lúc "chỗ ở") | ☐ |
-| 7 | Đoạn code định dạng bằng font monospace, có tô màu cú pháp nếu được | ☐ |
-| 8 | In thử 1 bản kiểm tra chất lượng hình ảnh | ☐ |
-
-### 6.3. Sản phẩm kèm theo
-
-| # | Hạng mục | ☐ |
-|---|----------|---|
-| 1 | Mã nguồn đầy đủ (2 repo hoặc file nén) | ☐ |
-| 2 | File dump cơ sở dữ liệu có dữ liệu demo | ☐ |
-| 3 | Hướng dẫn cài đặt chạy được trên máy mới | ☐ |
-| 4 | Hướng dẫn sử dụng kèm ảnh minh họa | ☐ |
-| 5 | URL hệ thống đã deploy + tài khoản demo | ☐ |
-| 6 | Slide thuyết trình | ☐ |
-| 7 | Video demo dự phòng (đề phòng lỗi mạng khi bảo vệ) | ☐ |
-
----
-
-## 7. Gợi ý slide thuyết trình (15–20 phút)
-
-| Slide | Nội dung | Thời lượng |
-|-------|----------|------------|
-| 1 | Trang bìa: tên đề tài, nhóm, GVHD | 30 giây |
-| 2 | Đặt vấn đề: hiện trạng và 6 vấn đề tồn tại | 1,5 phút |
-| 3 | Mục tiêu và phạm vi (8 module MVP) | 1,5 phút |
-| 4 | Kiến trúc hệ thống | 1,5 phút |
-| 5 | Công nghệ sử dụng | 1 phút |
-| 6 | Sơ đồ CSDL (ERD) | 1,5 phút |
-| 7 | Phân quyền RBAC | 1 phút |
-| 8–13 | **Demo trực tiếp** theo kịch bản UAT-01 | 7 phút |
-| 14 | Vấn đề kỹ thuật nổi bật (chọn 2 trong 4 mục 4.4) | 2,5 phút |
-| 15 | Kết quả kiểm thử | 1 phút |
-| 16 | Hạn chế và hướng phát triển | 1 phút |
-| 17 | Cảm ơn + Hỏi đáp | – |
-
-**Kịch bản demo (7 phút) — tập trước cho thuộc:**
-1. Đăng nhập Staff → Dashboard (30 giây)
-2. Staff xếp sinh viên vào giường → kích hoạt hợp đồng → 2 hóa đơn tự sinh (1,5 phút)
-3. Staff duyệt đơn → hóa đơn tự sinh (1 phút)
-4. Sinh viên thanh toán VNPay sandbox (2 phút)
-5. Staff nhập chỉ số điện nước → lập hóa đơn hàng loạt (1,5 phút)
-6. Dashboard cập nhật số liệu (30 giây)
-
-> **Phòng ngừa rủi ro khi demo:** quay sẵn video toàn bộ kịch bản. Nếu mạng lỗi hoặc sandbox VNPay gặp sự cố, chiếu video thay thế mà không mất thời gian.
-
----
-
-## 8. Câu hỏi phản biện thường gặp và gợi ý trả lời
-
-| Câu hỏi | Gợi ý trả lời |
-|---------|---------------|
-| "Vì sao chọn React và Node.js?" | Nêu lý do kỹ thuật (cùng ngôn ngữ JS cho cả FE/BE giảm chi phí chuyển đổi tư duy, hệ sinh thái lớn, phù hợp ứng dụng nhiều tương tác) — xem `ARCHITECTURE.md` mục 2. |
-| "Sao không dùng thư viện X (TanStack Query, Redux...)?" | Trả lời theo mẫu ở `14` mục 10: đã cân nhắc, chọn phương án đơn giản hơn vì nhóm kiểm soát được mã nguồn và ít khái niệm phải học; đánh đổi là mất bộ nhớ đệm tự động, không ảnh hưởng ở quy mô này. **Không** nói "vì thấy khó". |
-| "Vì sao không dùng IPN cho thanh toán?" | Giải thích chữ ký HMAC mới là thứ bảo đảm an toàn; Return URL đủ an toàn, đánh đổi là kém bền khi người dùng đóng trình duyệt — đã bù bằng chức năng đối soát thủ công. Nêu đây là hạn chế đã biết. |
-| "Làm sao đảm bảo 2 sinh viên không cùng một giường?" | Trình bày mục 4.4.1: transaction + khóa hàng + partial unique index. Đây là câu hỏi rất hay gặp. |
-| "Nếu cổng thanh toán gửi thông báo 2 lần thì sao?" | Trình bày mục 4.4.2 về idempotent. |
-| "Sinh viên có thể xem hóa đơn của bạn khác không?" | Không. Giải thích cơ chế lấy `studentId` từ JWT + kiểm tra ownership + test case TC-121 đến TC-124. |
-| "Hệ thống chịu được bao nhiêu người dùng?" | Trả lời trung thực: đã kiểm thử ở mức 50 người đồng thời (NFR-04), chưa kiểm thử tải cao hơn. Nêu hướng mở rộng (thêm index, caching, chạy nhiều instance). |
-| "Vì sao không làm mobile app?" | Nêu rõ đây là quyết định về phạm vi (`01` mục 3.2), web đã responsive; mobile app là hướng phát triển v2. |
-| "Dữ liệu sinh viên lấy từ đâu?" | Staff nhập tay, hoặc nạp sẵn bằng script seed. Import Excel và tích hợp hệ thống đào tạo đều ngoài phạm vi v1 (`PRD.md` §3). |
-| "Chức năng nào nhóm thấy khó nhất?" | Trả lời thật, chọn một trong 4 chủ đề ở mục 4.4 và giải thích quá trình gỡ vấn đề. |
-| "Mỗi người làm gì?" | Dẫn Phụ lục E và ma trận RACI ở `09` mục 5. |
-
----
-
-## 9. Lịch sử phiên bản
-
-| Phiên bản | Ngày | Người thực hiện | Nội dung thay đổi |
-|-----------|------|------------------|-------------------|
-| v1.0 | 11/09/2026 | PM, BA | Khởi tạo khung báo cáo, bảng ánh xạ tài liệu, checklist nộp bài |
+5. **"Làm sao đảm bảo giao dịch thanh toán VietQR / VNPay không bị ghi nhận tiền 2 lần do mạng chập chờn?"**
+   * *Gợi ý trả lời:* Hệ thống thiết kế xử lý Webhook theo nguyên lý Idempotent: Khi webhook gọi về, server kiểm tra trạng thái thanh toán và mã giao dịch ngân hàng (`gatewayTransactionId` có unique index). Nếu giao dịch đã được ghi nhận `success` trước đó, hệ thống lập tức phản hồi `200 OK` và thoát sớm mà không cập nhật lại số dư hóa đơn lần thứ hai.

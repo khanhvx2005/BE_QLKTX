@@ -2,13 +2,13 @@
 trigger: always_on
 ---
 
-# Bộ tài liệu dự án: HỆ THỐNG QUẢN LÝ KÝ TÚC XÁ (DMS)
+# Bộ tài liệu dự án: HỆ THỐNG QUẢN LÝ KÝ TÚC XÁ ĐH CÔNG NGHIỆP HÀ NỘI (DMS-KTX HaUI)
 
-> **Stack:** React + Vite · Node.js + Express · MongoDB + Mongoose
-> **Kiến trúc:** Modular Monolith theo tính năng (vertical slice)
-> **Quy mô đội:** 5 người (3 backend · 2 frontend) · **Thời lượng:** 12 tuần
-> **Repo:** `FE_QuanLyKTX` (React + tài liệu này) · `BE_QuanLyKTX` (Node.js + Express)
-> **Phiên bản tài liệu:** v2.0 · **Cập nhật:** 12/09/2026
+> **Stack:** React + Vite · Node.js + Express · MongoDB + Mongoose · Redis (Queue BullMQ + Cache-Aside) · Socket.io · Nodemailer · VietQR  
+> **Kiến trúc:** Modular Monolith theo tính năng (Vertical Slice)  
+> **Quy mô đội:** 5 người (3 backend · 2 frontend) · **Thời lượng:** 12 tuần  
+> **Repo:** `FE_QuanLyKTX` (React + tài liệu này) · `BE_QuanLyKTX` (Node.js + Express)  
+> **Phiên bản tài liệu:** v2.0 (Chuẩn hóa toàn diện nghiệp vụ HaUI 3 cơ sở & Smart KTX 4.0) · **Cập nhật:** 03/10/2026  
 
 ---
 
@@ -20,115 +20,62 @@ Bộ tài liệu chia làm **hai tầng**. Tầng 1 là hợp đồng kỹ thu�
 
 | Tài liệu | Trả lời câu hỏi | Ai cần |
 |---|---|---|
-| [PRD.md](PRD.md) | **Làm gì, không làm gì?** Phạm vi v1 — ranh giới cứng | Cả nhóm |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | **Code để ở đâu?** Cấu trúc thư mục, phân tầng, quy ước đặt tên | Cả nhóm |
-| [API.md](API.md) | **Gọi API thế nào?** Endpoint, envelope, mã lỗi | FE + BE |
-| [DATA-SCHEMA.md](DATA-SCHEMA.md) | **Dữ liệu hình dạng ra sao?** 12 collection, index, ràng buộc | BE |
+| [PRD.md](PRD.md) | **Làm gì, không làm gì?** Phạm vi thực tế HaUI 3 cơ sở — ranh giới cứng | Cả nhóm |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | **Code để ở đâu?** Cấu trúc 14 module, hạ tầng Redis Queue/Cache, Socket.io, quy ước | Cả nhóm |
+| [API.md](API.md) | **Gọi API thế nào?** 14 nhóm endpoint, envelope chuẩn, mã lỗi tiếng Anh | FE + BE |
+| [DATA-SCHEMA.md](DATA-SCHEMA.md) | **Dữ liệu hình dạng ra sao?** 19 Collections, compound index, partial unique index | BE |
 
-> ⚠️ **Bốn tài liệu này là chuẩn.** Khi một tài liệu tiếng Việt nói khác, lấy theo tầng 1.
+> ⚠️ **Bốn tài liệu này là chuẩn tối cao.** Khi một tài liệu tiếng Việt nói khác, lấy theo tầng 1.
 
 ### Tầng 2 — Phân tích, thiết kế, kế hoạch
 
 | # | Tài liệu | Nội dung |
 |---|----------|----------|
-| 01 | [Tổng quan dự án](01-TONG-QUAN-DU-AN.md) | Bối cảnh, khảo sát hiện trạng, mục tiêu, rủi ro — nguyên liệu cho Chương 1 báo cáo |
-| 02 | [Đặc tả yêu cầu (SRS)](02-DAC-TA-YEU-CAU.md) | **69 FR / 20 NFR / 7 use case chi tiết** — mọi chức năng phải truy vết về đây |
-| 03 | [Phân tích nghiệp vụ](03-PHAN-TICH-NGHIEP-VU.md) | Quy tắc nghiệp vụ, máy trạng thái, luồng quy trình, công thức tính tiền |
-| 07 | [Phân quyền & bảo mật](07-PHAN-QUYEN-BAO-MAT.md) | Ma trận RBAC, luồng JWT, chống IDOR, checklist bảo mật |
-| 08 | [Thiết kế giao diện](08-THIET-KE-GIAO-DIEN.md) | Sitemap, danh sách màn hình, wireframe, bảng màu & trạng thái |
-| 09 | [Kế hoạch & phân công](09-KE-HOACH-PHAN-CONG.md) | WBS, ngày công, phân vai, RACI |
-| 10 | [Quy trình làm việc](10-QUY-TRINH-LAM-VIEC.md) | Git flow, quy ước commit/nhánh, Definition of Done |
-| 11 | [Kế hoạch kiểm thử](11-KE-HOACH-KIEM-THU.md) | Chiến lược test, test case, kịch bản UAT |
-| 12 | [Khung báo cáo đồ án](12-KHUNG-BAO-CAO.md) | Mục lục báo cáo, map tài liệu → chương, câu hỏi phản biện |
-| 13 | [Lộ trình triển khai A→Z](13-LO-TRINH-TRIEN-KHAI.md) | Timeline 12 tuần, runbook cài đặt → deploy, 26 cạm bẫy |
-| 14 | [Hướng dẫn cho người mới](14-PHIEN-BAN-DON-GIAN-HOA.md) | Lý do đơn giản hóa, lộ trình tự học, **mẫu code một module hoàn chỉnh** |
-
-> **Vì sao thiếu 04, 05, 06?** Ba tài liệu đó (Thiết kế CSDL, Kiến trúc, Đặc tả API) đã được thay thế bằng `DATA-SCHEMA.md`, `ARCHITECTURE.md`, `API.md` ở tầng 1 vào ngày 12/09/2026. Giữ số cũ cho các tài liệu còn lại để không phải sửa hàng trăm tham chiếu chéo. **Không tạo lại 04/05/06.**
+| 01 | [Tổng quan dự án](01-TONG-QUAN-DU-AN.md) | Bối cảnh 3 cơ sở HaUI, thực trạng, mục tiêu KPI, rủi ro — nguyên liệu Chương 1 báo cáo |
+| 02 | [Đặc tả yêu cầu (SRS)](02-DAC-TA-YEU-CAU.md) | **10 phân hệ FR (M1-M10), NFR chịu tải cao, 4 tác nhân, 8 Use Case chi tiết** |
+| 03 | [Phân tích nghiệp vụ](03-PHAN-TICH-NGHIEP-VU.md) | **76 quy tắc BR**, máy trạng thái, luồng nộp đơn Queue, cấp tài khoản email, ưu tiên giường dưới (BR-16), chia tiền điện nước |
+| 07 | [Phân quyền & bảo mật](07-PHAN-QUYEN-BAO-MAT.md) | Ma trận RBAC 4 vai trò (`admin`, `manager`, `staff`, `student`), JWT 7 ngày, đổi mật khẩu lần đầu, chống IDOR |
+| 08 | [Thiết kế giao diện](08-THIET-KE-GIAO-DIEN.md) | Sitemap, 38 màn hình (SCR-01 → SCR-38), Quét QR Check-in, Chat Socket.io, VietQR |
+| 09 | [Kế hoạch & phân công](09-KE-HOACH-PHAN-CONG.md) | WBS, ngày công, phân vai RACI 3 BE / 2 FE |
+| 10 | [Quy trình làm việc](10-QUY-TRINH-LAM-VIEC.md) | Git flow, quy ước commit/nhánh tiếng Anh, Definition of Done |
+| 11 | [Kế hoạch kiểm thử](11-KE-HOACH-KIEM-THU.md) | Chiến lược test, test case tải cao, race condition giường, phân quyền |
+| 12 | [Khung báo cáo đồ án](12-KHUNG-BAO-CAO.md) | **Khung đề cương 6 chương chuẩn Đồ án chuyên ngành KTPM HaUI (50–70 trang A4)** |
+| 13 | [Lộ trình triển khai A→Z](13-LO-TRINH-TRIEN-KHAI.md) | Timeline 12 tuần, runbook cài đặt → deploy |
+| 14 | [Hướng dẫn cho người mới](14-PHIEN-BAN-DON-GIAN-HOA.md) | Lộ trình tự học, mẫu code module hoàn chỉnh |
+| 16 | [Yêu cầu API Backend](16-YEU-CAU-API-BACKEND.md) | Bảng đối chiếu 14 nhóm API cần bàn giao giữa FE và BE |
 
 ---
 
 ## 2. Đọc gì trước — theo vai trò
 
-**Chưa từng làm web bao giờ** → bắt đầu ở [`14` mục 14 (lộ trình tự học)](14-PHIEN-BAN-DON-GIAN-HOA.md), học xong mới đọc tiếp.
-
 | Vai trò | Thứ tự đọc |
 |---|---|
 | **Thành viên mới (30 phút)** | `PRD.md` → `ARCHITECTURE.md` → [`14` mục 15 (mẫu code)](14-PHIEN-BAN-DON-GIAN-HOA.md) → `13` mục 3 (cài môi trường) |
-| **Backend** | `DATA-SCHEMA.md` → `API.md` (module đang làm)→ `16-YEU-CAU-API-BACKEND.md` (module đang làm) → `03` (quy tắc BR) → `07` |
-| **Frontend** | `API.md` → [`14` mục 15.3–15.5](14-PHIEN-BAN-DON-GIAN-HOA.md) → `08` → `07` (ma trận RBAC) |
-| **Viết báo cáo** | `12` trước tiên, rồi lấy nội dung từ `01`, `02`, `03`, `DATA-SCHEMA.md` |
+| **Backend** | `DATA-SCHEMA.md` → `API.md` → `16-YEU-CAU-API-BACKEND.md` → `03` (quy tắc BR) → `07` |
+| **Frontend** | `API.md` → `08-THIET-KE-GIAO-DIEN.md` → `07` (ma trận RBAC) |
+| **Viết báo cáo** | `12-KHUNG-BAO-CAO.md` trước tiên, rồi lấy nội dung từ `01`, `02`, `03`, `DATA-SCHEMA.md`, `ARCHITECTURE.md` |
 | **Quản lý tiến độ** | `09` → `13` |
 
 ---
 
-## 3. Quy ước ký hiệu
-
-| Ký hiệu | Ý nghĩa | Định nghĩa ở |
-|---------|---------|--------------|
-| `FR-xx` | Yêu cầu chức năng | `02` mục 3 |
-| `NFR-xx` | Yêu cầu phi chức năng | `02` mục 4 |
-| `UC-xx` | Ca sử dụng | `02` mục 5 |
-| `BR-xx` | Quy tắc nghiệp vụ | `03` mục 3 |
-| `SCR-xx` | Màn hình giao diện | `08` mục 5 |
-| `TC-xx` | Ca kiểm thử | `11` mục 4 |
-| ⭐ | Ba nghiệp vụ bổ sung 12/09/2026 | `PRD.md` §2.9 |
-
-**Ưu tiên:** `M` Must (bắt buộc v1) · `S` Should · `C` Could · `W` Won't
-
----
-
-## 4. Quy ước kỹ thuật đã chốt
+## 3. Quy ước kỹ thuật cốt lõi
 
 | Hạng mục | Quy ước | Chi tiết |
 |---|---|---|
-| Giá trị enum | **chữ thường** — `active`, `admin`, `available` | `DATA-SCHEMA.md` §1 |
-| Envelope API | `{ code, message, data }` | `API.md` §1.1 |
-| Phân trang | `data: { items, total, page, limit }` | `API.md` §1.2 |
+| Tác nhân (4 Roles) | `admin`, `manager`, `staff`, `student` | `07-PHAN-QUYEN-BAO-MAT.md` |
+| Giá trị enum | **chữ thường** — `active`, `available`, `occupied`, `lower`, `upper` | `DATA-SCHEMA.md` |
+| Envelope API | `{ code, message, data }` | `API.md` |
+| Phân trang | `data: { items, total, page, limit }` | `API.md` |
 | Base URL | `/api` | `API.md` |
-| Xác thực | 1 JWT hạn 7 ngày, không refresh token | `02` FR-08 |
-| Chống tranh chấp giường | `findOneAndUpdate` có điều kiện, **không** đọc-rồi-ghi | `ARCHITECTURE.md` §3.5 |
-| Giao diện & comment | Tiếng Việt | `10` mục 2.1 |
-| Tên nhánh & commit | Tiếng Anh | `10` mục 1.2, 1.3 |
-| Tiền tệ | Số nguyên VND, không dùng số thực | `DATA-SCHEMA.md` §1 |
+| Chống trùng giường | `findOneAndUpdate` có điều kiện nguyên tử | `ARCHITECTURE.md` §5.3 |
+| Tiền tệ | Số nguyên VND, không dùng số thực | `DATA-SCHEMA.md` |
 
 ---
 
-## 5. Trạng thái dự án
-
-| Hạng mục | Trạng thái |
-|----------|-----------|
-| Tài liệu | ✅ v2.0 — đã hợp nhất bộ PRD/ARCHITECTURE/API/DATA-SCHEMA |
-| Frontend — khung nền | ✅ Chạy được: đăng nhập, layout, routing, phân quyền, module Sinh viên mẫu |
-| Frontend — thư viện | ✅ antd 6.6.3, react-router-dom 7.18.3, axios, dayjs, recharts |
-| Frontend — nối API thật | ⏳ Đang chạy chế độ dữ liệu giả (`VITE_USE_MOCK=true`) |
-| Backend | ❌ Repo `BE_QuanLyKTX` chưa tạo — xem `13` mục 3.3 |
-| MongoDB | ❌ Chưa thiết lập — xem `13` mục 3.2 (khuyến nghị dùng Atlas, không cần cài gì) |
-| Deploy | ❌ Chưa có — quy trình đầy đủ ở `13` mục 4.2 (Atlas + Render + Vercel, đều miễn phí) |
-
-**Việc tiếp theo:**
-1. Tạo cụm MongoDB Atlas (`13` mục 3.2) — cả nhóm dùng chung một cụm.
-2. Tạo repo `BE_QuanLyKTX` và dựng cấu trúc thư mục (`13` mục 3.3).
-3. Làm trọn module `students` ở cả hai đầu (`14` mục 15), chạy thông end-to-end, rồi mới nhân bản cho các module còn lại.
-
-> 📖 **Tài liệu này dùng chung cho cả hai repo.** Người làm backend đọc trực tiếp tại đây, **không sao chép sang repo BE** — hai bản sẽ lệch nhau chỉ sau vài ngày.
-
----
-
-## 6. Quy tắc cập nhật tài liệu
-
-1. Thay đổi **phạm vi** (thêm/bớt chức năng) → sửa `PRD.md` **trước**, rồi mới sửa `02`.
-2. Thay đổi **API** → sửa `API.md` **trước khi code**, báo cho cả FE và BE trong nhóm chat.
-3. Thay đổi **schema** → sửa `DATA-SCHEMA.md` cùng lúc với code.
-4. Sửa tài liệu đi kèm trong Pull Request của tính năng, không tách PR riêng.
-5. Thay đổi lớn ghi vào bảng lịch sử phiên bản ở cuối mỗi tài liệu.
-
----
-
-## 7. Lịch sử phiên bản bộ tài liệu
+## 4. Lịch sử phiên bản bộ tài liệu
 
 | Phiên bản | Ngày | Nội dung |
 |-----------|------|----------|
-| v1.0 | 11/09/2026 | Khởi tạo 15 tài liệu tiếng Việt (PostgreSQL + Prisma, kiến trúc theo tầng) |
-| v1.1 | 12/09/2026 | Rà soát chéo: sửa 10 lỗi nhất quán, 11 vấn đề nghiệp vụ |
-| v1.2 | 12/09/2026 | Áp dụng phiên bản đơn giản hóa (Bậc A + Bậc B) cho nhóm mới bắt đầu |
-| **v2.0** | **12/09/2026** | **Hợp nhất với bộ `PRD`/`ARCHITECTURE`/`API`/`DATA-SCHEMA`.** Đổi sang **MongoDB + Mongoose**, kiến trúc **theo tính năng**, envelope `{code,message,data}`, enum chữ thường, thêm thực thể `Residency`. Xóa `04`/`05`/`06` (đã bị thay thế). Giữ lại 3 nghiệp vụ từ bộ cũ: giới tính phòng, chỉ số điện nước, quyết toán tiền cọc |
+| v1.0 | 11/09/2026 | Khởi tạo 15 tài liệu ban đầu (PostgreSQL + Prisma) |
+| v2.0 | 12/09/2026 | Hợp nhất sang MongoDB + Mongoose, Modular Monolith theo tính năng |
+| **v2.0 (Chuẩn hóa HaUI)** | **03/10/2026** | **Chuẩn hóa toàn diện nghiệp vụ thực tế KTX ĐH Công nghiệp Hà Nội (3 cơ sở CS1, CS2, CS3):** 4 vai trò tác nhân (`admin`, `manager`, `staff`, `student`); CSDL 19 Collections; Hạ tầng chịu tải cao (Redis BullMQ Queue nộp đơn, Redis Cache phòng trống); Giao tiếp thời gian thực Socket.io; Cổng nộp đơn công khai, cấp tài khoản tự động qua Email; Ưu tiên giường tầng dưới theo thể chất (BR-16); Mã VietQR động Napas247; Quét mã QR Check-in; Đề cương báo cáo KTPM 50-70 trang A4 (`12-KHUNG-BAO-CAO.md`). |
