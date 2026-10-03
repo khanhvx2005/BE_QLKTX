@@ -1,437 +1,296 @@
-# Data Schema
+# Data Schema — HaUI Dormitory Management System (DMS)
 
-**Project:** Dormitory Management System
-**Version:** 1.1
-**Database:** MongoDB (Mongoose ODM)
-**Audience:** Developers (new hires + AI coding assistants)
-
-> This document defines **collections, fields, relationships, and business rules** at the data layer. Pair with `ARCHITECTURE.md` (folder structure) and `API.md` (endpoints). Every schema below maps to one `modules/<feature>/<entity>.model.js` file.
->
-> Business rules are stated here at data level. Their full Vietnamese explanation, state machines and process flows live in `03-PHAN-TICH-NGHIEP-VU.md`.
+**Đơn vị áp dụng:** Trường Đại học Công nghiệp Hà Nội (HaUI)  
+**Phiên bản:** 2.3 (MongoDB + Mongoose ODM + Redis Cache & Queue + Health Accessibility)  
+**Quy ước ngôn ngữ:** 100% tên trường (Field name), Enum và Mã định danh chuẩn hóa bằng **Tiếng Anh**.
 
 ---
 
-## 1. Conventions
+## 1. Quy ước dữ liệu (Data Conventions)
 
-- **Primary key:** MongoDB default `_id` (ObjectId). Never expose custom IDs unless required by a business rule (e.g., student ID number is a separate field, not `_id`).
-- **References:** store as `mongoose.Schema.Types.ObjectId` with `ref: '<Model>'`. Populate explicitly in the service layer — never `.populate()` blindly in controllers.
-- **Timestamps:** every schema uses `{ timestamps: true }` → adds `createdAt` / `updatedAt` automatically. Do not hand-roll these fields.
-- **Soft delete:** entities that must preserve history (Student, Contract, Invoice, Payment) use an `isActive: Boolean` or `status` field instead of hard deletes. Deactivation ≠ removal.
-- **Enums:** defined once in `shared/constants/enums.js` and imported into schemas — never hardcode string literals in multiple files (avoids typos like `"Occupied"` vs `"occupied"`). **All enum values are lowercase.**
-- **Money fields:** stored as **integers** (VND, smallest unit — no decimals in this currency), never floats.
-- **Audit trail:** any status-changing action should be traceable via `createdAt`/`updatedAt` + the actor reference (`createdBy`/`updatedBy` where noted).
-
----
-
-## 2. Entity Relationship Overview
-
-```
-User ──1:1── Student (optional link, only when role = student)
-Building ──1:N── Room ──1:N── Bed
-Room ──1:N── UtilityReading            (one per room per billing period)
-Student ──1:N── Residency ──1:1── Bed  (current occupant, enforced unique+active)
-Residency ──1:1── Contract
-Contract ──1:N── Request               (renewal/checkout)
-Student ──1:N── Invoice ──1:N── Payment
-FeeType ──N:M── Invoice                (via invoice line items)
-```
-
-- A **Bed** can have many historical Residencies, but only **one active Residency** at a time (enforced at service layer + partial unique index).
-- A **Contract** always belongs to exactly one Residency (1:1).
-- An **Invoice** can receive multiple **Payments** (partial payments supported).
-
-**11 collections:** `User`, `Student`, `Building`, `Room`, `Bed`, `Residency`, `Contract`, `FeeType`, `UtilityReading`, `Invoice`, `Payment`, `Request` — 12 counting `Request`.
+- **Primary key:** `_id` (ObjectId mặc định của MongoDB).
+- **Quan hệ (References):** `mongoose.Schema.Types.ObjectId` kèm `ref: '<Model>'`.
+- **Dấu vết thời gian (Timestamps):** Tự động với `{ timestamps: true }` (`createdAt`, `updatedAt`).
+- **Xóa mềm & Bảo toàn lịch sử:** Sử dụng `status` hoặc `isActive`. Không bao giờ xóa cứng dữ liệu sinh viên, hợp đồng, hóa đơn để phục vụ đối soát tài chính và báo cáo thống kê.
+- **Tiền tệ:** Số nguyên **VND** (không có phần thập phân).
+- **Quy ước Enum:** Toàn bộ giá trị enum viết bằng **chữ thường (lowercase)**, tập trung tại `shared/constants/enums.js`.
+- **Phân quyền 4 vai trò:** `admin` (quản trị hệ thống), `manager` (quản lý KTX), `staff` (cán bộ vận hành & hỗ trợ), `student` (sinh viên).
+- **Ưu tiên thể chất (Accessibility):** Giường tầng phân định `position: 'lower' | 'upper'`. Sinh viên có vấn đề thể chất được tự động ưu tiên gán giường tầng dưới.
+- **Redis Cache & Queue:**
+  - Cache các key đọc nhiều: `rooms:available:campus:{id}`, `academic-years:current`.
+  - Hàng đợi BullMQ: `queue:dorm-application` (xử lý đơn nộp cao điểm), `queue:payment-webhook` (xử lý webhook thanh toán).
 
 ---
 
-## 3. Collections
+## 2. Danh mục 19 Collection trong CSDL
 
-### 3.1 `User` — `modules/auth/user.model.js`
+### 2.1. Phân hệ Cơ cấu không gian (Cơ sở → Tòa → Phòng → Giường)
 
-Authentication identity. Every login (staff or student) is a `User`; `Student` profile is a separate collection linked via `userId`.
-
-| Field | Type | Notes |
+#### `Campus` — `modules/rooms/campus.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `email` | String | unique, required, lowercase |
-| `passwordHash` | String | required, bcrypt hash — never store plaintext |
-| `fullName` | String | required, display name |
-| `role` | String (enum) | `admin`, `staff`, `student`, `viewer` |
-| `isActive` | Boolean | default `true`; disables login without deleting record |
-| `mustChangePassword` | Boolean | default `false`; set `true` after a staff-issued password reset (`FR-09`) |
-| `lastLoginAt` | Date | updated on successful login |
+| `code` | String | Mã cơ sở (`CS1`, `CS2`, `CS3`), unique, required |
+| `name` | String | Tên cơ sở (VD: `Cơ sở 1 - Bắc Từ Liêm`), required |
+| `address` | String | Địa chỉ thực tế |
 
-```js
-const ROLES = ['admin', 'staff', 'student', 'viewer'];
-```
-
-**Indexes:** `{ email: 1 }` unique.
-**Rule:** a `student`-role `User` must have exactly one corresponding `Student` document (`Student.userId` points back).
-
----
-
-### 3.2 `Student` — `modules/students/student.model.js`
-
-| Field | Type | Notes |
+#### `Building` — `modules/rooms/building.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `userId` | ObjectId ref `User` | unique sparse — set only when the student has a self-service account |
-| `fullName` | String | required |
-| `studentCode` | String | unique, required (school/enrollment ID, not `_id`) |
-| `phone` | String | required |
-| `email` | String | contact email (can differ from login email) |
-| `dob` | Date | |
-| `gender` | String (enum) | `male`, `female` — **required**, used by the room-gender check (A1) |
-| `className` | String | |
-| `faculty` | String | |
-| `emergencyContact.name` | String | |
-| `emergencyContact.phone` | String | |
-| `emergencyContact.relationship` | String | |
-| `status` | String (enum) | `active`, `inactive` (soft delete) |
+| `campusId` | ObjectId ref `Campus` | Cơ sở trực thuộc, required |
+| `code` | String | Mã tòa nhà (VD: `A1`, `B1`), required |
+| `name` | String | Tên hiển thị (VD: `Ký túc xá A1`), required |
+| `totalFloors` | Number | Tổng số tầng của tòa nhà |
+| `hasElevator` | Boolean | Tòa nhà có thang máy không, default `false` |
+| `description` | String | Mô tả |
+*Index:* `{ campusId: 1, code: 1 }` unique compound.
 
-**Indexes:** `{ studentCode: 1 }` unique, `{ fullName: 'text' }` for search.
-**Rule:** cannot set `status: 'inactive'` while the student has an `active`/`pending` Contract or any unpaid Invoice.
-
----
-
-### 3.3 `Building` — `modules/rooms/building.model.js`
-
-| Field | Type | Notes |
+#### `Room` — `modules/rooms/room.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `code` | String | unique, required, e.g. `"A"` |
-| `name` | String | required, e.g. `"Building A"` |
-| `address` | String | |
-| `description` | String | |
-| `isActive` | Boolean | default `true` |
+| `buildingId` | ObjectId ref `Building` | Tòa nhà trực thuộc, required |
+| `roomNumber` | String | Số phòng (VD: `302`, `405`), required |
+| `floor` | Number | Tầng (VD: `1`, `2`, `3`), required |
+| `gender` | String (enum) | `male`, `female`, required |
+| `roomType` | String (enum) | `four_beds`, `six_beds`, `eight_beds`, required |
+| `hasAirConditioner`| Boolean | `true` (có điều hòa), `false` (phòng quạt), default `false` |
+| `capacity` | Number | Sức chứa tối đa (bằng số giường: 4, 6 hoặc 8), required |
+| `pricePerMonth` | Number | Đơn giá thuê 1 tháng của 1 sinh viên (VND), required |
+| `status` | String (enum) | `active`, `maintenance`, default `active` |
+*Index:* `{ buildingId: 1, roomNumber: 1 }` unique compound.
 
----
-
-### 3.4 `Room` — `modules/rooms/room.model.js`
-
-| Field | Type | Notes |
+#### `Bed` — `modules/rooms/bed.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `buildingId` | ObjectId ref `Building` | required |
-| `roomNumber` | String | required, e.g. `"101"` |
-| `gender` | String (enum) | **`male` / `female` — required.** *(Added 12/09/2026, PRD §2.9 A1.)* A student may only be assigned to a room whose `gender` matches theirs |
-| `capacity` | Number | required — max beds allowed (also derivable from Bed count, kept denormalized for quick occupancy queries) |
-| `pricePerBed` | Number | VND, **monthly rent for ONE bed** (i.e. per student), not for the whole room |
-| `status` | String (enum) | `active`, `maintenance`, `inactive` |
-
-**Indexes:** `{ buildingId: 1, roomNumber: 1 }` unique compound.
-**Rules:**
-- `capacity` must equal the count of `Bed` documents for this room — validated in `room.service.js` on bed create/delete.
-- ⚠️ `pricePerBed` is the price **per student per month**. Do not multiply or divide it by `capacity` anywhere.
+| `roomId` | ObjectId ref `Room` | Phòng trực thuộc, required |
+| `bedCode` | String | Mã giường (VD: `P302-G01D`, `P302-G01T`), required |
+| `position` | String (enum) | `lower` (tầng dưới), `upper` (tầng trên), required, default `lower` |
+| `status` | String (enum) | `available`, `occupied`, `maintenance`, default `available` |
+| `note` | String | Ghi chú tình trạng thiết bị |
+*Index:* `{ roomId: 1, bedCode: 1 }` unique compound.
 
 ---
 
-### 3.5 `Bed` — `modules/rooms/bed.model.js`
+### 2.2. Phân hệ Năm học & Đợt đăng ký
 
-| Field | Type | Notes |
+#### `AcademicYear` — `modules/periods/academic-year.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `roomId` | ObjectId ref `Room` | required |
-| `bedCode` | String | required, e.g. `"A-101-02"` (human-readable, denormalized for display) |
-| `status` | String (enum) | `available`, `occupied`, `maintenance` |
-| `note` | String | maintenance note |
+| `name` | String | Tên năm học (VD: `2026-2027`), unique, required |
+| `startDate` | Date | Ngày bắt đầu năm học |
+| `endDate` | Date | Ngày kết thúc năm học |
+| `isCurrent` | Boolean | `true` nếu là năm học hiện tại, default `false` |
 
-```js
-const BED_STATUS = ['available', 'occupied', 'maintenance'];
-```
-
-**Indexes:** `{ roomId: 1, bedCode: 1 }` unique compound.
-**Rules:**
-- Creating a Residency on a bed is only allowed when `Bed.status === 'available'`.
-- ⭐ The claim **must** use an atomic conditional update, not read-then-write (`ARCHITECTURE.md` §3.5):
-  ```js
-  const bed = await Bed.findOneAndUpdate(
-    { _id: bedId, status: 'available' },
-    { status: 'occupied' },
-    { new: true }
-  );
-  if (!bed) throw new ApiError(409, 'BED_NOT_AVAILABLE', 'Giường đã có người đăng ký');
-  ```
-- A bed with `status: 'occupied'` cannot be switched to `maintenance` — move the occupant out first.
-
----
-
-### 3.6 `Residency` — `modules/residencies/residency.model.js`
-
-Represents "student X occupies bed Y," independent of contract paperwork.
-
-| Field | Type | Notes |
+#### `RegistrationPeriod` — `modules/periods/registration-period.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `studentId` | ObjectId ref `Student` | required |
-| `bedId` | ObjectId ref `Bed` | required |
-| `startDate` | Date | required |
-| `endDate` | Date | null while active |
-| `status` | String (enum) | `active`, `closed` |
-| `createdBy` | ObjectId ref `User` | staff who registered it |
-
-**Indexes:** partial unique index — enforces one active occupant per bed at the DB level:
-```js
-residencySchema.index(
-  { bedId: 1 },
-  { unique: true, partialFilterExpression: { status: 'active' } }
-);
-```
-
-**Rule:** closing a Residency (checkout approved) sets `status: 'closed'`, `endDate: now`, and triggers `bedService.markBedAvailable(bedId)`.
+| `academicYearId` | ObjectId ref `AcademicYear` | Năm học, required |
+| `campusId` | ObjectId ref `Campus` | Cơ sở áp dụng, required |
+| `name` | String | Tên đợt (VD: `Đăng ký KTX K19 Cơ sở Hà Nam Đợt 1`), required |
+| `startDate` | Date | Thời điểm mở cổng nhận đơn, required |
+| `endDate` | Date | Thời điểm khóa cổng nhận đơn, required |
+| `status` | String (enum) | `upcoming`, `open`, `closed`, default `upcoming` |
 
 ---
 
-### 3.7 `Contract` — `modules/contracts/contract.model.js`
+### 2.3. Phân hệ Sinh viên & Đơn đăng ký
 
-| Field | Type | Notes |
+#### `Student` — `modules/students/student.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `contractCode` | String | unique, auto-generated `HD-YYYY-XXXXX` |
-| `residencyId` | ObjectId ref `Residency` | required, unique (1:1) |
-| `studentId` | ObjectId ref `Student` | denormalized for query convenience |
-| `bedId` | ObjectId ref `Bed` | denormalized for query convenience |
-| `startDate` | Date | required |
-| `endDate` | Date | required |
-| `monthlyPrice` | Number | VND, **frozen at signing time** — later changes to `Room.pricePerBed` must not alter existing contracts |
-| `depositAmount` | Number | VND, collected once at move-in. *(Used by A3 settlement.)* |
-| `depositRefunded` | Number | VND, default `0` — amount actually paid back at checkout *(Added 12/09/2026, PRD §2.9 A3)* |
-| `terms` | String | free text or file reference |
-| `status` | String (enum) | `pending`, `active`, `expired`, `terminated` |
-| `terminationReason` | String | filled when terminated early |
+| `userId` | ObjectId ref `User` | Tài khoản đăng nhập (unique, sparse) |
+| `studentCode` | String | Mã sinh viên (MSSV), unique, required |
+| `fullName` | String | Họ và tên, required |
+| `gender` | String (enum) | `male`, `female`, required |
+| `dob` | Date | Ngày tháng năm sinh |
+| `phone` | String | Số điện thoại liên hệ, required |
+| `email` | String | Email sinh viên |
+| `faculty` | String | Khoa/Viện đào tạo |
+| `className` | String | Lớp sinh hoạt |
+| `priorityType` | String (enum) | `policy_family`, `poor_household`, `remote_area`, `normal`, default `normal` |
+| `status` | String (enum) | `studying`, `graduated`, `dropped_out`, default `studying` |
+| `emergencyContact` | Object | `{ name, phone, relationship }` |
+*Index:* `{ studentCode: 1 }` unique, `{ fullName: 'text' }`.
 
-```js
-const CONTRACT_STATUS = ['pending', 'active', 'expired', 'terminated'];
-```
-
-**Indexes:** `{ studentId: 1, status: 1 }`, `{ endDate: 1 }` (expiry-flag query), `{ residencyId: 1 }` unique.
-**Rules:**
-- A student may have at most **one** contract in `pending` or `active` at a time.
-- A scheduled query flags contracts where `endDate - now <= 30 days AND status === 'active'` for the dashboard — no notification is sent (out of scope), only surfaced in-app.
-- Deposit is charged **once** at contract start; renewing does not charge it again.
-
----
-
-### 3.8 `FeeType` — `modules/fees/fee-type.model.js`
-
-| Field | Type | Notes |
+#### `Application` — `modules/applications/application.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `code` | String | unique, e.g. `rent`, `electricity`, `water`, `deposit`, `other` |
-| `name` | String | required, Vietnamese display name, e.g. `"Tiền phòng"` |
-| `unit` | String | e.g. `"tháng"`, `"kWh"`, `"m3"`, `"lần"` |
-| `defaultAmount` | Number | VND — unit price used when generating invoices |
-| `isRecurring` | Boolean | true for rent/utilities, false for one-off deposit |
-| `isActive` | Boolean | default `true` |
-
-**Seed values:** `rent`, `electricity` (2 500 đ/kWh), `water` (12 000 đ/m³), `deposit` (500 000 đ), `other`.
+| `periodId` | ObjectId ref `RegistrationPeriod` | Đợt đăng ký, required |
+| `studentId` | ObjectId ref `Student` | Sinh viên nộp đơn, required |
+| `campusId` | ObjectId ref `Campus` | Cơ sở đăng ký, required |
+| `preferredRoomType`| String (enum) | `four_beds`, `six_beds`, `eight_beds` |
+| `preferredAirConditioner` | Boolean | Nguyện vọng phòng điều hòa hay quạt |
+| `priorityEvidenceUrl` | String | Link ảnh minh chứng diện ưu tiên chính sách |
+| `hasHealthCondition` | Boolean | `true` nếu có vấn đề sức khỏe/vận động cần giường dưới, default `false` |
+| `healthDescription` | String | Mô tả tình trạng sức khỏe (VD: khuyết tật chân, bệnh tim mạch...) |
+| `healthEvidenceUrl` | String | Link ảnh giấy chứng nhận y tế / sổ khám bệnh |
+| `status` | String (enum) | `pending`, `approved`, `rejected`, default `pending` |
+| `assignedBedId` | ObjectId ref `Bed` | Giường được gán khi duyệt |
+| `reviewedBy` | ObjectId ref `User` | Cán bộ xét duyệt |
+| `reviewNote` | String | Lý do từ chối hoặc ghi chú duyệt |
+| `reviewedAt` | Date | Thời điểm duyệt đơn |
+*Index:* `{ periodId: 1, studentId: 1 }` unique compound.
 
 ---
 
-### 3.9 `UtilityReading` — `modules/fees/utility-reading.model.js`
+### 2.4. Phân hệ Hợp đồng & Tài chính
 
-*(Added 12/09/2026, PRD §2.9 A2.)* Meter readings per room per billing period. Without this collection there is no way to know how much electricity/water to charge.
-
-| Field | Type | Notes |
+#### `Contract` — `modules/contracts/contract.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `roomId` | ObjectId ref `Room` | required |
-| `billingPeriod` | String | required, e.g. `"2026-10"` |
-| `electricityStart` | Number | meter reading at period start |
-| `electricityEnd` | Number | must be `>= electricityStart` |
-| `waterStart` | Number | |
-| `waterEnd` | Number | must be `>= waterStart` |
-| `electricityUnitPrice` | Number | VND/kWh — **frozen here**, copied from FeeType at entry time so later price changes do not alter past invoices |
-| `waterUnitPrice` | Number | VND/m³ — same reasoning |
-| `isInvoiced` | Boolean | default `false`; blocks editing once invoices are generated |
-| `recordedBy` | ObjectId ref `User` | |
+| `contractCode` | String | Mã hợp đồng `HD-YYYY-XXXXX`, unique, required |
+| `applicationId` | ObjectId ref `Application` | Đơn đăng ký gốc |
+| `studentId` | ObjectId ref `Student` | Sinh viên lưu trú, required |
+| `bedId` | ObjectId ref `Bed` | Giường được giao ở, required |
+| `academicYearId` | ObjectId ref `AcademicYear` | Năm học lưu trú, required |
+| `startDate` | Date | Ngày bắt đầu vào ở, required |
+| `endDate` | Date | Ngày kết thúc hợp đồng, required |
+| `totalMonths` | Number | Số tháng tính tiền phòng (`8.5`, `10` hoặc `12`), required |
+| `pricePerMonth` | Number | Đơn giá tháng đóng băng tại thời điểm ký (VND) |
+| `roomPrice` | Number | Tổng tiền phòng cả đợt hợp đồng (`pricePerMonth × totalMonths`) |
+| `depositAmount` | Number | Tiền cọc tài sản nộp khi nhận phòng (VND) |
+| `depositRefunded` | Number | Tiền cọc thực tế hoàn trả khi trả phòng (VND), default `0` |
+| `checkinAt` | Date | Thời điểm quét mã QR nhận phòng tại KTX |
+| `status` | String (enum) | `active`, `expired`, `terminated`, default `active` |
+| `terminationReason`| String | Lý do trả phòng / chấm dứt |
+| `terminatedAt` | Date | Thời điểm trả phòng |
+*Index:* `{ bedId: 1 }` partial unique (`{ status: 'active' }`), `{ studentId: 1 }` partial unique (`{ status: 'active' }`).
 
-**Indexes:** `{ roomId: 1, billingPeriod: 1 }` unique compound.
-
-**Rules:**
-- End reading must be ≥ start reading — validated in the service and by a schema validator.
-- Start reading of a period should default to the previous period's end reading.
-- Cannot edit once `isInvoiced: true`.
-- ⭐ **Even split with exact remainder** — the sum of per-student shares must equal the room total to the đồng:
-  ```js
-  // n = number of students with an active Residency in this room during the period
-  const roomTotal = (electricityEnd - electricityStart) * electricityUnitPrice;
-  const base = Math.floor(roomTotal / n);          // NOT Math.round — that overshoots
-  const remainder = roomTotal - base * n;
-  // the student with the smallest studentCode absorbs the remainder
-  shares[0] = base + remainder;
-  ```
-  Example: 576 000 đ ÷ 7 → six students pay 82 285 đ, one pays 82 290 đ. Total = 576 000 đ exactly.
-- If no student resides in the room during the period, skip it — generate no utility charge.
-
----
-
-### 3.10 `Invoice` — `modules/fees/invoice.model.js`
-
-| Field | Type | Notes |
+#### `UtilityReading` — `modules/fees/utility-reading.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `invoiceCode` | String | unique, auto-generated `INV-YYYYMM-XXXXX` |
-| `studentId` | ObjectId ref `Student` | required |
-| `contractId` | ObjectId ref `Contract` | required — ties invoice to the residency period |
-| `type` | String (enum) | `deposit`, `monthly`, `settlement`, `other` |
-| `billingPeriod` | String | e.g. `"2026-10"`; `null` for `deposit`/`settlement` |
-| `lineItems` | Array<`{ feeTypeId, description, quantity, unitPrice, amount }`> | required, min 1 |
-| `totalAmount` | Number | sum of `lineItems.amount`, computed on save |
-| `paidAmount` | Number | default `0`; **always recomputed** from successful Payments, never incremented blindly |
-| `dueDate` | Date | required |
-| `status` | String (enum) | `unpaid`, `partial`, `paid`, `overdue`, `cancelled` |
+| `roomId` | ObjectId ref `Room` | Phòng chốt số, required |
+| `billingMonth` | String | Tháng chốt (VD: `2026-10`), required |
+| `electricityStart` | Number | Chỉ số điện đầu kỳ (kWh), required |
+| `electricityEnd` | Number | Chỉ số điện cuối kỳ (kWh), `>= electricityStart` |
+| `waterStart` | Number | Chỉ số nước đầu kỳ (m³), required |
+| `waterEnd` | Number | Chỉ số nước cuối kỳ (m³), `>= waterStart` |
+| `electricityUnitPrice` | Number | Đơn giá điện đóng băng tại thời điểm chốt (VND/kWh) |
+| `waterUnitPrice` | Number | Đơn giá nước đóng băng tại thời điểm chốt (VND/m³) |
+| `isInvoiced` | Boolean | Đã sinh hóa đơn cho sinh viên trong phòng chưa, default `false` |
+| `recordedBy` | ObjectId ref `User` | Cán bộ ghi chỉ số |
+*Index:* `{ roomId: 1, billingMonth: 1 }` unique compound.
 
-```js
-const INVOICE_STATUS = ['unpaid', 'partial', 'paid', 'overdue', 'cancelled'];
-const INVOICE_TYPE = ['deposit', 'monthly', 'settlement', 'other'];
-```
-
-**Indexes:**
-- `{ studentId: 1, billingPeriod: 1 }`, `{ status: 1, dueDate: 1 }` (overdue sweep)
-- `{ invoiceCode: 1 }` unique
-- Anti-duplicate, partial:
-  ```js
-  invoiceSchema.index(
-    { studentId: 1, type: 1, billingPeriod: 1 },
-    { unique: true, partialFilterExpression: { status: { $ne: 'cancelled' }, billingPeriod: { $type: 'string' } } }
-  );
-  ```
-
-**Rules:**
-- `status` is derived, never set by clients — recomputed from `paidAmount` vs `totalAmount` on every Payment write; a scheduled check flips `unpaid → overdue` once `dueDate` passes.
-- Cancelling is only allowed when no successful Payment exists.
-- ⚠️ **Do not merge the deposit into the first monthly invoice.** Issue **two** invoices when a contract is activated: one `type: 'deposit'` (`billingPeriod: null`) and one `type: 'monthly'`. Merging them makes the invoice occupy the `(student, monthly, period)` unique slot, so the end-of-period bulk generation skips that student entirely and **their electricity and water for that period are never billed**.
-- When bulk generation finds an existing `monthly` invoice for the period, it **adds the missing line items** (electricity, water) to that invoice rather than skipping the student.
-
----
-
-### 3.11 `Payment` — `modules/payments/payment.model.js`
-
-| Field | Type | Notes |
+#### `Invoice` — `modules/fees/invoice.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `transactionRef` | String | unique — our own reference, sent to the gateway |
-| `invoiceId` | ObjectId ref `Invoice` | required |
-| `studentId` | ObjectId ref `Student` | denormalized |
-| `amount` | Number | required, VND, `> 0`. **Negative is not allowed** — refunds use `type: 'refund'` |
-| `type` | String (enum) | `payment`, `refund` — `refund` used for deposit payout *(Added 12/09/2026, A3)* |
-| `method` | String (enum) | `cash`, `bank_transfer`, `vnpay`, `zalopay` |
-| `gatewayTransactionId` | String | required when `method` is `vnpay`/`zalopay`; null for offline |
-| `gatewayRawResponse` | Mixed | raw webhook payload, stored for audit/reconciliation |
-| `status` | String (enum) | `pending`, `success`, `failed`, `expired` |
-| `paidAt` | Date | set when `status` becomes `success` |
-| `recordedBy` | ObjectId ref `User` | staff who recorded it; null for online self-service payments |
-| `note` | String | |
+| `invoiceCode` | String | Mã hóa đơn `INV-YYYYMM-XXXXX`, unique, required |
+| `contractId` | ObjectId ref `Contract` | Hợp đồng liên quan, required |
+| `studentId` | ObjectId ref `Student` | Sinh viên thanh toán, required |
+| `type` | String (enum) | `initial`, `utility`, `settlement`, `other`, required |
+| `billingMonth` | String | Tháng phát sinh (dùng cho `utility`, VD: `2026-10`), null với initial |
+| `lineItems` | Array | `[{ description, quantity, unitPrice, amount }]`, min 1 |
+| `totalAmount` | Number | Tổng tiền cần thanh toán (VND) |
+| `paidAmount` | Number | Đã thanh toán (tính tự động từ Payment thành công), default `0` |
+| `dueDate` | Date | Hạn chót thanh toán, required |
+| `status` | String (enum) | `unpaid`, `partial`, `paid`, `overdue`, `cancelled`, default `unpaid` |
 
-```js
-const PAYMENT_METHOD = ['cash', 'bank_transfer', 'vnpay', 'zalopay'];
-const PAYMENT_STATUS = ['pending', 'success', 'failed', 'expired'];
-const PAYMENT_TYPE   = ['payment', 'refund'];
-```
-
-**Indexes:** `{ transactionRef: 1 }` unique, `{ gatewayTransactionId: 1 }` unique sparse (dedupe webhook retries), `{ invoiceId: 1 }`, `{ paidAt: 1 }`.
-
-**Rules:**
-- For gateway payments a `pending` Payment is created when checkout starts; the webhook flips it to `success`/`failed`. Only a `success` write triggers the `Invoice.paidAmount` recompute.
-- **Idempotency:** before processing a webhook, check whether the Payment is already `success` — if so, acknowledge and do nothing. The unique index on `gatewayTransactionId` is the backstop.
-- Payment amount may not exceed the invoice's outstanding balance.
-
----
-
-### 3.12 `Request` — `modules/requests/request.model.js`
-
-Renewal or checkout requests submitted by students.
-
-| Field | Type | Notes |
+#### `Payment` — `modules/payments/payment.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| `studentId` | ObjectId ref `Student` | required |
-| `contractId` | ObjectId ref `Contract` | required |
-| `type` | String (enum) | `renewal`, `checkout` |
-| `reason` | String | student-provided free text |
-| `requestedEndDate` | Date | new end date (renewal) or move-out date (checkout) |
-| `status` | String (enum) | `pending`, `approved`, `rejected`, `cancelled` |
-| `reviewedBy` | ObjectId ref `User` | staff who approved/rejected |
-| `reviewNote` | String | required when rejecting |
-| `reviewedAt` | Date | |
-
-```js
-const REQUEST_TYPE = ['renewal', 'checkout'];
-const REQUEST_STATUS = ['pending', 'approved', 'rejected', 'cancelled'];
-```
-
-**Indexes:**
-- `{ status: 1, type: 1 }` (staff queue query)
-- One open request of each type per contract, partial:
-  ```js
-  requestSchema.index(
-    { contractId: 1, type: 1 },
-    { unique: true, partialFilterExpression: { status: 'pending' } }
-  );
-  ```
-
-**Rules on approval:**
-- `renewal` → `Contract.endDate` extended; monthly invoices generated for the new periods; **deposit is not charged again**.
-- `checkout` → `Contract.status = 'terminated'`, `Residency.status = 'closed'`, `Bed.status = 'available'`, plus **deposit settlement** (below).
+| `transactionRef` | String | Mã tham chiếu giao dịch hệ thống sinh, unique |
+| `invoiceId` | ObjectId ref `Invoice` | Hóa đơn thanh toán, required |
+| `studentId` | ObjectId ref `Student` | Sinh viên thực hiện |
+| `amount` | Number | Số tiền giao dịch (VND, `> 0`), required |
+| `type` | String (enum) | `payment` (thu tiền), `refund` (chi trả hoàn cọc) |
+| `method` | String (enum) | `cash`, `bank_transfer`, `vietqr`, `vnpay`, `zalopay` |
+| `gatewayTransactionId`| String | Mã giao dịch từ cổng thanh toán (unique, sparse) |
+| `status` | String (enum) | `pending`, `success`, `failed`, `expired`, default `pending` |
+| `paidAt` | Date | Thời điểm thanh toán thành công |
+| `recordedBy` | ObjectId ref `User` | Cán bộ thu tiền (null nếu tự nộp online) |
 
 ---
 
-## 4. Deposit Settlement on Checkout *(Added 12/09/2026, PRD §2.9 A3)*
+### 2.5. Phân hệ Nghiệp vụ phát sinh (Chuyển phòng, Báo hỏng, Kỷ luật)
 
-When a checkout request is approved, the system closes out the contract financially:
-
-```
-outstandingDebt = Σ (totalAmount − paidAmount) of the student's invoices
-                  with status ∈ {unpaid, partial, overdue}
-
-refund = depositAmount − outstandingDebt
-```
-
-| Result | What happens |
-|---|---|
-| `refund > 0` | Create a `settlement` Invoice summarising the closeout, and a `Payment` with `type: 'refund'`, `status: 'success'`, `amount: refund`, recording who paid it back and when. Set `Contract.depositRefunded = refund`. |
-| `refund <= 0` | The deposit is fully consumed. Create a `settlement` Invoice for the remaining `|refund|` the student still owes. `Contract.depositRefunded = 0`. |
-
-⚠️ Computing the number is not enough — the **payout must be recorded** as a `Payment` document. Otherwise there is no way to answer "did we actually give this student their deposit back?"
-
----
-
-## 5. Cross-Entity Business Rules Summary
-
-| Rule | Enforced in |
-|---|---|
-| No double-booking a bed | atomic `findOneAndUpdate` in `bed.service.js` + partial unique index on `Residency.bedId` |
-| No mixed-gender room *(A1)* | `residency.service.js` — compares `Student.gender` with `Room.gender` |
-| Room capacity = bed count | `room.service.js`, validated on bed CRUD |
-| One open contract per student | `contract.service.js` pre-check |
-| Contract 1:1 Residency | unique index on `Contract.residencyId` |
-| Invoice status derived, not client-set | `invoice.service.js`, recomputed on every Payment write |
-| Deposit invoice separate from monthly | `contract.service.js` on activation — two invoices, never one |
-| Utility split sums exactly *(A2)* | `invoice.service.js` — `Math.floor` + remainder to the smallest `studentCode` |
-| Deposit settled at checkout *(A3)* | `request.service.js` on checkout approval |
-| Gateway webhook idempotency | status pre-check + unique sparse index on `Payment.gatewayTransactionId` |
-| One pending request per type per contract | partial unique index on `Request` |
-
----
-
-## 6. Example: Full Mongoose Schema Skeleton
-
-Use this shape for every new entity — see `ARCHITECTURE.md` §3.2 for file placement.
-
-```js
-// modules/rooms/bed.model.js
-const mongoose = require('mongoose');
-const { BED_STATUS } = require('../../shared/constants/enums');
-
-const bedSchema = new mongoose.Schema(
-  {
-    roomId: { type: mongoose.Schema.Types.ObjectId, ref: 'Room', required: true },
-    bedCode: { type: String, required: true, trim: true },
-    status: { type: String, enum: BED_STATUS, default: 'available' },
-    note: { type: String },
-  },
-  { timestamps: true }
-);
-
-bedSchema.index({ roomId: 1, bedCode: 1 }, { unique: true });
-
-module.exports = mongoose.model('Bed', bedSchema);
-```
-
----
-
-## 7. Change Log
-
-| Version | Date | Change |
+#### `StudentRequest` — `modules/requests/student-request.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
 |---|---|---|
-| 1.0 | 12/09/2026 | Initial schema, 9 collections |
-| 1.1 | 12/09/2026 | Added `Room.gender` (A1), `UtilityReading` collection (A2), `Contract.depositRefunded` + `Payment.type` + §4 settlement (A3). Added `invoiceCode`/`contractCode`/`transactionRef`, invoice `type` and `cancelled` status, `User.fullName`/`mustChangePassword`. Documented the deposit-invoice separation trap, the atomic bed claim, and concrete `partialFilterExpression` index definitions. |
+| `contractId` | ObjectId ref `Contract` | Hợp đồng hiện tại, required |
+| `studentId` | ObjectId ref `Student` | Sinh viên gửi đơn, required |
+| `type` | String (enum) | `transfer` (chuyển phòng), `checkout` (trả phòng), `repair` (báo hỏng) |
+| `reason` | String | Lý do chi tiết, required |
+| `targetBedId` | ObjectId ref `Bed` | Giường muốn chuyển tới (dùng cho `transfer`) |
+| `repairCategory` | String (enum) | `electric`, `water`, `ac`, `furniture`, `other` (dùng cho `repair`) |
+| `attachmentUrl` | String | Ảnh chụp hiện trường hỏng hóc (dùng cho `repair`) |
+| `status` | String (enum) | `pending`, `approved`, `rejected`, `completed`, `cancelled`, default `pending` |
+| `reviewedBy` | ObjectId ref `User` | Cán bộ xử lý |
+| `reviewNote` | String | Phản hồi từ cán bộ |
+| `reviewedAt` | Date | Thời điểm xử lý |
+
+#### `Violation` — `modules/violations/violation.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
+|---|---|---|
+| `studentId` | ObjectId ref `Student` | Sinh viên vi phạm, required |
+| `roomId` | ObjectId ref `Room` | Phòng xảy ra vi phạm |
+| `title` | String | Tiêu đề vi phạm (VD: `Về muộn sau 23h`, `Nấu ăn trong phòng`), required |
+| `description` | String | Chi tiết hành vi vi phạm |
+| `penaltyAmount` | Number | Tiền phạt quy chế nếu có (VND), default `0` |
+| `penaltyDeduction` | Number | Số điểm rèn luyện KTX bị trừ (VD: `-5`), default `0` |
+| `occurredAt` | Date | Thời điểm xảy ra vi phạm, required |
+| `recordedBy` | ObjectId ref `User` | Cán bộ lập biên bản, required |
+
+---
+
+### 2.6. Phân hệ Smart KTX 4.0 (Chat, Thông báo, Bảng tin)
+
+#### `Conversation` — `modules/chat/conversation.model.js`
+Cuộc hội thoại hỗ trợ trực tuyến giữa Sinh viên và Ban quản lý KTX.
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
+|---|---|---|
+| `studentId` | ObjectId ref `Student` | Sinh viên tham gia, required, unique |
+| `staffId` | ObjectId ref `User` | Cán bộ đang tiếp nhận hỗ trợ |
+| `lastMessage` | String | Nội dung tin nhắn cuối cùng |
+| `lastMessageAt` | Date | Thời điểm tin nhắn cuối cùng |
+| `unreadCountStudent` | Number | Số tin nhắn chưa đọc của sinh viên, default `0` |
+| `unreadCountStaff` | Number | Số tin nhắn chưa đọc của cán bộ, default `0` |
+
+#### `ChatMessage` — `modules/chat/chat-message.model.js`
+Tin nhắn trong cuộc hội thoại.
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
+|---|---|---|
+| `conversationId` | ObjectId ref `Conversation` | Cuộc hội thoại trực thuộc, required |
+| `senderId` | ObjectId ref `User` | Người gửi tin nhắn, required |
+| `senderRole` | String (enum) | `student`, `staff`, required |
+| `content` | String | Nội dung tin nhắn |
+| `attachmentUrl` | String | Link hình ảnh đính kèm (nếu có) |
+| `isRead` | Boolean | Đã đọc chưa, default `false` |
+*Index:* `{ conversationId: 1, createdAt: 1 }`.
+
+#### `Notification` — `modules/notifications/notification.model.js`
+Thông báo đẩy chuông thời gian thực.
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
+|---|---|---|
+| `userId` | ObjectId ref `User` | Người nhận thông báo, required |
+| `title` | String | Tiêu đề thông báo, required |
+| `message` | String | Nội dung thông báo, required |
+| `type` | String (enum) | `application`, `invoice`, `repair`, `violation`, `chat`, `system` |
+| `linkUrl` | String | Đường dẫn điều hướng khi click vào thông báo |
+| `isRead` | Boolean | Đã đọc chưa, default `false` |
+*Index:* `{ userId: 1, isRead: 1, createdAt: -1 }`.
+
+#### `Announcement` — `modules/announcements/announcement.model.js`
+Bảng tin nội bộ KTX.
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
+|---|---|---|
+| `campusId` | ObjectId ref `Campus` | Cơ sở áp dụng (null nếu áp dụng toàn trường) |
+| `title` | String | Tiêu đề bài thông báo, required |
+| `content` | String | Nội dung chi tiết bài thông báo, required |
+| `category` | String (enum) | `general`, `maintenance`, `security`, `activity`, default `general` |
+| `priority` | String (enum) | `normal`, `urgent`, default `normal` |
+| `publishedBy` | ObjectId ref `User` | Cán bộ đăng bài, required |
+| `publishedAt` | Date | Thời điểm xuất bản bài viết |
+
+---
+
+### 2.7. Phân hệ Tài khoản người dùng
+
+#### `User` — `modules/auth/user.model.js`
+| Trường | Kiểu dữ liệu | Mô tả & Ràng buộc |
+|---|---|---|
+| `email` | String | Email/MSSV đăng nhập, unique, required, lowercase |
+| `passwordHash` | String | Mật khẩu băm bcrypt (cost >= 10), required |
+| `fullName` | String | Tên hiển thị người dùng, required |
+| `role` | String (enum) | `admin`, `manager`, `staff`, `student`, required |
+| `isActive` | Boolean | `true` (hoạt động), `false` (bị khóa) |
+| `mustChangePassword`| Boolean | Bắt buộc đổi mật khẩu khi đăng nhập lần đầu |
+| `lastLoginAt` | Date | Thời điểm đăng nhập gần nhất |

@@ -1,190 +1,101 @@
-# Product Requirements Document (PRD)
-**Project:** Dormitory Management System
-**Version:** 1.1 (MVP)
-**Architecture:** Monolith
-**Stack:** React + Vite (Frontend) · Node.js + Express.js, npm (JavaScript) (Backend) · MongoDB + Mongoose (Database)
-**Team size:** 5
-**Audience:** Developers (new hires + AI coding assistants)
+# Product Requirements Document (PRD) — HaUI Dormitory Management System (DMS)
 
-> **Purpose of this document:** Define the exact scope of v1. Anything not listed under "Core Features" is NOT part of this release. AI coding assistants and developers should treat "Out of Scope" as a hard boundary — do not implement, scaffold, or suggest those features unless this document is updated first.
-
-> **📌 Document set map.** This PRD is the scope contract. It is paired with:
-> - `ARCHITECTURE.md` — how the code is organized
-> - `API.md` — endpoint contract
-> - `DATA-SCHEMA.md` — collections and fields
-> - `01`–`11` (Vietnamese) — business analysis, UI design, planning, testing, deployment
->
-> See `README.md` for the full map. **Where this PRD and any Vietnamese document disagree about scope, this PRD wins.**
+**Đơn vị áp dụng:** Trường Đại học Công nghiệp Hà Nội (HaUI)  
+**Phiên bản:** 2.2 (Chuẩn hóa luồng Cấp tài khoản qua Email & Smart KTX)  
+**Kiến trúc:** Modular Monolith (Node.js + Express + MongoDB/Mongoose + React Vite + Redis Cache & Queue + Socket.io + Nodemailer Email Service)  
+**Quy mô đội:** 5 thành viên (3 Backend, 2 Frontend)
 
 ---
 
-## 1. Problem Statement
+## 1. Bối cảnh & Mục tiêu
 
-Dormitory administrators currently manage students, room/bed assignments, contracts, and fee collection using manual methods (paper records, spreadsheets, or disconnected tools). This causes:
+Hệ thống quản lý Ký túc xá Đại học Công nghiệp Hà Nội (HaUI) phục vụ công tác quản lý lưu trú tập trung tại 3 cơ sở đào tạo:
+- **Cơ sở 1:** Số 298 đường Cầu Diễn, quận Bắc Từ Liêm, TP. Hà Nội.
+- **Cơ sở 2:** Phường Tây Tựu, quận Bắc Từ Liêm, TP. Hà Nội.
+- **Cơ sở 3:** Phường Phù Vân, TP. Phủ Lý, tỉnh Hà Nam.
 
-- **No single source of truth** — student, room, and payment data live in separate files, causing mismatches (e.g., a room marked "empty" in one sheet but occupied in another).
-- **Slow information retrieval** — finding "which students haven't paid this month" or "which beds are free in Building A" takes manual cross-referencing.
-- **Error-prone occupancy tracking** — double-booking a bed, or losing track of contract expiry dates, happens due to lack of automated validation.
-- **No audit trail** — no reliable history of who registered, when a contract was signed, or when a payment was made.
-
-**Goal of the system:** Provide a centralized, monolithic web application that automates student residency management — from room/bed assignment, to contract lifecycle, to fee tracking — with real-time occupancy visibility for dormitory staff.
-
----
-
-## 2. Core Features (MVP)
-
-### 2.1 Student Management
-- Create / view / update / deactivate student profiles (name, ID number, contact info, emergency contact).
-- Search & filter students (e.g., by name, room, status: active/inactive).
-- Example: Admin searches "Nguyen" → sees list of matching students with current room assignment.
-
-### 2.2 Room & Bed Management
-- CRUD for **Buildings → Rooms → Beds** (hierarchical structure).
-- Track bed status: `available`, `occupied`, `maintenance`.
-- Room capacity validation (cannot assign more students than beds available).
-- **Room gender** — each room is designated `male` or `female`; the system blocks assigning a student whose gender does not match the room. *(Added 12/09/2026 by team decision — see §2.9 A1.)*
-- Example: Room `A-101` has 4 beds; system blocks a 5th assignment and shows "Room full."
-
-### 2.3 Residency Registration & Contracts
-- Register a student into a specific bed (creates a `Residency` record).
-- Generate/store a **Contract** (start date, end date, terms, linked student + bed).
-- Contract lifecycle: `pending → active → expired/terminated`.
-- Auto-flag contracts expiring within N days (e.g., 30 days) for renewal follow-up.
-- Example: Contract for student X in bed `A-101-02` runs 2026-09-01 → 2027-06-30; system flags it on 2027-05-31.
-
-### 2.4 Fees & Payments
-- Define fee types (e.g., monthly rent, electricity, water, deposit).
-- Generate invoices per student/room per billing cycle.
-- Record payments (full/partial) against invoices; track payment status: `unpaid`, `partial`, `paid`, `overdue`.
-- **Utility meter readings** — staff enter start/end electricity and water meter readings per room per billing period; the system computes consumption, multiplies by unit price, and splits the cost evenly across students currently residing in that room. *(Added 12/09/2026 by team decision — see §2.9 A2.)*
-- **Deposit settlement** — when a checkout is approved, the system computes `refund = deposit − outstanding debt` and records the refund payout. *(Added 12/09/2026 by team decision — see §2.9 A3.)*
-- **Online payment gateway integration**: students pay monthly fees directly via **VNPay** and **ZaloPay**.
-  - System creates a payment request/transaction with the gateway and redirects the student (or shows QR code).
-  - Gateway callback/webhook updates invoice status automatically (`paid`) upon confirmed transaction.
-  - Staff can still record manual/offline payments (cash, bank transfer) as a fallback.
-- Example: Student clicks "Pay now" on October rent invoice → redirected to VNPay checkout → on success, invoice auto-updates to `paid` and a payment record is created with transaction ID.
-
-### 2.5 Occupancy Monitoring & Reporting
-- Dashboard: total beds, occupied/available count, occupancy rate per building.
-- List view: overdue payments, expiring contracts, vacant beds.
-- Example: Dashboard shows "Building B: 45/50 beds occupied (90%)."
-
-### 2.6 User Authentication & Roles
-- Login/logout (session-based or JWT).
-- Roles: `admin` (full access), `staff` (manage students/rooms/payments), `student` (self-service, own data only), `viewer` (read-only reports).
-- Example: A `viewer` role can see occupancy reports but cannot edit contracts.
-
-### 2.7 Student Self-Service Portal
-- Students can **register an account** and **log in** (separate from staff/admin accounts, same auth system with `student` role).
-- Students can **view available rooms/beds** (read-only: building, room, capacity, remaining slots, price).
-- Students can view **their own profile, current residency, contract, and invoice/payment history**.
-- Students can **pay invoices online** via VNPay/ZaloPay (see 2.4).
-- Access is scoped strictly to the student's own data (cannot view other students' info).
-- Example: Student logs in → sees "Room A-101, Bed 02 — Active until 2027-06-30" and an "Outstanding: 200,000 VND" invoice with a "Pay now" button.
-
-### 2.8 Room Renewal & Checkout Requests
-- Students can submit a **renewal request** for their current contract before it expires.
-- Students can submit a **checkout (move-out) request** for their current bed/contract.
-- Requests enter a `pending` state and appear in a staff queue for **approval/rejection**.
-- On approval:
-  - Renewal → contract end date extended, new contract term created.
-  - Checkout → contract set to `terminated`, residency closed, bed status reverts to `available`, **deposit settled** (see 2.4).
-- Students can track the status of their request (`pending`, `approved`, `rejected`).
-- Example: Student submits "Renew for 1 more semester" → Staff reviews and approves → contract extended to 2027-12-31, student notified in-app.
-
-### 2.9 Additions to v1.0 (team decision, 12/09/2026)
-
-Three business rules were kept from the team's earlier Vietnamese specification because dropping them would leave real gaps. Each is small in effort but closes a hole that is hard to patch later.
-
-| # | Addition | Why it is needed | Effort |
-|---|---|---|---|
-| **A1** | **Room gender** (`Room.gender`) | Without it the system happily assigns a male student to a room holding seven female students. Cheapest possible fix: one enum field + one check in the service. | ~0.5 day |
-| **A2** | **Utility meter readings + even split** | Electricity/water are listed as fee types, but with no meter reading there is no way to know the amount. Staff would have to compute by hand outside the system, defeating the purpose. | ~1.5 days |
-| **A3** | **Deposit settlement on checkout** | A deposit is collected at move-in but nothing closes it out at move-out. Without settlement the financial lifecycle of a contract never completes and the books cannot be reconciled. | ~1 day |
-
-These are **in scope for v1**. They are marked inline throughout this document set with the tag *(Added 12/09/2026)*.
+**Mục tiêu chính:**
+1. **Quy trình nộp đơn công khai & Cấp tài khoản qua Email:** Sinh viên nộp đơn online trong đợt mở bằng MSSV mà không cần tạo tài khoản trước. Khi Ban quản lý KTX duyệt trúng tuyển, hệ thống **tự động khởi tạo tài khoản** (`Username = MSSV`, mật khẩu mặc định, `mustChangePassword = true`) và **gửi Email thông báo trúng tuyển** kèm thông tin đăng nhập, hướng dẫn đổi mật khẩu và quét mã VietQR nộp tiền.
+2. **Chống sập đợt cao điểm:** Sử dụng **Redis Caching và Message Queue (BullMQ)** để xếp hàng xử lý hàng nghìn đơn đăng ký nộp đồng thời trong 5–10 phút đầu mà không nghẽn database.
+3. **Quản lý không gian ở 4 cấp chuẩn mực:** **Cơ sở (Campus) → Tòa nhà (Building) → Phòng (Room) → Giường (Bed)**, kiểm soát giới tính phòng và cập nhật trạng thái giường bằng thao tác nguyên tử (atomic update).
+4. **Chu kỳ tài chính thực tế HaUI:** Thu tiền phòng trọn gói theo đợt hợp đồng (8.5 tháng với tân sinh viên cơ sở Hà Nam, 10–12 tháng với sinh viên từ năm 2 trở đi tại CS1/CS2) và tiền cọc tài sản; chốt số và chia đều tiền điện nước hàng tháng.
+5. **Trải nghiệm KTX 4.0 hiện đại:**
+   - **Tương tác trực tiếp:** Tích hợp kênh Chat trực tuyến (Socket.io) giữa sinh viên và cán bộ trực KTX.
+   - **Thông báo đẩy & Bảng tin:** Chuông thông báo In-app và Bảng tin KTX nội bộ.
+   - **Check-in nhận phòng bằng mã QR:** Quét mã QR trên điện thoại sinh viên để bàn giao phòng/giường trong 3 giây.
+   - **Thanh toán VietQR động:** Quét mã QR ngân hàng tự động điền đúng số tiền và nội dung hóa đơn.
+6. **Nghiệp vụ phát sinh thực tế:** Chuyển phòng/giường, báo hỏng sửa chữa cơ sở vật chất, lập biên bản vi phạm nội quy/điểm rèn luyện KTX, quyết toán cọc và cấp xác nhận không nợ KTX khi ra trường.
 
 ---
 
-## 3. Out of Scope (NOT in v1)
+## 2. Phạm vi tính năng cốt lõi (Core Features)
 
-Explicitly excluded — do not build unless this PRD is revised:
+### 2.1. Đợt mở KTX, Nộp đơn công khai & Hàng đợi Queue
+- **Năm học (`AcademicYear`) & Đợt đăng ký (`RegistrationPeriod`):** Mở theo cơ sở và thời gian quy định.
+- **Nộp đơn công khai (Public Application):** Sinh viên truy cập Cổng KTX, nhập MSSV, Họ tên, Ngày sinh, SĐT, Email, Khoa, Lớp, chọn Cơ sở, nguyện vọng loại phòng, tải ảnh minh chứng ưu tiên. **Không cần tạo tài khoản trước**.
+- **Hàng đợi chống nghẽn (Redis BullMQ):** Đơn nộp đợt cao điểm được đẩy vào `queue:dorm-application`, server phản hồi mã vé hàng đợi ngay lập tức (phản hồi trong 5ms). Worker ngầm tuần tự ghi vào MongoDB.
+- **Xác nhận qua Email:** Hệ thống tự động gửi email xác nhận đã tiếp nhận đơn đăng ký thành công.
 
-- ❌ Mobile native app (iOS/Android) — web-responsive only. Student self-service is web-based (see 2.7).
-- ❌ Payment gateways other than **VNPay** and **ZaloPay** (e.g., Momo, Stripe) — only these two are integrated in v1.
-- ❌ Student self-service for editing profile/personal info beyond viewing (e.g., changing name, ID number) — students can view data, submit renewal/checkout requests, and pay invoices, but profile edits still require staff.
-- ❌ Multi-dormitory / multi-tenant support (system manages **one** dormitory organization only).
-- ❌ Automated notifications (email/SMS reminders for payment/contract expiry) — v1 only shows flags in the dashboard.
-  - Consequence: a user who forgets their password cannot self-recover. Staff reset the password manually and hand over a one-time temporary password (SRS `FR-09`).
-- ❌ Maintenance/repair ticketing system for rooms.
-- ❌ Visitor/guest check-in tracking.
-- ❌ Advanced analytics/BI (trend forecasting, predictive occupancy).
-- ❌ Multi-language support (English/Vietnamese UI toggle) — single language UI in v1. **UI text is Vietnamese.**
-- ❌ Document e-signature for contracts (contracts stored as records/files, not digitally signed).
-- ❌ Moving a student between beds/rooms mid-contract ("room transfer"). To change rooms, terminate the contract and create a new one.
-- ❌ Bulk import of students from Excel/CSV. Data is entered by hand or through the seed script.
+### 2.2. Xét duyệt, Tự động cấp tài khoản & Gửi Email trúng tuyển
+- **Cán bộ KTX xét duyệt:** Lọc hồ sơ theo thứ tự ưu tiên chính sách HaUI (`policy_family` > `poor_household` > `remote_area` > tân SV tỉnh xa).
+- **Khi DUYỆT TRÚNG TUYỂN:** Hệ thống tự động kích hoạt chuỗi tác vụ:
+  1. Chỉ định giường trống phù hợp (`Bed.status = 'occupied'`).
+  2. Khởi tạo Hợp đồng lưu trú (`Contract`) và Hóa đơn kỳ đầu (`Invoice`).
+  3. **Tự động khởi tạo Tài khoản người dùng (`User`):**
+     - `email`: Email sinh viên đã nộp.
+     - `role`: `student`.
+     - `mustChangePassword`: `true`.
+  4. **Gửi Email thông báo trúng tuyển KTX tự động:**
+     - Thông báo chúc mừng trúng tuyển kèm thông tin: Cơ sở, Tòa nhà, Phòng, Giường.
+     - Cung cấp tài khoản: Tên đăng nhập (MSSV) và Mật khẩu khởi tạo tạm thời.
+     - Hướng dẫn đăng nhập đổi mật khẩu và hạn chót nộp tiền phòng (trong vòng 7 ngày qua VietQR).
+- **Khi TỪ CHỐI:** Hệ thống gửi Email thông báo kết quả không trúng tuyển kèm lý do cụ thể.
 
----
+### 2.3. Đăng nhập lần đầu & Cưỡng bức đổi mật khẩu (Mandatory Password Change)
+- Sinh viên đăng nhập bằng: MSSV + Mật khẩu tạm thời nhận được trong Email.
+- Hệ thống phát hiện `mustChangePassword == true` → **Cưỡng bức chuyển sang màn hình Đổi mật khẩu mới**. Chặn mọi thao tác khác cho tới khi đổi xong.
+- Đổi mật khẩu thành công → Sinh viên vào Cổng nội trú: xem thông tin phòng/giường, quét mã VietQR đóng tiền và nhận mã QR check-in nhận phòng.
 
-## 4. Main User Flows
+### 2.4. Quản lý cơ cấu không gian ở (Cơ sở → Tòa → Phòng → Giường)
+- **Cơ sở (Campus):** 3 cơ sở đào tạo chính (CS1, CS2, CS3).
+- **Tòa nhà (Building):** Thuộc từng cơ sở (VD: A1, B1...). Không có cờ `isActive`.
+- **Phòng (Room):** Thuộc tòa nhà, có tầng (`floor`), số phòng (`roomNumber`), giới tính phòng (`gender`: `male`/`female`), loại phòng (`roomType`: `four_beds`, `six_beds`, `eight_beds`), trang bị điều hòa (`hasAirConditioner`), đơn giá chuẩn (`pricePerMonth`).
+- **Giường/Chỗ ở (Bed):** Đơn vị xếp sinh viên nhỏ nhất trong phòng (VD: `P302-G01D`, `P302-G01T`). Trạng thái: `available`, `occupied`, `maintenance`.
 
-### 4.1 Flow: Register a New Student into a Room
-1. Staff logs in → navigates to **Students** → **Add New Student**.
-2. Fills student profile → saves.
-3. Navigates to **Room Management** → selects an available bed **in a room matching the student's gender**.
-4. Creates **Residency Registration**, linking student to bed.
-5. System generates a **Contract** (draft) → staff fills terms → sets status `active`.
-6. Bed status auto-updates to `occupied`.
+### 2.5. Hợp đồng lưu trú (Contract Management) & Check-in QR
+- Hợp đồng (`Contract`) gộp duy nhất đại diện cho chỗ ở của sinh viên trong năm học.
+- Thời hạn thực tế: `8.5` tháng (tân sinh viên học cơ sở Hà Nam), hoặc `10–12` tháng (sinh viên năm 2 trở đi tại CS1/CS2).
+- Đóng băng tiền phòng cả năm (`roomPrice = pricePerMonth × totalMonths`) và tiền cọc tài sản (`depositAmount`).
+- **Check-in nhận phòng bằng mã QR:** Sinh viên mở mã QR cá nhân trên web/app khi đến KTX, cán bộ quét mã xác nhận nhận phòng và bàn giao giường trong 3 giây.
+- Lịch sử hợp đồng được lưu trữ vĩnh viễn, phục vụ tra cứu xác nhận không nợ KTX khi sinh viên làm thủ tục tốt nghiệp ra trường.
 
-### 4.2 Flow: Monthly Fee Collection
-1. Staff enters **utility meter readings** for each room for the billing period.
-2. Admin/Staff triggers **Generate Invoices** for the billing cycle (per room/student).
-3. System creates `unpaid` invoices: monthly rent + the student's even share of electricity and water.
-4. Student pays (online or offline) → invoice status updates (`partial`/`paid`).
-5. Overdue invoices (past due date, still `unpaid`) are flagged automatically.
+### 2.6. Quản lý Tài chính, Điện nước & Thanh toán thông minh
+- **Hóa đơn kỳ đầu (`initial`):** Tiền phòng cả năm + Tiền cọc tài sản.
+- **Hóa đơn điện nước định kỳ (`utility`):** Cán bộ nhập chỉ số điện nước theo tháng dạng bảng của cả Tòa/Tầng (`UtilityReading`). Hệ thống tự động tính thành tiền và chia đều cho các sinh viên đang ở trong phòng (`Math.floor` + dồn phần dư cho MSSV nhỏ nhất).
+- **Thanh toán VietQR động & VNPay:** Mỗi hóa đơn tự sinh mã QR ngân hàng nhúng sẵn số tiền và nội dung chuyển khoản chuẩn. Xử lý webhook thanh toán qua Queue chống nghẽn và đảm bảo idempotent.
+- **Hóa đơn quyết toán (`settlement`):** Khi trả phòng, quyết toán cọc: `Tiền hoàn = Tiền cọc - Tiền điện nước nợ - Tiền bồi thường tài sản`. Cán bộ tạo phiếu chi `refund` hoàn tiền cho sinh viên.
 
-### 4.3 Flow: Contract Renewal / Termination
-1. System flags contracts nearing expiry (dashboard alert).
-2. Staff opens contract → chooses **Renew** (extends end date, creates new contract term) or **Terminate**.
-3. On termination: Residency record closed → bed status reverts to `available` → deposit settled.
+### 2.7. Trải nghiệm KTX 4.0: Chat, Thông báo, Nghiệp vụ phát sinh
+- **Kênh Chat hỗ trợ trực tuyến (Socket.io):** Sinh viên chat trực tiếp với Cán bộ KTX trực ca để hỏi thủ tục, báo sự cố khẩn cấp, gửi ảnh hiện trường hỏng hóc.
+- **Thông báo đẩy (In-App Notifications):** Chuông thông báo thời gian thực khi có kết quả duyệt, hóa đơn mới, cập nhật sửa chữa.
+- **Bảng tin KTX (Notice Board):** Cán bộ đăng thông báo chung (lịch cúp điện nước, vệ sinh định kỳ, nội quy).
+- **Đơn xin chuyển phòng/giường (`transfer`):** Sinh viên nộp đơn online → Cán bộ duyệt gán giường mới, giải phóng giường cũ, tự động sinh hóa đơn bù trừ nếu đổi loại phòng khác giá.
+- **Báo hỏng sửa chữa (`repair`):** Sinh viên gửi phiếu báo hỏng thiết bị kèm ảnh hiện trường → Theo dõi tiến độ sửa chữa.
+- **Biên bản vi phạm nội quy (`Violation`):** Ghi nhận vi phạm, trừ điểm rèn luyện KTX làm căn cứ từ chối duyệt đơn năm sau.
+- **Đơn xin trả phòng (`checkout`):** Sinh viên gửi yêu cầu trả phòng → Cán bộ kiểm kê tài sản, quyết toán hoàn cọc, cấp Giấy xác nhận hoàn thành nghĩa vụ KTX.
 
-### 4.4 Flow: Occupancy Check
-1. Staff/Admin opens **Dashboard**.
-2. Views real-time counts: total/occupied/available beds, per building/room.
-3. Drills into a specific room to see current occupant(s) and contract status.
-
-### 4.5 Flow: Student Self-Service — View Room & Pay Online
-1. Student registers/logs in with `student` role.
-2. Views **Available Rooms** (browse-only) or **My Residency** (own current room/bed/contract).
-3. Opens **My Invoices** → selects an unpaid invoice → clicks **Pay now**.
-4. Redirected to VNPay/ZaloPay → completes payment.
-5. Gateway callback confirms transaction → invoice status auto-updates to `paid`; student sees updated status in-app.
-
-### 4.6 Flow: Student Requests Renewal or Checkout
-1. Student opens **My Contract** → clicks **Request Renewal** or **Request Checkout**.
-2. Fills a short reason/form (e.g., desired new end date, move-out date) → submits.
-3. Request enters `pending` status in the **Staff Requests Queue**.
-4. Staff reviews → **Approves** or **Rejects** (with optional note).
-5. On approval: system updates contract/residency/bed status automatically (per 2.8); for checkout it also settles the deposit; student sees final status in-app.
-
----
-
-## 5. Success Criteria (v1)
-
-- Staff can fully manage a student's lifecycle (register → assign bed → contract → payments → checkout) without leaving the system.
-- Students can self-serve: view their room/contract, browse available rooms, pay fees online, and request renewal/checkout without contacting staff directly.
-- Online payments via VNPay/ZaloPay reconcile automatically with invoice status (no manual staff entry needed for online transactions).
-- Occupancy data (available/occupied beds) is always accurate and real-time.
-- **No double-booking of beds is possible** (enforced by system validation).
-- **No mixed-gender room assignment is possible** (enforced by system validation).
-- Utility charges are computed from meter readings, and the sum of the per-student shares always equals the room total exactly.
-- All core entities (Student, Building, Room, Bed, Residency, Contract, FeeType, UtilityReading, Invoice, Payment, Request) are covered by CRUD operations.
+### 2.8. Phân cấp 4 vai trò người dùng (Roles)
+- **`admin` (Quản trị hệ thống):** Quản lý kỹ thuật, tài khoản người dùng, cấu hình năm học, cơ sở đào tạo, bảo mật, sao lưu.
+- **`manager` (Trưởng Ban quản lý KTX):** Phê duyệt đơn giá, mở/đóng đợt đăng ký KTX, duyệt danh sách sinh viên trúng tuyển, duyệt chuyển phòng, duyệt quyết toán cọc, xem toàn bộ báo cáo doanh thu & tỷ lệ lấp đầy.
+- **`staff` (Cán bộ KTX vận hành & hỗ trợ):** Quản lý tòa/phòng/giường, quét mã QR nhận phòng, nhập chỉ số điện nước hàng tháng, tiếp nhận và điều phối sửa chữa báo hỏng, lập biên bản vi phạm, chat hỗ trợ trực tuyến.
+- **`student` (Sinh viên HaUI):** Tra cứu kết quả xét duyệt, đổi mật khẩu, xem phòng/giường, quét VietQR thanh toán, mở mã QR nhận phòng, nộp đơn chuyển phòng/trả phòng, gửi báo hỏng, chat hỗ trợ trực tuyến.
 
 ---
 
-## 6. Change Log
+## 3. Ngoài phạm vi (Out of Scope v1)
 
-| Version | Date | Change |
-|---|---|---|
-| 1.0 | 12/09/2026 | Initial PRD |
-| 1.1 | 12/09/2026 | Added §2.9 — three business rules carried over from the team's earlier specification: room gender (A1), utility meter readings with even split (A2), deposit settlement on checkout (A3). Added explicit out-of-scope entries for room transfer and bulk import. Clarified that no e-mail means staff-driven password reset. |
+- ❌ Ứng dụng di động native (iOS/Android) — Web responsive tối ưu giao diện điện thoại.
+- ❌ Module mua bán nhu yếu phẩm / giỏ hàng đồ dùng cá nhân (`SupplyItem`).
+- ❌ Hệ thống phần cứng quẹt thẻ từ ra vào cổng KTX.
+- ❌ Tách bảng loại phòng riêng (`RoomType`) — cấu hình trực tiếp trên `Room`.
+- ❌ Module sinh viên tốt nghiệp riêng — lưu trong `Student` (`status: 'graduated'`).
