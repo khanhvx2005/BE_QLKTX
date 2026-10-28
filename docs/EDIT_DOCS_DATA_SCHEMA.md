@@ -20,7 +20,8 @@ erDiagram
     STUDENTS ||--o{ CONTRACTS : "ký hợp đồng"
     ROOMS ||--o{ CONTRACTS : "cho thuê chỗ"
     ROOMS ||--o{ UTILITY_READINGS : "chốt số hàng tháng"
-    STUDENTS ||--o{ INVOICES : "thụ hưởng hóa đơn"
+    ROOMS ||--o{ INVOICES : "phát hành hóa đơn điện nước"
+    STUDENTS ||--o{ INVOICES : "thụ hưởng hóa đơn phòng/cọc hoặc đại diện nộp"
     CONTRACTS ||--o{ INVOICES : "sinh hóa đơn phòng/cọc"
     UTILITY_READINGS ||--o{ INVOICES : "sinh hóa đơn điện nước"
     INVOICES ||--o{ PAYMENTS : "thanh toán (tiền mặt / VietQR)"
@@ -98,7 +99,8 @@ erDiagram
     INVOICES {
         ObjectId _id PK
         string invoiceCode UK "INV-2026-xxxx"
-        ObjectId studentId FK
+        ObjectId roomId FK "optional (gắn với phòng nếu là hóa đơn điện nước)"
+        ObjectId studentId FK "optional (nếu là hóa đơn phòng) / đại diện đã nộp"
         ObjectId contractId FK "optional"
         ObjectId utilityReadingId FK "optional"
         string type "room_semester | deposit | utility"
@@ -144,7 +146,7 @@ erDiagram
 | `fullName` | String | required, trim | Họ và tên hiển thị |
 | `role` | String | required, enum: `['admin', 'staff', 'student']` | Vai trò người dùng (đã lược bỏ 'viewer') |
 | `isActive` | Boolean | default: `true` | Cờ khóa / mở khóa tài khoản |
-| `mustChangePassword` | Boolean | default: `false` | Bật `true` khi Admin/Staff reset mật khẩu tạm |
+| `mustChangePassword` | Boolean | default: `false` | Bật `true` khi tự động cấp tài khoản cho SV sau khi duyệt KTX (FR-32) hoặc khi Admin/Staff reset mật khẩu tạm |
 
 *Indexes:*
 - `{ email: 1 }` (unique)
@@ -157,7 +159,7 @@ erDiagram
 | Tên trường | Kiểu dữ liệu | Ràng buộc | Diễn giải |
 |---|---|---|---|
 | `_id` | ObjectId | PK | Khóa chính tự sinh |
-| `userId` | ObjectId | ref: `'User'`, unique, sparse: `true` | Liên kết tài khoản User (null khi chưa tự đăng ký) |
+| `userId` | ObjectId | ref: `'User'`, unique, sparse: `true` | Liên kết tài khoản User (null khi mới nộp đơn, được tự động gán khi duyệt KTX) |
 | `studentCode` | String | required, unique, uppercase, trim | **MSSV HaUI** (ví dụ: `2021601234`), duy nhất |
 | `fullName` | String | required, trim | Họ và tên sinh viên |
 | `gender` | String | required, enum: `['male', 'female']` | **Giới tính** (bắt buộc để xếp phòng nam/nữ) |
@@ -276,19 +278,21 @@ erDiagram
 | Tên trường | Kiểu dữ liệu | Ràng buộc | Diễn giải |
 |---|---|---|---|
 | `_id` | ObjectId | PK | Khóa chính |
-| `invoiceCode` | String | required, unique, uppercase | Mã hóa đơn chuẩn (ví dụ: `INV-2026-0089`) |
-| `studentId` | ObjectId | required, ref: `'Student'` | Sinh viên chịu trách nhiệm thanh toán |
-| `type` | String | required, enum: `['room_semester', 'deposit', 'utility']` | 3 loại phí: Tiền phòng cả kỳ, Tiền cọc, Tiền điện nước tháng |
+| `invoiceCode` | String | required, unique, uppercase | Mã hóa đơn chuẩn (ví dụ: `INV-2026-0089` hoặc `INV-UTIL-302-202610`) |
+| `roomId` | ObjectId | optional, ref: `'Room'` | **Phòng thụ hưởng hóa đơn** (bắt buộc khi `type === 'utility'`) |
+| `studentId` | ObjectId | optional, ref: `'Student'` | Sinh viên thanh toán (bắt buộc với tiền phòng/cọc; đối với điện nước phòng: lưu `payerStudentId` của bạn đại diện đã nộp khi `status === 'paid'`) |
+| `type` | String | required, enum: `['room_semester', 'deposit', 'utility']` | 3 loại phí: Tiền phòng cả kỳ, Tiền cọc, Tiền điện nước phòng |
 | `contractId` | ObjectId | optional, ref: `'Contract'` | Liên kết nếu là tiền phòng hoặc tiền cọc |
 | `utilityReadingId`| ObjectId | optional, ref: `'UtilityReading'` | Liên kết nếu là tiền điện nước tháng |
 | `amount` | Number | required, min: 0 | Số tiền cần thanh toán (VNĐ) |
-| `description` | String | trim | Diễn giải (vd: *"Tiền phòng KTX K1-302 Kỳ 1 (6 tháng)"*) |
+| `description` | String | trim | Diễn giải (vd: *"Tiền phòng KTX K1-302 Kỳ 1 (6 tháng)"* hoặc *"Tiền điện nước P302 - Tháng 10/2026"*) |
 | `dueDate` | Date | required | Hạn chót thanh toán (vd: 7 ngày sau khi phát hành) |
 | `status` | String | required, enum: `['unpaid', 'paid']`, default: `'unpaid'` | Trạng thái hóa đơn |
 | `paidAt` | Date | optional | Ngày thanh toán thành công |
 
 *Indexes:*
 - `{ invoiceCode: 1 }` (unique)
+- `{ roomId: 1, type: 1, status: 1 }`
 - `{ studentId: 1, status: 1 }`
 - `{ type: 1, status: 1 }`
 
@@ -357,26 +361,37 @@ await Room.findOneAndUpdate(
 );
 ```
 
-### 4.3. Tự động chia tiền điện nước và phát hành hóa đơn hàng loạt
+### 4.3. Phát hành 01 hóa đơn điện nước theo Phòng & Bắn thông báo toàn bộ thành viên
 ```javascript
-// 1. Đếm số sinh viên đang ở trong phòng
-const room = await Room.findById(roomId);
-const occupants = room.beds.filter(b => b.status === 'occupied');
+// 1. Lấy thông tin phòng và danh sách sinh viên đang cư trú
+const room = await Room.findById(roomId).populate('beds.studentId');
+const occupants = room.beds.filter(b => b.status === 'occupied' && b.studentId);
 const count = occupants.length || 1; // chống chia cho 0
 
-// 2. Tính số tiền mỗi người
-const total = utilityReading.totalAmount;
-const perStudentAmount = Math.round(total / count);
+// 2. Tính tiền bình quân gợi ý nội bộ
+const totalAmount = utilityReading.totalAmount;
+const perStudentAmount = Math.round(totalAmount / count);
 
-// 3. Tạo hóa đơn cho từng sinh viên
-const invoices = occupants.map(b => ({
-  invoiceCode: generateInvoiceCode(),
-  studentId: b.studentId,
+// 3. Tạo 01 hóa đơn điện nước tổng duy nhất cho cả Phòng (không chia lẻ)
+const roomInvoice = await Invoice.create({
+  invoiceCode: `INV-UTIL-${room.roomNumber}-${utilityReading.monthYear.replace('-', '')}`,
+  roomId: room._id,
   utilityReadingId: utilityReading._id,
   type: 'utility',
-  amount: perStudentAmount,
+  amount: totalAmount,
+  description: `Tiền điện nước Phòng ${room.roomNumber} - Tháng ${utilityReading.monthYear} (${count} người)`,
   dueDate: dayjs().add(7, 'day').toDate(),
   status: 'unpaid'
-}));
-await Invoice.insertMany(invoices);
+});
+
+// 4. Bắn thông báo (Email / In-app Notification) đồng loạt tới tất cả thành viên trong phòng
+for (const bed of occupants) {
+  await sendNotification({
+    toStudentId: bed.studentId._id,
+    toEmail: bed.studentId.email,
+    title: `[KTX HaUI] Thông báo tiền điện nước tháng ${utilityReading.monthYear} - Phòng ${room.roomNumber}`,
+    content: `Tổng tiền điện nước phòng: ${totalAmount.toLocaleString()} VNĐ. Chia bình quân: ${perStudentAmount.toLocaleString()} VNĐ/bạn. Đại diện phòng vui lòng thanh toán trước ngày ${dayjs(roomInvoice.dueDate).format('DD/MM/YYYY')}.`,
+    invoiceCode: roomInvoice.invoiceCode
+  });
+}
 ```
