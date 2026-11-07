@@ -292,3 +292,19 @@ flowchart LR
 | Thu tiền mặt tại KTX | ✅ | ✅ | ❌ |
 | Quét mã VietQR thanh toán (Phòng/Điện nước) | ❌ | ❌ | ✅ (Cá nhân hoặc đại diện phòng) |
 | Xem Dashboard Doanh thu & Báo cáo | ✅ | ✅ (xem lấp đầy) | ❌ |
+
+
+<!-- Đọc tài liệu EDIT DOC DAC TA YEU CAU , hãy khảo sát và phân tích hệ thống web quản lý ký túc xá để tôi làm báo cáo (đọc trong tài liệu EDIT DOC DAC TA YEU CAU vì đây tài liệu mới nhất chứ ko đọc src vì hiện tại doc vs src không khớp) . Yêu cầu báo cáo chương 2 như sau
+1. Mô tả bài toán
+2. Quy trình nghiệp vụ của hệ thống (ví dụ : (quy trình đăng ký lưu trú ....)
+3. Yêu cầu chức năng
+4. Yêu cầu phi chức năng
+5. Tác nhân
+6. Biểu đồ Use Case 
+6.1. Biểu đồ Use Case tổng quát
+6.1.2. Use Case phân rã phía Quản trị viên
+6.1.3. Use Case phân rã phía nhân vien
+6.1.4. Use Case phân rã phía sinh viên
+7. Mô tả chi tiết Use Case 
+Ví dụ 
+7.1. Mô tả use case đăng ký lưu trú .... (Lấy use case có trong docs) -->
