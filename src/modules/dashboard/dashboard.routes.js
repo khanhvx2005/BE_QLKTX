@@ -1,6 +1,6 @@
 /**
- * Router định tuyến cho Module Dashboard (Thống kê & Vận hành).
- * Khai báo các endpoint theo hợp đồng API.md §11.
+ * Router định tuyến cho Module Dashboard (Báo cáo & Thống kê KTX HaUI).
+ * Tuân thủ theo EDIT_DOCS_DAC_TA_YEU_CAU.md §3.8.
  */
 
 const express = require('express');
@@ -9,19 +9,15 @@ const router = express.Router();
 const dashboardController = require('./dashboard.controller');
 const { authenticate, authorize } = require('../../core/middlewares/auth');
 
-// Yêu cầu xác thực toàn bộ route dashboard
 router.use(authenticate);
 
-// Toàn bộ Dashboard chỉ dành cho Admin, Staff, Viewer
-router.use(authorize('admin', 'staff', 'viewer'));
+// 1. Thống kê KPI tổng quan (FR-70 - Cán bộ KTX & Admin)
+router.get('/kpi', authorize('admin', 'staff'), dashboardController.getSummaryKPI);
 
-// 1. Tỷ lệ lấp đầy phòng/giường toàn hệ thống và theo từng tòa
-router.get('/occupancy', dashboardController.getOccupancy);
+// 2. Báo cáo lấp đầy theo từng tòa nhà (FR-71 - Cán bộ KTX & Admin)
+router.get('/occupancy', authorize('admin', 'staff'), dashboardController.getBuildingOccupancy);
 
-// 2. Báo cáo tổng hợp số liệu vận hành (Tổng quan, Công nợ, Doanh thu, Hàng đợi xử lý)
-router.get('/summary', dashboardController.getSummary);
-
-// 3. Biểu đồ doanh thu
-router.get('/revenue', dashboardController.getRevenue);
+// 3. Báo cáo Doanh thu tài chính chi tiết (FR-72 - Chỉ Quản trị viên Admin)
+router.get('/revenue', authorize('admin'), dashboardController.getRevenueReport);
 
 module.exports = router;

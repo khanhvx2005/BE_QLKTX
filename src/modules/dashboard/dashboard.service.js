@@ -1,261 +1,159 @@
 /**
- * Service xử lý thống kê tổng quan cho Module Dashboard.
- * Tuân thủ theo API.md §12 và 16-YEU-CAU-API-BACKEND.md 3.11.
+ * Service xử lý nghiệp vụ cho Module Dashboard (Báo cáo & Thống kê KTX HaUI).
+ * Tuân thủ theo EDIT_DOCS_DAC_TA_YEU_CAU.md §3.8 (FR-70 đến FR-72).
+ * 
+ * ============================================================================
+ * [TỐI ƯU HIỆU NĂNG BẰNG REDIS - DÀNH CHO TEAM 5]:
+ * - Các phép toán tổng hợp (Aggregation) trên MongoDB tốn CPU khi dữ liệu lớn.
+ * - Vì vậy, các báo cáo KPI và Doanh thu được lưu đệm trong Redis với TTL 120 giây.
+ * - Khi có giao dịch thanh toán hoặc duyệt đơn, hệ thống tự động xóa cache.
+ * ============================================================================
  */
 
-const mongoose = require('mongoose');
-const Building = require('../rooms/building.model');
 const Room = require('../rooms/room.model');
-const Bed = require('../rooms/bed.model');
-const Student = require('../students/student.model');
+const Building = require('../rooms/building.model');
 const Contract = require('../contracts/contract.model');
 const Invoice = require('../fees/invoice.model');
 const Payment = require('../payments/payment.model');
-const Request = require('../requests/request.model');
-const Application = require('../residencies/application.model');
+const Student = require('../students/student.model');
+const cache = require('../../core/utils/cache');
 
 /**
- * Thống kê tỷ lệ lấp đầy giường KTX toàn hệ thống và theo từng tòa nhà (API.md §12 GET /api/dashboard/occupancy).
- * Quy tắc: rate = occupied / (total - maintenance) (FR-70, BR-05).
+ * 1. Thống kê KPI tổng quan KTX HaUI (FR-70)
  */
-const getOccupancyStats = async () => {
-  // 1. Thống kê toàn bộ giường hệ thống
-  const bedStats = await Bed.aggregate([
-    {
-      $group: {
-        _id: '$status',
-        count: { $sum: 1 },
-      },
-    },
-  ]);
+const getSummaryKPI = async () => {
+  return cache.wrap(
+    'dashboard:kpi',
+    async () => {
+      // 1. Tổng số giường, đang ở, còn trống
+      const rooms = await Room.find({ status: 'active' });
+      let totalBeds = 0;
+      let occupiedBeds = 0;
+      let availableBeds = 0;
 
-  const statusMap = {
-    occupied: 0,
-    available: 0,
-    maintenance: 0,
-  };
-
-  bedStats.forEach((stat) => {
-    if (statusMap[stat._id] !== undefined) {
-      statusMap[stat._id] = stat.count;
-    }
-  });
-
-  const totalBeds = statusMap.occupied + statusMap.available + statusMap.maintenance;
-  const rentableBeds = totalBeds - statusMap.maintenance;
-  const overallRate = rentableBeds > 0 ? Number((statusMap.occupied / rentableBeds).toFixed(2)) : 0;
-
-  const overall = {
-    total: totalBeds,
-    occupied: statusMap.occupied,
-    available: statusMap.available,
-    maintenance: statusMap.maintenance,
-    rate: overallRate,
-  };
-
-  // 2. Thống kê chi tiết theo từng tòa nhà
-  const buildings = await Building.find({ isActive: true }).sort('code');
-
-  const byBuilding = await Promise.all(
-    buildings.map(async (building) => {
-      const rooms = await Room.find({ buildingId: building._id, status: { $ne: 'inactive' } });
-      const roomIds = rooms.map((r) => r._id);
-
-      const buildingBedStats = await Bed.aggregate([
-        { $match: { roomId: { $in: roomIds } } },
-        {
-          $group: {
-            _id: '$status',
-            count: { $sum: 1 },
-          },
-        },
-      ]);
-
-      const bMap = { occupied: 0, available: 0, maintenance: 0 };
-      buildingBedStats.forEach((stat) => {
-        if (bMap[stat._id] !== undefined) {
-          bMap[stat._id] = stat.count;
+      rooms.forEach((r) => {
+        if (Array.isArray(r.beds)) {
+          r.beds.forEach((b) => {
+            totalBeds += 1;
+            if (b.status === 'occupied') occupiedBeds += 1;
+            if (b.status === 'available') availableBeds += 1;
+          });
         }
       });
 
-      const bTotal = bMap.occupied + bMap.available + bMap.maintenance;
-      const bRentable = bTotal - bMap.maintenance;
-      const bRate = bRentable > 0 ? Number((bMap.occupied / bRentable).toFixed(2)) : 0;
+      const occupancyRate = totalBeds > 0 ? Number(((occupiedBeds / totalBeds) * 100).toFixed(1)) : 0;
+
+      // 2. Tổng sinh viên đang nội trú thực tế
+      const totalActiveResidents = await Contract.countDocuments({ status: 'active' });
+
+      // 3. Số đơn đăng ký mới đang chờ duyệt
+      const pendingApplications = await Contract.countDocuments({ status: 'pending' });
+
+      // 4. Tổng công nợ chưa thu (toàn bộ hóa đơn unpaid)
+      const unpaidInvoices = await Invoice.find({ status: 'unpaid' });
+      const totalUnpaidDebt = unpaidInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
 
       return {
-        buildingId: building._id.toString(),
-        buildingCode: building.code,
-        buildingName: building.name,
-        total: bTotal,
-        occupied: bMap.occupied,
-        available: bMap.available,
-        maintenance: bMap.maintenance,
-        rate: bRate,
+        totalBeds,
+        occupiedBeds,
+        availableBeds,
+        occupancyRate, // %
+        totalActiveResidents,
+        pendingApplications,
+        totalUnpaidDebt, // VNĐ
       };
-    })
+    },
+    120 // Cache 2 phút
   );
-
-  return {
-    overall,
-    byBuilding,
-  };
 };
 
 /**
- * Tổng hợp số liệu tổng quan Dashboard theo đúng định dạng API.md §12 (v1.2.5).
+ * 2. Báo cáo tỷ lệ lấp đầy theo từng Tòa nhà (FR-71)
  */
-const getSummaryStats = async () => {
-  const now = new Date();
-  const thirtyDaysLater = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+const getBuildingOccupancy = async () => {
+  return cache.wrap(
+    'dashboard:occupancy',
+    async () => {
+      const buildings = await Building.find({ isActive: true }).sort('code');
+      const rooms = await Room.find({ status: 'active' });
 
-  const [
-    occupancy,
-    activeStudents,
-    activeContracts,
-    expiringIn30Days,
-    contractsByStatusAgg,
-    unpaidInvoices,
-    pendingRenewals,
-    pendingCheckouts,
-    pendingApplications,
-    supplyOrdersReady,
-  ] = await Promise.all([
-    // 1. Tỷ lệ lấp đầy
-    getOccupancyStats(),
+      return buildings.map((b) => {
+        const buildingRooms = rooms.filter((r) => r.buildingId.toString() === b._id.toString());
+        let totalBeds = 0;
+        let occupiedBeds = 0;
+        let availableBeds = 0;
 
-    // 2. Sinh viên đang ở KTX (có hợp đồng active)
-    Student.countDocuments({ status: 'active' }),
+        buildingRooms.forEach((r) => {
+          if (Array.isArray(r.beds)) {
+            r.beds.forEach((bed) => {
+              totalBeds += 1;
+              if (bed.status === 'occupied') occupiedBeds += 1;
+              if (bed.status === 'available') availableBeds += 1;
+            });
+          }
+        });
 
-    // 3. Hợp đồng đang active
-    Contract.countDocuments({ status: 'active' }),
+        const rate = totalBeds > 0 ? Number(((occupiedBeds / totalBeds) * 100).toFixed(1)) : 0;
 
-    // 4. Hợp đồng sắp hết hạn trong 30 ngày (BR-29)
-    Contract.countDocuments({
-      status: 'active',
-      endDate: { $gte: now, $lte: thirtyDaysLater },
-    }),
-
-    // 5. Thống kê hợp đồng theo trạng thái
-    Contract.aggregate([
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-        },
-      },
-    ]),
-
-    // 6. Toàn bộ hóa đơn chưa thanh toán
-    Invoice.find({
-      status: { $in: ['unpaid', 'partial', 'overdue'] },
-    }).select('totalAmount paidAmount dueDate status'),
-
-    // 7. Yêu cầu gia hạn đang chờ
-    Request.countDocuments({ type: 'renewal', status: 'pending' }),
-
-    // 8. Yêu cầu trả phòng đang chờ
-    Request.countDocuments({ type: 'checkout', status: 'pending' }),
-
-    // 9. Đơn đăng ký đang chờ duyệt
-    Application.countDocuments({ status: 'pending' }),
-
-    // 10. Đơn hàng nhu yếu phẩm sẵn sàng giao
-    mongoose.models.SupplyOrder
-      ? mongoose.models.SupplyOrder.countDocuments({ status: 'ready' })
-      : 0,
-  ]);
-
-  // Tổng hợp hợp đồng theo trạng thái
-  const contractsByStatus = { active: 0, expired: 0, terminated: 0 };
-  contractsByStatusAgg.forEach((item) => {
-    if (contractsByStatus[item._id] !== undefined) {
-      contractsByStatus[item._id] = item.count;
-    }
-  });
-
-  // Tính tổng nợ và nợ quá hạn
-  let totalDebt = 0;
-  let overdueInvoiceCount = 0;
-  let overdueAmount = 0;
-
-  unpaidInvoices.forEach((inv) => {
-    const remaining = inv.totalAmount - (inv.paidAmount || 0);
-    totalDebt += remaining;
-
-    if (new Date(inv.dueDate) < now) {
-      overdueInvoiceCount += 1;
-      overdueAmount += remaining;
-    }
-  });
-
-  return {
-    occupancy: {
-      total: occupancy.overall.total,
-      occupied: occupancy.overall.occupied,
-      available: occupancy.overall.available,
-      maintenance: occupancy.overall.maintenance,
-      rate: occupancy.overall.rate,
+        return {
+          buildingId: b._id,
+          buildingCode: b.code,
+          buildingName: b.name,
+          totalRooms: buildingRooms.length,
+          totalBeds,
+          occupiedBeds,
+          availableBeds,
+          occupancyRate: rate,
+        };
+      });
     },
-    residents: {
-      activeStudents,
-      activeContracts,
-      expiringIn30Days,
-      contractsByStatus,
-    },
-    finance: {
-      totalDebt,
-      overdueInvoiceCount,
-      overdueAmount,
-    },
-    pendingRequests: {
-      renewal: pendingRenewals,
-      checkout: pendingCheckouts,
-    },
-    pendingApplications,
-    supplyOrdersReady,
-  };
+    120 // Cache 2 phút
+  );
 };
 
 /**
- * Doanh thu theo tháng phục vụ vẽ biểu đồ (Chart Analytics).
+ * 3. Thống kê Doanh thu KTX phân tách chi tiết (FR-72)
  */
-const getRevenueChartData = async (months = 6) => {
-  const result = await Payment.aggregate([
-    {
-      $match: {
-        status: 'success',
-        type: { $ne: 'refund' },
-      },
-    },
-    {
-      $group: {
-        _id: {
-          year: { $year: '$paidAt' },
-          month: { $month: '$paidAt' },
-        },
-        totalAmount: { $sum: '$amount' },
-        count: { $sum: 1 },
-      },
-    },
-    {
-      $sort: {
-        '_id.year': 1,
-        '_id.month': 1,
-      },
-    },
-  ]);
+const getRevenueReport = async () => {
+  return cache.wrap(
+    'dashboard:revenue',
+    async () => {
+      // 1. Tổng tiền đã thu từ các hóa đơn đã thanh toán (paid)
+      const paidInvoices = await Invoice.find({ status: 'paid' });
 
-  return result.map((item) => ({
-    period: `${item._id.year}-${String(item._id.month).padStart(2, '0')}`,
-    year: item._id.year,
-    month: item._id.month,
-    revenue: item.totalAmount,
-    transactionCount: item.count,
-  }));
+      let roomSemesterRevenue = 0; // Doanh thu tiền phòng trọn gói
+      let depositRevenue = 0;      // Tiền cọc đang giữ
+      let utilityRevenue = 0;      // Doanh thu tiền điện nước phòng
+
+      paidInvoices.forEach((inv) => {
+        if (inv.type === 'room_semester') roomSemesterRevenue += inv.amount || 0;
+        if (inv.type === 'deposit') depositRevenue += inv.amount || 0;
+        if (inv.type === 'utility') utilityRevenue += inv.amount || 0;
+      });
+
+      // 2. Tổng số tiền cọc đã hoàn trả cho sinh viên khi out KTX (từ payment type = 'refund')
+      const refundPayments = await Payment.find({ type: 'refund', status: 'success' });
+      const totalDepositRefunded = refundPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+      // 3. Doanh thu ròng thực tế
+      const totalCollected = roomSemesterRevenue + depositRevenue + utilityRevenue;
+      const netRevenue = totalCollected - totalDepositRefunded;
+
+      return {
+        roomSemesterRevenue,
+        depositRevenue,
+        utilityRevenue,
+        totalDepositRefunded,
+        totalCollected,
+        netRevenue,
+      };
+    },
+    120 // Cache 2 phút
+  );
 };
 
 module.exports = {
-  getOccupancyStats,
-  getSummaryStats,
-  getRevenueChartData,
+  getSummaryKPI,
+  getBuildingOccupancy,
+  getRevenueReport,
 };

@@ -1,6 +1,18 @@
 /**
  * Khởi tạo ứng dụng Express và cấu hình các middleware toàn cục.
- * Tuân thủ theo ARCHITECTURE.md §3.3 và 07-PHAN-QUYEN-BAO-MAT.md §5.4.
+ * Tuân thủ theo EDIT_DOCS_DAC_TA_YEU_CAU.md (Hệ thống HaUI - DMS v2.0 tinh gọn).
+ * 
+ * ============================================================================
+ * [CẤU TRÚC ĐỊNH TUYẾN 8 MODULES CHUẨN]:
+ * 1. M1: /api/auth & /api/users - Xác thực và Quản lý tài khoản
+ * 2. M2: /api/students - Quản lý Hồ sơ Sinh viên HaUI
+ * 3. M3: /api - Quản lý Tòa nhà & Phòng KTX
+ * 4. M4: /api/contracts - Đăng ký KTX Online & Hợp đồng lưu trú
+ * 5. M5: /api - Chỉ số Điện Nước & Hóa đơn theo Phòng
+ * 6. M6: /api/payments - Thanh toán (Tiền mặt & VietQR) & Hoàn cọc
+ * 7. M7: /api/portal - Cổng dịch vụ Sinh viên KTX
+ * 8. M8: /api/dashboard - Dashboard & Báo cáo Thống kê
+ * ============================================================================
  */
 
 const express = require('express');
@@ -13,11 +25,10 @@ const ApiResponse = require('./core/utils/response');
 
 const app = express();
 
-// 1. Cấu hình CORS theo whitelist từ biến môi trường (07 §5.4)
+// 1. Cấu hình CORS
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Cho phép request từ cùng nguồn (mobile/postman không có origin) hoặc nằm trong danh sách CORS_ORIGIN
       if (!origin || config.cors.origin.includes(origin) || config.cors.origin.includes('*')) {
         callback(null, true);
       } else {
@@ -28,9 +39,9 @@ app.use(
   })
 );
 
-// 2. Parse dữ liệu đầu vào (07 §5.4: giới hạn kích thước 1mb để phòng ngừa tấn công)
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+// 2. Parse dữ liệu đầu vào JSON & URL-encoded
+app.use(express.json({ limit: '10mb' })); // Cho phép tải dữ liệu danh sách import Excel lớn
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // 3. Middleware ghi log request HTTP
 app.use(requestLogger);
@@ -41,64 +52,47 @@ app.get('/api/health', (req, res) => {
     res,
     {
       status: 'healthy',
+      system: 'HaUI - DMS (Dormitory Management System)',
       env: config.env,
       timestamp: new Date().toISOString(),
     },
-    'Hệ thống Quản lý Ký túc xá DMS-KTX đang hoạt động'
+    'Hệ thống Quản lý Ký túc xá HaUI - DMS đang hoạt động ổn định'
   );
 });
 
-// 5. Nơi đăng ký các router của từng module (ARCHITECTURE.md §3.3)
+// 5. Đăng ký các router của 8 module cốt lõi
 
-// Mount module auth (API.md §2)
+// M1: Xác thực & Quản lý Tài khoản
 const authRoutes = require('./modules/auth/auth.routes');
-app.use('/api/auth', authRoutes);
-
-// Mount module users: quản lý tài khoản (API.md §2.1, SCR-81)
 const userRoutes = require('./modules/auth/user.routes');
+app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 
-// Mount module students (API.md §3)
+// M2: Quản lý Hồ sơ Sinh viên HaUI
 const studentRoutes = require('./modules/students/student.routes');
 app.use('/api/students', studentRoutes);
 
-// Mount module rooms: buildings, room-types, rooms, beds (API.md §4)
+// M3: Cơ sở Vật chất: Tòa nhà & Phòng KTX
 const roomRoutes = require('./modules/rooms/room.routes');
 app.use('/api', roomRoutes);
 
-// Mount module applications: đơn đăng ký phòng (API.md §5.1)
-const applicationRoutes = require('./modules/residencies/application.routes');
-app.use('/api/applications', applicationRoutes);
-
-// Mount module residencies: tra cứu lưu trú (API.md §5)
-const residencyRoutes = require('./modules/residencies/residency.routes');
-app.use('/api/residencies', residencyRoutes);
-
-// Mount module contracts (API.md §6)
+// M4: Đăng ký KTX Online & Hợp đồng lưu trú
 const contractRoutes = require('./modules/contracts/contract.routes');
 app.use('/api/contracts', contractRoutes);
 
-// Mount module fees: fee-types, utility-readings, invoices (API.md §7)
+// M5: Chỉ số Điện Nước & Hóa đơn theo Phòng
 const feeRoutes = require('./modules/fees/fee.routes');
 app.use('/api', feeRoutes);
 
-// Mount module payments (API.md §8)
+// M6: Thanh toán (Tiền mặt & VietQR) & Hoàn cọc
 const paymentRoutes = require('./modules/payments/payment.routes');
 app.use('/api/payments', paymentRoutes);
 
-// Mount module requests: yêu cầu gia hạn / trả phòng cho cán bộ (API.md §9)
-const requestRoutes = require('./modules/requests/request.routes');
-app.use('/api/requests', requestRoutes);
-
-// Mount module portal: cổng sinh viên tự phục vụ (API.md §10)
+// M7: Cổng Dịch vụ Sinh viên (Portal)
 const portalRoutes = require('./modules/portal/portal.routes');
 app.use('/api/portal', portalRoutes);
 
-// Mount module supplies: supply-items, supply-orders (API.md §11)
-const supplyRoutes = require('./modules/supplies/supply.routes');
-app.use('/api', supplyRoutes);
-
-// Mount module dashboard (API.md §12)
+// M8: Dashboard & Báo cáo Thống kê
 const dashboardRoutes = require('./modules/dashboard/dashboard.routes');
 app.use('/api/dashboard', dashboardRoutes);
 

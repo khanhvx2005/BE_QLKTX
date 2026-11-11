@@ -1,83 +1,63 @@
 /**
- * Định nghĩa toàn bộ hằng số Enum dùng chung trong hệ thống DMS-KTX.
- * Quy ước: Tất cả giá trị enum đều viết thường (lowercase) theo DATA-SCHEMA.md §1.
+ * Định nghĩa toàn bộ hằng số Enum dùng chung trong hệ thống HaUI - DMS (v2.0-HaUI).
+ * Quy ước: Tất cả giá trị enum đều viết thường (lowercase) theo EDIT_DOCS_DATA_SCHEMA.md.
  */
 
-// Vai trò người dùng (DATA-SCHEMA.md §3.1, 07-PHAN-QUYEN-BAO-MAT.md §1)
-const ROLES = ['admin', 'staff', 'student', 'viewer'];
+// Vai trò người dùng trong hệ thống (RBAC 3 cấp, đã loại bỏ viewer)
+const ROLES = ['admin', 'staff', 'student'];
 
-// Giới tính (dùng cho Student và Room gender check - A1, PRD §2.9)
+// Giới tính (dùng cho Student và kiểm tra xếp phòng nam/nữ BR-01)
 const GENDER = ['male', 'female'];
 
-// Trạng thái sinh viên (DATA-SCHEMA.md §3.2)
+// Trạng thái hồ sơ sinh viên
 const STUDENT_STATUS = ['active', 'inactive'];
 
-// Phân hạng loại phòng (DATA-SCHEMA.md §3.4a, API.md §4)
-const ROOM_TYPE_TIER = ['standard', 'premium'];
+// Trạng thái phòng KTX
+const ROOM_STATUS = ['active', 'maintenance'];
 
-// Trạng thái phòng (DATA-SCHEMA.md §3.4)
-const ROOM_STATUS = ['active', 'maintenance', 'inactive'];
+// Sức chứa phòng KTX (cố định 3 mức tiêu chuẩn)
+const ROOM_CAPACITY = [4, 6, 8];
 
-// Trạng thái giường (DATA-SCHEMA.md §3.5)
+// Trạng thái vị trí giường nhúng trong phòng
 const BED_STATUS = ['available', 'occupied', 'maintenance'];
 
-// Trạng thái đơn đăng ký phòng (DATA-SCHEMA.md §3.6a, API.md §5.1)
-const APPLICATION_STATUS = ['pending', 'approved', 'rejected', 'cancelled'];
+// Thời hạn hợp đồng KTX trọn gói theo kỳ
+const CONTRACT_TERMS = ['6_months', '12_months'];
 
-// Trạng thái bản ghi lưu trú (DATA-SCHEMA.md §3.6, API.md §5)
-const RESIDENCY_STATUS = ['active', 'closed'];
+// Trạng thái hợp đồng KTX (Hợp nhất Đơn đăng ký và Hợp đồng lưu trú)
+const CONTRACT_STATUS = ['pending', 'active', 'expired', 'terminated'];
 
-// Trạng thái hợp đồng (DATA-SCHEMA.md §3.7 v1.2: bỏ pending)
-const CONTRACT_STATUS = ['active', 'expired', 'terminated'];
+// Trạng thái tiền cọc phòng (Hỗ trợ nghiệp vụ Hoàn tiền cọc khi trả phòng)
+const DEPOSIT_STATUS = ['unpaid', 'paid', 'refunded', 'forfeited'];
 
-// Mã danh mục loại phí mẫu (DATA-SCHEMA.md §3.8: lowercase)
-const FEE_TYPE_CODES = ['rent', 'electricity', 'water', 'deposit', 'supplies', 'other'];
+// 3 loại hóa đơn cố định trong hệ thống HaUI DMS (đã bỏ FeeType động)
+const INVOICE_TYPE = ['room_semester', 'deposit', 'utility'];
 
-// Trạng thái hóa đơn (DATA-SCHEMA.md §3.10)
-const INVOICE_STATUS = ['unpaid', 'partial', 'paid', 'overdue', 'cancelled'];
+// Trạng thái hóa đơn
+const INVOICE_STATUS = ['unpaid', 'paid'];
 
-// Loại hóa đơn (DATA-SCHEMA.md §3.10)
-const INVOICE_TYPE = ['deposit', 'monthly', 'settlement', 'supplies', 'other'];
+// Phương thức thanh toán (Hỗ trợ Tiền mặt tại KTX & Quét VietQR)
+const PAYMENT_METHOD = ['cash', 'vietqr', 'bank_transfer'];
 
-// Phương thức thanh toán (DATA-SCHEMA.md §3.11)
-const PAYMENT_METHOD = ['cash', 'bank_transfer', 'vnpay', 'zalopay'];
+// Trạng thái giao dịch thanh toán
+const PAYMENT_STATUS = ['pending', 'success', 'failed'];
 
-// Trạng thái thanh toán (DATA-SCHEMA.md §3.11, API.md §8: bỏ completed)
-const PAYMENT_STATUS = ['pending', 'success', 'failed', 'expired'];
-
-// Loại thanh toán: thu tiền hoặc hoàn cọc (DATA-SCHEMA.md §3.11, §4)
+// Loại giao dịch tài chính: Thu tiền hóa đơn hoặc Hoàn cọc cho sinh viên
 const PAYMENT_TYPE = ['payment', 'refund'];
-
-// Loại yêu cầu của sinh viên (DATA-SCHEMA.md §3.12)
-const REQUEST_TYPE = ['renewal', 'checkout'];
-
-// Trạng thái yêu cầu (DATA-SCHEMA.md §3.12)
-const REQUEST_STATUS = ['pending', 'approved', 'rejected', 'cancelled'];
-
-// Danh mục sản phẩm nhu yếu phẩm (DATA-SCHEMA.md §3.15, API.md §11)
-const SUPPLY_CATEGORY = ['bedding', 'appliances', 'cleaning', 'personal', 'other'];
-
-// Trạng thái đơn hàng nhu yếu phẩm (DATA-SCHEMA.md §3.16, API.md §11)
-const SUPPLY_ORDER_STATUS = ['pending_payment', 'ready', 'delivered', 'cancelled'];
 
 module.exports = {
   ROLES,
   GENDER,
   STUDENT_STATUS,
-  ROOM_TYPE_TIER,
   ROOM_STATUS,
+  ROOM_CAPACITY,
   BED_STATUS,
-  APPLICATION_STATUS,
-  RESIDENCY_STATUS,
+  CONTRACT_TERMS,
   CONTRACT_STATUS,
-  FEE_TYPE_CODES,
-  INVOICE_STATUS,
+  DEPOSIT_STATUS,
   INVOICE_TYPE,
+  INVOICE_STATUS,
   PAYMENT_METHOD,
   PAYMENT_STATUS,
   PAYMENT_TYPE,
-  REQUEST_TYPE,
-  REQUEST_STATUS,
-  SUPPLY_CATEGORY,
-  SUPPLY_ORDER_STATUS,
 };

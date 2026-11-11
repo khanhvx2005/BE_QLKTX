@@ -240,6 +240,12 @@ erDiagram
 | `pricePerMonth`| Number | required | Đơn giá tháng tại thời điểm ký (VND) |
 | `totalRoomFee` | Number | required | **Tiền phòng cả kỳ:** `pricePerMonth * (6 hoặc 12)` |
 | `depositAmount`| Number | required | Tiền cọc phòng (VND) |
+| `depositStatus`| String | enum: `['unpaid', 'paid', 'refunded', 'forfeited']`, default: `'unpaid'` | Trạng thái tiền cọc (đã nộp, hoàn lại khi out KTX hoặc khấu trừ vi phạm) |
+| `depositRefundAmount` | Number | min: 0, default: 0 | Số tiền cọc thực tế hoàn trả cho sinh viên khi trả phòng |
+| `depositDeductionAmount` | Number | min: 0, default: 0 | Số tiền khấu trừ nếu làm hư hại tài sản KTX |
+| `depositRefundReason` | String | optional, trim | Ghi chú lý do hoàn cọc hoặc khấu trừ |
+| `depositRefundedAt` | Date | optional | Thời điểm hoàn tiền cọc |
+| `depositRefundedBy` | ObjectId | ref: `'User'` | Cán bộ xác nhận hoàn tiền cọc |
 | `status` | String | required, enum: `['pending', 'active', 'expired', 'terminated']` | `pending` (chờ duyệt), `active` (đang ở), `terminated` (đã trả phòng) |
 | `rejectionReason`| String | optional | Lý do từ chối nếu đơn bị hủy |
 | `approvedBy` | ObjectId | ref: `'User'` | Cán bộ duyệt hợp đồng |
@@ -278,7 +284,7 @@ erDiagram
 | Tên trường | Kiểu dữ liệu | Ràng buộc | Diễn giải |
 |---|---|---|---|
 | `_id` | ObjectId | PK | Khóa chính |
-| `invoiceCode` | String | required, unique, uppercase | Mã hóa đơn chuẩn (ví dụ: `INV-2026-0089` hoặc `INV-UTIL-302-202610`) |
+| `invoiceCode` | String | required, unique, uppercase | Mã hóa đơn chuẩn (ví dụ: `INV-2026-0089` hoặc `INV-UTIL-K1-302-202610` — bắt buộc có mã tòa nhà `K1` để chống trùng lặp giữa các tòa khi cùng số phòng `302` và cùng tháng) |
 | `roomId` | ObjectId | optional, ref: `'Room'` | **Phòng thụ hưởng hóa đơn** (bắt buộc khi `type === 'utility'`) |
 | `studentId` | ObjectId | optional, ref: `'Student'` | Sinh viên thanh toán (bắt buộc với tiền phòng/cọc; đối với điện nước phòng: lưu `payerStudentId` của bạn đại diện đã nộp khi `status === 'paid'`) |
 | `type` | String | required, enum: `['room_semester', 'deposit', 'utility']` | 3 loại phí: Tiền phòng cả kỳ, Tiền cọc, Tiền điện nước phòng |
@@ -306,7 +312,8 @@ erDiagram
 | `_id` | ObjectId | PK | Khóa chính |
 | `paymentCode` | String | required, unique, uppercase | Mã phiếu thu (ví dụ: `PAY-2026-0045`) |
 | `invoiceId` | ObjectId | required, ref: `'Invoice'` | Thu tiền cho hóa đơn nào |
-| `amount` | Number | required, min: 0 | Số tiền đã thanh toán (VNĐ) |
+| `amount` | Number | required, min: 0 | Số tiền đã thanh toán hoặc hoàn cọc (VNĐ) |
+| `paymentType` | String | enum: `['payment', 'refund']`, default: `'payment'` | Loại giao dịch: `payment` (thu tiền hóa đơn) hoặc `refund` (hoàn cọc khi trả phòng) |
 | `method` | String | required, enum: `['cash', 'vietqr']` | Tiền mặt tại KTX hoặc Quét mã VietQR |
 | `cashCollectedBy`| ObjectId | optional, ref: `'User'` | Cán bộ nhận tiền (nếu là tiền mặt) |
 | `transactionCode`| String | optional, trim | Mã giao dịch ngân hàng / Mã SePay Webhook |

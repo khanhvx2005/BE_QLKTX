@@ -1,6 +1,13 @@
 /**
- * Mongoose Schema cho collection Payments (DATA-SCHEMA.md §3.11, API.md §8).
- * Quản lý lịch sử các giao dịch thu tiền và hoàn cọc.
+ * Mongoose Schema cho collection Payments (EDIT_DOCS_DATA_SCHEMA.md §3.8).
+ * Quản lý lịch sử giao dịch thu tiền hóa đơn và chi hoàn cọc cho sinh viên.
+ * 
+ * ============================================================================
+ * [HỖ TRỢ NGHIỆP VỤ HOÀN TIỀN CỌC]:
+ * - Trường `type`:
+ *   + 'payment': Thu tiền hóa đơn (tiền phòng, cọc, điện nước).
+ *   + 'refund': Chi hoàn trả tiền cọc cho sinh viên khi thanh lý hợp đồng KTX.
+ * ============================================================================
  */
 
 const mongoose = require('mongoose');
@@ -8,32 +15,33 @@ const { PAYMENT_METHOD, PAYMENT_STATUS, PAYMENT_TYPE } = require('../../shared/c
 
 const paymentSchema = new mongoose.Schema(
   {
-    transactionRef: {
+    paymentCode: {
       type: String,
-      required: [true, 'Mã tham chiếu thanh toán là bắt buộc'],
+      required: [true, 'Mã phiếu thanh toán là bắt buộc'],
       unique: true,
+      uppercase: true,
       trim: true,
     },
     invoiceId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Invoice',
-      default: null,
+      default: null, // null nếu là phiếu chi hoàn cọc
     },
     studentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Student',
-      required: [true, 'Sinh viên là bắt buộc'],
+      required: [true, 'Sinh viên thực hiện giao dịch là bắt buộc'],
     },
     amount: {
       type: Number,
-      required: [true, 'Số tiền là bắt buộc'],
-      min: [1, 'Số tiền tối thiểu là 1 VNĐ'],
+      required: [true, 'Số tiền giao dịch là bắt buộc'],
+      min: [0, 'Số tiền giao dịch không được âm'],
     },
     type: {
       type: String,
       enum: {
         values: PAYMENT_TYPE,
-        message: 'Loại thanh toán {VALUE} không hợp lệ (payment hoặc refund)',
+        message: 'Loại thanh toán {VALUE} không hợp lệ, chỉ chấp nhận payment hoặc refund',
       },
       default: 'payment',
     },
@@ -43,21 +51,17 @@ const paymentSchema = new mongoose.Schema(
         values: PAYMENT_METHOD,
         message: 'Phương thức thanh toán {VALUE} không hợp lệ',
       },
-      required: [true, 'Phương thức thanh toán là bắt buộc'],
+      required: [true, 'Phương thức thanh toán là bắt buộc (cash hoặc vietqr)'],
     },
-    bankReference: {
+    cashCollectedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null, // ID của cán bộ thu tiền mặt hoặc chi hoàn cọc
+    },
+    transactionCode: {
       type: String,
       default: null,
-      trim: true,
-      uppercase: true,
-    },
-    gatewayTransactionId: {
-      type: String,
-      default: null,
-    },
-    gatewayRawResponse: {
-      type: mongoose.Schema.Types.Mixed,
-      default: null,
+      trim: true, // Mã giao dịch ngân hàng đối soát
     },
     status: {
       type: String,
@@ -65,21 +69,16 @@ const paymentSchema = new mongoose.Schema(
         values: PAYMENT_STATUS,
         message: 'Trạng thái thanh toán {VALUE} không hợp lệ',
       },
-      default: 'pending',
-    },
-    paidAt: {
-      type: Date,
-      default: null,
+      default: 'success',
     },
     note: {
       type: String,
       default: '',
       trim: true,
     },
-    recordedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
+    paidAt: {
+      type: Date,
+      default: Date.now,
     },
   },
   {
@@ -97,8 +96,8 @@ const paymentSchema = new mongoose.Schema(
 
 paymentSchema.index({ invoiceId: 1 });
 paymentSchema.index({ studentId: 1 });
-paymentSchema.index({ paidAt: 1 });
-paymentSchema.index({ gatewayTransactionId: 1 }, { unique: true, sparse: true });
+paymentSchema.index({ type: 1 });
+paymentSchema.index({ paidAt: -1 });
 
 const Payment = mongoose.model('Payment', paymentSchema);
 

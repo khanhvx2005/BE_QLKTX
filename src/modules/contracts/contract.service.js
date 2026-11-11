@@ -1,31 +1,156 @@
 /**
- * Service xử lý nghiệp vụ cho Module Contracts (Hợp đồng thuê phòng).
- * Tuân thủ theo API.md §6 và DATA-SCHEMA.md §3.7 (Chuẩn v1.2).
+ * Service xử lý nghiệp vụ cho Module Contracts (Hợp đồng & Đăng ký KTX HaUI).
+ * 
+ * ============================================================================
+ * [LUỒNG NGHIỆP VỤ CỐT LÕI - DÀNH CHO TEAM 5]:
+ * 1. Nộp đơn Online (FR-30):
+ *    - Sinh viên chưa có tài khoản truy cập cổng công khai, chọn phòng theo ngăn xếp, nộp đơn.
+ *    - Hệ thống lưu hồ sơ `Student` và tạo `Contract` ở trạng thái 'pending'.
+ * 2. Phê duyệt đơn & Khóa giường nguyên tử (FR-32 & BR-05 & BR-06):
+ *    - Khóa giường bằng lệnh nguyên tử một bước `findOneAndUpdate` (Chống trùng giường 100%).
+ *    - Tự động sinh tài khoản User (TK=MSSV, MK=MSSV, mustChangePassword=true).
+ *    - Tự động phát hành 02 hóa đơn: Tiền cọc & Tiền phòng trọn gói kỳ.
+ * 3. Trả phòng & Thanh lý Hợp đồng - HOÀN TIỀN CỌC (FR-34 & BR-04):
+ *    - Kiểm tra sạch nợ 100% (cả hóa đơn cá nhân lẫn hóa đơn điện nước phòng).
+ *    - Hoàn trả tiền cọc cho sinh viên (khấu trừ đền bù tài sản nếu làm hỏng hóc).
+ *    - Nhả giường về trạng thái 'available' và cập nhật hợp đồng sang 'terminated'.
+ * ============================================================================
  */
 
-const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 const Contract = require('./contract.model');
-const Residency = require('../residencies/residency.model');
-const Bed = require('../rooms/bed.model');
 const Room = require('../rooms/room.model');
 const Student = require('../students/student.model');
+const User = require('../auth/user.model');
 const Invoice = require('../fees/invoice.model');
-const Request = require('../requests/request.model');
+const Payment = require('../payments/payment.model');
 const ApiError = require('../../core/errors/api-error');
+const { generateContractCode, generateInvoiceCode, generateTransactionRef } = require('../../core/utils/code-generator');
+const cache = require('../../core/utils/cache');
+const logger = require('../../core/logger/logger');
 
 /**
- * Tính tổng công nợ chưa trả của sinh viên
+ * 1. Nộp đơn đăng ký KTX Online công khai (FR-30)
+ * Sinh viên chưa có tài khoản có thể nộp đơn trực tiếp
  */
-const calculateStudentDebt = async (studentId) => {
-  const invoices = await Invoice.find({
-    studentId,
-    status: { $in: ['unpaid', 'partial', 'overdue'] },
+const registerOnline = async (data) => {
+  const {
+    studentCode,
+    fullName,
+    gender,
+    phone,
+    email,
+    dob,
+    faculty,
+    className,
+    emergencyContact,
+    roomId,
+    bedNumber,
+    term,
+  } = data;
+
+  // 1. Kiểm tra phòng KTX chỉ định
+  const room = await Room.findById(roomId).populate('buildingId', 'code name');
+  if (!room || room.status !== 'active') {
+    throw new ApiError(404, 'NOT_FOUND', 'Phòng KTX được chọn không tồn tại hoặc đang bảo trì');
+  }
+
+  // 2. Kiểm tra giới tính phòng (BR-01)
+  if (room.gender !== gender) {
+    throw new ApiError(
+      422,
+      'GENDER_MISMATCH',
+      `Phòng này dành cho sinh viên ${room.gender === 'male' ? 'Nam' : 'Nữ'}, không phù hợp với giới tính của bạn`
+    );
+  }
+
+  // 3. Kiểm tra vị trí giường có hợp lệ và còn trống không
+  const targetBed = room.beds.find((b) => b.bedNumber === Number(bedNumber));
+  if (!targetBed) {
+    throw new ApiError(400, 'VALIDATION_ERROR', `Phòng chỉ có tối đa ${room.capacity} giường`);
+  }
+  if (targetBed.status !== 'available') {
+    throw new ApiError(409, 'BED_ALREADY_OCCUPIED', 'Vị trí giường này đã có người đăng ký, vui lòng chọn giường khác');
+  }
+
+  // 4. Tìm kiếm hoặc tạo mới hồ sơ sinh viên
+  let student = await Student.findOne({ studentCode: studentCode.toUpperCase().trim() });
+  if (student) {
+    // Nếu sinh viên đã có hợp đồng đang active hoặc đang chờ duyệt (pending)
+    const existingContract = await Contract.findOne({
+      studentId: student._id,
+      status: { $in: ['pending', 'active'] },
+    });
+    if (existingContract) {
+      if (existingContract.status === 'pending') {
+        throw new ApiError(409, 'DUPLICATE_PENDING_APPLICATION', 'Bạn đã có một đơn đăng ký KTX đang chờ xét duyệt');
+      }
+      throw new ApiError(409, 'STUDENT_HAS_ACTIVE_CONTRACT', 'Bạn hiện đang cư trú tại KTX theo một hợp đồng khác');
+    }
+
+    // Cập nhật thông tin mới nhất nếu có thay đổi
+    student.fullName = fullName;
+    student.gender = gender;
+    student.phone = phone;
+    student.email = email;
+    if (faculty) student.faculty = faculty;
+    if (className) student.className = className;
+    if (dob) student.dob = dob;
+    if (emergencyContact) student.emergencyContact = emergencyContact;
+    await student.save();
+  } else {
+    // Tạo mới hồ sơ sinh viên (chưa gán userId)
+    student = await Student.create({
+      studentCode: studentCode.toUpperCase().trim(),
+      fullName,
+      gender,
+      phone,
+      email,
+      dob,
+      faculty,
+      className,
+      emergencyContact,
+      status: 'active',
+    });
+  }
+
+  // 5. Tính toán tài chính hợp đồng
+  const monthsCount = term === '6_months' ? 6 : 12;
+  const pricePerMonth = room.pricePerMonth || 500000;
+  const totalRoomFee = pricePerMonth * monthsCount;
+  const depositAmount = room.depositAmount || 500000;
+
+  // 6. Tạo hợp đồng ở trạng thái 'pending'
+  const contract = await Contract.create({
+    contractCode: generateContractCode(),
+    studentId: student._id,
+    roomId: room._id,
+    bedNumber: Number(bedNumber),
+    term,
+    pricePerMonth,
+    totalRoomFee,
+    depositAmount,
+    depositStatus: 'unpaid',
+    status: 'pending',
   });
-  return invoices.reduce((sum, inv) => sum + (inv.totalAmount - (inv.paidAmount || 0)), 0);
+
+  return {
+    contractCode: contract.contractCode,
+    studentCode: student.studentCode,
+    fullName: student.fullName,
+    building: room.buildingId.name,
+    roomNumber: room.roomNumber,
+    bedNumber: contract.bedNumber,
+    term: contract.term,
+    totalRoomFee: contract.totalRoomFee,
+    depositAmount: contract.depositAmount,
+    status: contract.status,
+    message: 'Nộp đơn đăng ký thành công! Vui lòng theo dõi email để nhận thông báo duyệt từ Ban Quản lý KTX.',
+  };
 };
 
 /**
- * Lấy danh sách hợp đồng (admin, staff, viewer)
+ * 2. Lấy danh sách hợp đồng / đơn đăng ký (FR-31)
  */
 const getContracts = async (query = {}) => {
   const page = parseInt(query.page, 10) || 1;
@@ -34,349 +159,371 @@ const getContracts = async (query = {}) => {
 
   const filter = {};
   if (query.status) filter.status = query.status;
+  if (query.buildingId) filter.buildingId = query.buildingId;
+  if (query.roomId) filter.roomId = query.roomId;
 
-  const now = new Date();
-
-  // Summary counts bỏ qua bộ lọc filter
-  const allContracts = await Contract.find({});
-  const summary = {
-    all: allContracts.length,
-    active: 0,
-    expiring: 0,
-    expired: 0,
-    terminated: 0,
-  };
-
-  allContracts.forEach((c) => {
-    if (c.status === 'active') {
-      summary.active += 1;
-      const diffDays = Math.ceil((new Date(c.endDate) - now) / (1000 * 60 * 60 * 24));
-      if (diffDays >= 0 && diffDays <= 30) {
-        summary.expiring += 1;
-      }
-    } else if (c.status === 'expired') {
-      summary.expired += 1;
-    } else if (c.status === 'terminated') {
-      summary.terminated += 1;
-    }
-  });
-
-  // Xử lý sắp xếp theo query
-  let sort = { startDate: -1 };
-  if (query.expiringInDays) {
-    const days = parseInt(query.expiringInDays, 10);
-    const targetDate = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-    filter.status = 'active';
-    filter.endDate = { $gte: now, $lte: targetDate };
-    sort = { endDate: 1 };
-  }
-
-  let contracts = await Contract.find(filter)
-    .populate('studentId', 'studentCode fullName phone className')
-    .populate({
-      path: 'bedId',
-      select: 'bedCode roomId',
-      populate: {
-        path: 'roomId',
-        select: 'roomNumber buildingId roomTypeId',
-        populate: [
-          { path: 'buildingId', select: 'name code' },
-          { path: 'roomTypeId', select: 'name tier' },
-        ],
-      },
-    })
-    .sort(sort);
-
-  // Lọc theo buildingId hoặc roomTypeId
-  if (query.buildingId) {
-    contracts = contracts.filter(
-      (c) => c.bedId?.roomId?.buildingId?._id?.toString() === query.buildingId
-    );
-  }
-  if (query.roomTypeId) {
-    contracts = contracts.filter(
-      (c) => c.bedId?.roomId?.roomTypeId?._id?.toString() === query.roomTypeId
-    );
-  }
-
-  // Lọc theo search
+  // Tìm kiếm theo MSSV hoặc họ tên
   if (query.search) {
-    const s = query.search.trim().toLowerCase();
-    contracts = contracts.filter((c) => {
-      const code = c.contractCode?.toLowerCase() || '';
-      const stuCode = c.studentId?.studentCode?.toLowerCase() || '';
-      const stuName = c.studentId?.fullName?.toLowerCase() || '';
-      const bedCode = c.bedId?.bedCode?.toLowerCase() || '';
-      return code.includes(s) || stuCode.includes(s) || stuName.includes(s) || bedCode.includes(s);
-    });
+    const searchRegex = new RegExp(query.search.trim(), 'i');
+    const matchedStudents = await Student.find({
+      $or: [{ studentCode: searchRegex }, { fullName: searchRegex }],
+    }).select('_id');
+    const studentIds = matchedStudents.map((s) => s._id);
+    filter.studentId = { $in: studentIds };
   }
 
-  const total = contracts.length;
-  const paginated = contracts.slice(skip, skip + limit);
+  // Thống kê nhanh số lượng theo trạng thái
+  const [totalAll, pendingCount, activeCount, terminatedCount] = await Promise.all([
+    Contract.countDocuments({}),
+    Contract.countDocuments({ status: 'pending' }),
+    Contract.countDocuments({ status: 'active' }),
+    Contract.countDocuments({ status: 'terminated' }),
+  ]);
 
-  const items = await Promise.all(
-    paginated.map(async (c) => {
-      const studentDebt = c.studentId ? await calculateStudentDebt(c.studentId._id) : 0;
-      const bed = c.bedId;
-      const room = bed?.roomId;
-      const building = room?.buildingId;
-      const roomType = room?.roomTypeId;
-
-      const diffDays = Math.ceil((new Date(c.endDate) - now) / (1000 * 60 * 60 * 24));
-      const isExpiring = c.status === 'active' && diffDays >= 0 && diffDays <= 30;
-
-      return {
-        id: c._id.toString(),
-        contractCode: c.contractCode,
-        studentId: c.studentId?._id?.toString() || null,
-        studentCode: c.studentId?.studentCode || '',
-        studentName: c.studentId?.fullName || '',
-        bedId: bed?._id?.toString() || null,
-        bedCode: bed?.bedCode || '',
-        roomNumber: room?.roomNumber || '',
-        buildingId: building?._id?.toString() || null,
-        buildingCode: building?.code || '',
-        buildingName: building?.name || '',
-        roomTypeId: roomType?._id?.toString() || null,
-        roomTypeName: roomType?.name || '',
-        tier: roomType?.tier || 'standard',
-        startDate: c.startDate,
-        endDate: c.endDate,
-        monthlyPrice: c.monthlyPrice,
-        depositAmount: c.depositAmount,
-        status: c.status,
-        isExpiring,
-        totalDebt: studentDebt,
-      };
-    })
-  );
+  const [total, contracts] = await Promise.all([
+    Contract.countDocuments(filter),
+    Contract.find(filter)
+      .populate('studentId', 'studentCode fullName phone email className faculty')
+      .populate({
+        path: 'roomId',
+        select: 'roomNumber floor capacity gender buildingId',
+        populate: { path: 'buildingId', select: 'code name' },
+      })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+  ]);
 
   return {
-    items,
-    total,
-    page,
-    limit,
-    summary,
+    data: contracts,
+    summary: {
+      all: totalAll,
+      pending: pendingCount,
+      active: activeCount,
+      terminated: terminatedCount,
+    },
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
   };
 };
 
 /**
- * Lấy chi tiết một hợp đồng
+ * 3. Xem chi tiết hợp đồng
  */
-const getContractById = async (id, user = null) => {
+const getContractById = async (id) => {
   const contract = await Contract.findById(id)
     .populate('studentId')
     .populate({
-      path: 'bedId',
-      populate: {
-        path: 'roomId',
-        populate: [
-          { path: 'buildingId' },
-          { path: 'roomTypeId' },
-        ],
-      },
-    });
+      path: 'roomId',
+      populate: { path: 'buildingId', select: 'code name description' },
+    })
+    .populate('approvedBy', 'fullName email')
+    .populate('depositRefundedBy', 'fullName email');
 
   if (!contract) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hợp đồng');
+    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hợp đồng KTX');
   }
 
-  // Bảo mật: sinh viên chỉ được xem hợp đồng của chính mình
-  if (user?.role === 'student' && user?.studentId && contract.studentId?._id.toString() !== user.studentId.toString()) {
-    throw new ApiError(403, 'FORBIDDEN', 'Bạn không có quyền xem hợp đồng của sinh viên khác');
-  }
-
-  const now = new Date();
-  const diffDays = Math.ceil((new Date(contract.endDate) - now) / (1000 * 60 * 60 * 24));
-  const isExpiring = contract.status === 'active' && diffDays >= 0 && diffDays <= 30;
-  const studentDebt = contract.studentId ? await calculateStudentDebt(contract.studentId._id) : 0;
-
-  // Lấy danh sách hóa đơn liên quan đến hợp đồng
-  const invoices = await Invoice.find({ contractId: contract._id }).sort({ createdAt: -1 });
-
-  // Xác định trạng thái tiền cọc
-  let depositStatus = 'pending';
-  const depositInv = invoices.find((inv) => inv.type === 'deposit');
-  if (contract.depositRefunded > 0) {
-    depositStatus = 'refunded';
-  } else if (depositInv && depositInv.status === 'paid') {
-    depositStatus = 'paid';
-  }
-
-  // Lấy các yêu cầu đang chờ xử lý của hợp đồng
-  const pendingRequests = await Request.find({
-    contractId: contract._id,
-    status: 'pending',
-  }).select('type requestedEndDate createdAt');
-
-  // Đếm đơn nhu yếu phẩm chưa thanh toán
-  let unpaidSupplyOrders = 0;
-  if (mongoose.models.SupplyOrder) {
-    unpaidSupplyOrders = await mongoose.models.SupplyOrder.countDocuments({
-      studentId: contract.studentId._id,
-      status: 'pending_payment',
-    });
-  }
-
-  const bed = contract.bedId;
-  const room = bed?.roomId;
-  const building = room?.buildingId;
-  const roomType = room?.roomTypeId;
-
-  return {
-    id: contract._id.toString(),
-    contractCode: contract.contractCode,
-    studentId: contract.studentId?._id?.toString() || null,
-    studentCode: contract.studentId?.studentCode || '',
-    studentName: contract.studentId?.fullName || '',
-    student: contract.studentId ? {
-      id: contract.studentId._id.toString(),
-      studentCode: contract.studentId.studentCode,
-      fullName: contract.studentId.fullName,
-      gender: contract.studentId.gender,
-      className: contract.studentId.className,
-      phone: contract.studentId.phone,
-    } : null,
-    bedId: bed?._id?.toString() || null,
-    bedCode: bed?.bedCode || '',
-    roomNumber: room?.roomNumber || '',
-    buildingId: building?._id?.toString() || null,
-    buildingCode: building?.code || '',
-    buildingName: building?.name || '',
-    roomTypeId: roomType?._id?.toString() || null,
-    roomTypeName: roomType?.name || '',
-    tier: roomType?.tier || 'standard',
-    startDate: contract.startDate,
-    endDate: contract.endDate,
-    monthlyPrice: contract.monthlyPrice,
-    depositAmount: contract.depositAmount,
-    depositRefunded: contract.depositRefunded,
-    depositStatus,
-    terms: contract.terms,
-    status: contract.status,
-    isExpiring,
-    totalDebt: studentDebt,
-    terminatedAt: contract.terminatedAt,
-    terminationReason: contract.terminationReason,
-    invoices: invoices.map((inv) => ({
-      id: inv._id.toString(),
-      invoiceCode: inv.invoiceCode,
-      type: inv.type,
-      billingPeriod: inv.billingPeriod,
-      totalAmount: inv.totalAmount,
-      remainingAmount: inv.totalAmount - (inv.paidAmount || 0),
-      status: inv.status,
-      issueDate: inv.createdAt.toISOString().slice(0, 10),
-    })),
-    pendingRequests: pendingRequests.map((r) => ({
-      id: r._id.toString(),
-      type: r.type,
-      createdAt: r.createdAt,
-      requestedEndDate: r.requestedEndDate,
-    })),
-    unpaidSupplyOrders,
-    history: (contract.history || []).sort((a, b) => new Date(b.at) - new Date(a.at)),
-  };
-};
-
-/**
- * Cập nhật điều khoản hợp đồng (admin, staff)
- */
-const updateContract = async (id, { terms }) => {
-  const contract = await Contract.findById(id);
-  if (!contract) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hợp đồng');
-  }
-
-  contract.terms = terms;
-  await contract.save();
   return contract;
 };
 
 /**
- * Chấm dứt hợp đồng sớm (admin, staff) kèm quyết toán cọc
+ * 4. Phê duyệt đơn đăng ký KTX (FR-32 & BR-05 & BR-06)
+ * 
+ * Luồng xử lý:
+ * 1. Khóa giường bằng Atomic Query: `Room.findOneAndUpdate(...)`
+ *    -> Nếu trả về null: báo lỗi 409 BED_ALREADY_OCCUPIED (Race condition)
+ * 2. Cập nhật hợp đồng sang 'active', tính startDate và endDate (6 hoặc 12 tháng)
+ * 3. Tự động sinh tài khoản User (Tên đăng nhập = MSSV, Mật khẩu = MSSV, mustChangePassword = true)
+ * 4. Tự động phát hành 02 hóa đơn:
+ *    - Hóa đơn cọc (type: 'deposit')
+ *    - Hóa đơn tiền phòng cả kỳ (type: 'room_semester')
+ * 5. Xóa Cache Redis để đồng bộ số giường trống thời gian thực
  */
-const terminateContract = async (id, { reason, terminationDate }) => {
+const approveContract = async (id, actorId) => {
   const contract = await Contract.findById(id);
   if (!contract) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hợp đồng');
+    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy đơn đăng ký');
+  }
+
+  if (contract.status !== 'pending') {
+    throw new ApiError(422, 'CONTRACT_NOT_PENDING', 'Đơn đăng ký này không ở trạng thái chờ duyệt');
+  }
+
+  // 1. Khóa giường nguyên tử (Atomic Query - BR-05)
+  const updatedRoom = await Room.findOneAndUpdate(
+    {
+      _id: contract.roomId,
+      'beds.bedNumber': contract.bedNumber,
+      'beds.status': 'available', // Đảm bảo giường phải đang trống ở tầng CSDL
+    },
+    {
+      $set: {
+        'beds.$.status': 'occupied',
+        'beds.$.studentId': contract.studentId,
+      },
+    },
+    { new: true }
+  );
+
+  if (!updatedRoom) {
+    throw new ApiError(
+      409,
+      'BED_ALREADY_OCCUPIED',
+      'Vị trí giường này vừa được người khác đăng ký hoặc không còn trống!'
+    );
+  }
+
+  // 2. Tính ngày bắt đầu và kết thúc
+  const startDate = new Date();
+  const monthsToAdd = contract.term === '6_months' ? 6 : 12;
+  const endDate = new Date(startDate);
+  endDate.setMonth(endDate.getMonth() + monthsToAdd);
+
+  contract.startDate = startDate;
+  contract.endDate = endDate;
+  contract.status = 'active';
+  contract.approvedBy = actorId;
+  contract.approvedAt = new Date();
+  await contract.save();
+
+  // 3. Tự động cấp tài khoản sinh viên (FR-02 & BR-06)
+  const student = await Student.findById(contract.studentId);
+  if (student && !student.userId) {
+    const defaultPassword = student.studentCode; // Mật khẩu ban đầu = MSSV
+    const passwordHash = await bcrypt.hash(defaultPassword, 10);
+    const userEmail = student.email || `${student.studentCode.toLowerCase()}@st.haui.edu.vn`;
+
+    // Kiểm tra xem User đã tồn tại chưa
+    let user = await User.findOne({ email: userEmail });
+    if (!user) {
+      user = await User.create({
+        email: userEmail,
+        passwordHash,
+        fullName: student.fullName,
+        role: 'student',
+        studentId: student._id,
+        isActive: true,
+        mustChangePassword: true, // Bắt buộc đổi MK lần đầu
+      });
+    }
+
+    student.userId = user._id;
+    await student.save();
+    logger.info(`[Auth] Đã tự động cấp tài khoản User cho sinh viên: ${student.studentCode}`);
+  }
+
+  // 4. Tự động phát hành 02 hóa đơn tài chính (FR-32)
+  const dueDate = new Date();
+  dueDate.setDate(dueDate.getDate() + 7); // Hạn nộp 7 ngày
+
+  // 4.1 Hóa đơn tiền cọc
+  await Invoice.create({
+    invoiceCode: generateInvoiceCode(),
+    contractId: contract._id,
+    studentId: contract.studentId,
+    type: 'deposit',
+    amount: contract.depositAmount,
+    description: `Tiền đặt cọc phòng KTX ${updatedRoom.roomNumber}`,
+    dueDate,
+    status: 'unpaid',
+  });
+
+  // 4.2 Hóa đơn tiền phòng cả kỳ
+  await Invoice.create({
+    invoiceCode: generateInvoiceCode(),
+    contractId: contract._id,
+    studentId: contract.studentId,
+    type: 'room_semester',
+    amount: contract.totalRoomFee,
+    description: `Tiền thuê phòng KTX ${updatedRoom.roomNumber} kỳ ${contract.term === '6_months' ? '6 tháng' : '12 tháng'}`,
+    dueDate,
+    status: 'unpaid',
+  });
+
+  // 5. Xóa Cache Redis liên quan đến phòng và dashboard
+  await Promise.all([
+    cache.delByPattern('rooms:*'),
+    cache.delByPattern('dashboard:*'),
+    cache.delByPattern(`portal:*`),
+  ]);
+
+  return {
+    contract,
+    message: 'Phê duyệt hợp đồng KTX, khóa giường và phát hành hóa đơn thành công!',
+  };
+};
+
+/**
+ * 5. Từ chối đơn đăng ký KTX (FR-33)
+ */
+const rejectContract = async (id, reason, actorId) => {
+  const contract = await Contract.findById(id);
+  if (!contract) {
+    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy đơn đăng ký');
+  }
+
+  if (contract.status !== 'pending') {
+    throw new ApiError(422, 'CONTRACT_NOT_PENDING', 'Đơn đăng ký này không ở trạng thái chờ duyệt');
+  }
+
+  contract.status = 'terminated';
+  contract.rejectionReason = reason;
+  contract.approvedBy = actorId;
+  contract.approvedAt = new Date();
+  await contract.save();
+
+  return {
+    contract,
+    message: 'Đã từ chối đơn đăng ký KTX thành công',
+  };
+};
+
+/**
+ * 6. Trả phòng & Thanh lý Hợp đồng KTX — KÈM HOÀN TIỀN CỌC (FR-34)
+ * 
+ * Luồng logic:
+ * 1. Kiểm tra điều kiện sạch nợ 100% (BR-04):
+ *    - Cá nhân: Không còn hóa đơn tiền phòng/cọc nào unpaid.
+ *    - Phòng: Không còn hóa đơn điện nước chung nào unpaid.
+ * 2. Nghiệp vụ Hoàn tiền cọc (Deposit Refund):
+ *    - Kiểm tra xem sinh viên đã nộp tiền cọc chưa (hóa đơn cọc đã paid).
+ *    - Nếu đã nộp cọc:
+ *      + Tính: refundAmount = depositAmount - deductionAmount (nếu làm hỏng đồ đạc).
+ *      + Cập nhật contract: depositRefundAmount, depositDeductionAmount, depositRefundReason, depositStatus = 'refunded'.
+ *      + Tạo phiếu chi trong collection `payments` (type: 'refund').
+ * 3. Giải phóng giường về trạng thái 'available' (xóa studentId).
+ * 4. Chuyển hợp đồng sang trạng thái 'terminated'.
+ * 5. Xóa Cache Redis để đồng bộ số giường trống thời gian thực.
+ */
+const terminateContract = async (id, data = {}, actorId) => {
+  const contract = await Contract.findById(id);
+  if (!contract) {
+    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hợp đồng KTX');
   }
 
   if (contract.status !== 'active') {
-    throw new ApiError(422, 'CONTRACT_NOT_ACTIVE', 'Chỉ có thể chấm dứt hợp đồng đang hiệu lực');
+    throw new ApiError(422, 'CONTRACT_NOT_ACTIVE', 'Chỉ có thể thanh lý hợp đồng đang hoạt động (active)');
   }
 
-  const now = new Date();
-  const termDate = terminationDate ? new Date(terminationDate) : now;
-
-  // 1. Hủy các đơn nhu yếu phẩm chưa thanh toán (BR-97)
-  let cancelledSupplyOrders = 0;
-  if (mongoose.models.SupplyOrder) {
-    const cancelRes = await mongoose.models.SupplyOrder.updateMany(
-      { studentId: contract.studentId, status: 'pending_payment' },
-      { status: 'cancelled', cancelReason: 'Chấm dứt hợp đồng' }
+  // 1. Kiểm tra điều kiện công nợ của cá nhân sinh viên (BR-04)
+  const unpaidPersonalInvoices = await Invoice.find({
+    studentId: contract.studentId,
+    status: 'unpaid',
+  });
+  if (unpaidPersonalInvoices.length > 0) {
+    throw new ApiError(
+      422,
+      'STUDENT_HAS_DEBT',
+      `Sinh viên còn ${unpaidPersonalInvoices.length} hóa đơn cá nhân chưa thanh toán. Không thể thanh lý hợp đồng!`
     );
-    cancelledSupplyOrders = cancelRes.modifiedCount || 0;
   }
 
-  // 2. Tính công nợ chưa trả (sau khi hủy đơn hàng chưa nhận)
-  const outstandingDebt = await calculateStudentDebt(contract.studentId);
-
-  // 3. Tính tiền cọc hoàn trả và tiền sinh viên còn phải đóng thêm (A3 settlement)
-  const refundAmount = Math.max(0, contract.depositAmount - outstandingDebt);
-  const studentStillOwes = Math.max(0, outstandingDebt - contract.depositAmount);
-
-  // 4. Cập nhật hợp đồng sang terminated
-  contract.status = 'terminated';
-  contract.terminationReason = reason;
-  contract.terminatedAt = termDate;
-  contract.depositRefunded = refundAmount;
-  contract.history.push({
-    at: now,
-    type: 'terminated',
-    title: 'Chấm dứt hợp đồng',
-    description: reason,
+  // 2. Kiểm tra điều kiện công nợ tiền điện nước của cả phòng (BR-04)
+  const unpaidRoomUtilityInvoices = await Invoice.find({
+    roomId: contract.roomId,
+    type: 'utility',
+    status: 'unpaid',
   });
-  await contract.save();
+  if (unpaidRoomUtilityInvoices.length > 0) {
+    throw new ApiError(
+      422,
+      'ROOM_HAS_DEBT',
+      'Phòng KTX hiện còn hóa đơn điện nước chưa thanh toán dứt điểm. Vui lòng thanh toán trước khi trả phòng!'
+    );
+  }
 
-  // 5. Đóng lưu trú Residency
-  await Residency.findByIdAndUpdate(contract.residencyId, {
-    status: 'closed',
-    endDate: termDate,
+  // 3. Xử lý Hoàn trả tiền cọc cho sinh viên (Deposit Refund)
+  // Kiểm tra xem sinh viên đã hoàn thành nghĩa vụ nộp cọc ban đầu chưa
+  const depositInvoice = await Invoice.findOne({
+    contractId: contract._id,
+    type: 'deposit',
   });
 
-  // 6. Giải phóng giường về available
-  await Bed.findByIdAndUpdate(contract.bedId, {
-    status: 'available',
-    note: null,
-  });
+  const isDepositPaid = depositInvoice?.status === 'paid' || contract.depositStatus === 'paid';
 
-  // 7. Hủy các yêu cầu gia hạn/trả phòng đang pending của hợp đồng
-  await Request.updateMany(
-    { contractId: contract._id, status: 'pending' },
-    { status: 'cancelled', reviewNote: 'Hợp đồng đã bị chấm dứt' }
+  let refundAmount = 0;
+  let deductionAmount = 0;
+
+  if (isDepositPaid) {
+    const depositAmount = contract.depositAmount || 500000;
+    deductionAmount = Math.min(depositAmount, Math.max(0, Number(data.deductionAmount || 0)));
+    refundAmount = Math.max(0, depositAmount - deductionAmount);
+
+    contract.depositRefundAmount = refundAmount;
+    contract.depositDeductionAmount = deductionAmount;
+    contract.depositRefundReason = data.deductionReason || data.note || 'Hoàn tiền cọc khi sinh viên out KTX';
+    contract.depositRefundedAt = new Date();
+    contract.depositRefundedBy = actorId;
+    contract.depositStatus = deductionAmount >= depositAmount ? 'forfeited' : 'refunded';
+
+    // Tạo bản ghi giao dịch hoàn tiền trong collection payments (type: 'refund')
+    if (refundAmount > 0) {
+      await Payment.create({
+        paymentCode: generateTransactionRef(),
+        invoiceId: depositInvoice?._id || null,
+        studentId: contract.studentId,
+        amount: refundAmount,
+        type: 'refund',
+        method: data.refundMethod || 'cash',
+        cashCollectedBy: actorId,
+        note: `Hoàn cọc KTX cho sinh viên (Khấu trừ hư hỏng: ${deductionAmount.toLocaleString('vi-VN')} đ)`,
+        paidAt: new Date(),
+        status: 'success',
+      });
+    }
+  } else {
+    // Nếu sinh viên chưa từng nộp cọc
+    contract.depositStatus = 'unpaid';
+  }
+
+  // 4. Giải phóng vị trí giường trong phòng KTX về trạng thái 'available'
+  await Room.findOneAndUpdate(
+    {
+      _id: contract.roomId,
+      'beds.bedNumber': contract.bedNumber,
+    },
+    {
+      $set: {
+        'beds.$.status': 'available',
+        'beds.$.studentId': null,
+      },
+    },
+    { new: true }
   );
 
+  // 5. Chuyển trạng thái hợp đồng sang 'terminated'
+  contract.status = 'terminated';
+  await contract.save();
+
+  // 6. Xóa Cache Redis liên quan
+  await Promise.all([
+    cache.delByPattern('rooms:*'),
+    cache.delByPattern('dashboard:*'),
+    cache.delByPattern(`portal:*`),
+  ]);
+
   return {
-    contract: {
-      id: contract._id.toString(),
-      contractCode: contract.contractCode,
-      status: contract.status,
-      terminatedAt: contract.terminatedAt,
-    },
-    settlement: {
-      outstandingDebt,
+    contract,
+    refundSummary: {
       depositAmount: contract.depositAmount,
+      deductionAmount,
       refundAmount,
-      studentStillOwes,
-      cancelledSupplyOrders,
+      depositStatus: contract.depositStatus,
     },
+    message: 'Thanh lý hợp đồng KTX, hoàn tiền cọc và giải phóng giường thành công!',
   };
 };
 
 module.exports = {
+  registerOnline,
   getContracts,
   getContractById,
-  updateContract,
+  approveContract,
+  rejectContract,
   terminateContract,
 };

@@ -1,77 +1,38 @@
 /**
- * Validation schema cho Module Auth sử dụng Joi.
- * Định dạng lỗi trả về tuân thủ API.md §1.1 và quy tắc BR-81.
+ * Joi Validation cho Module Auth.
  */
 
 const Joi = require('joi');
 
-// BR-81: Mật khẩu tối thiểu 8 ký tự, gồm cả chữ và số
-const passwordRegex = /^(?=.*[a-zA-Z])(?=.*\d).{8,}$/;
-
-const registerSchema = Joi.object({
-  fullName: Joi.string().trim().max(150).required().messages({
-    'string.empty': 'Họ và tên không được để trống',
-    'any.required': 'Họ và tên là bắt buộc',
-  }),
-  email: Joi.string().email({ tlds: false }).trim().required().messages({
-    'string.email': 'Email không đúng định dạng',
-    'string.empty': 'Email không được để trống',
-    'any.required': 'Email là bắt buộc',
-  }),
-  password: Joi.string().pattern(passwordRegex).required().messages({
-    'string.pattern.base': 'Mật khẩu phải có ít nhất 8 ký tự, bao gồm cả chữ và số',
-    'string.empty': 'Mật khẩu không được để trống',
-    'any.required': 'Mật khẩu là bắt buộc',
-  }),
-  studentCode: Joi.string().trim().uppercase().max(20).required().messages({
-    'string.empty': 'Mã số sinh viên không được để trống',
-    'any.required': 'Mã số sinh viên là bắt buộc',
-  }),
-  phone: Joi.string()
-    .pattern(/^0\d{9}$/)
-    .optional()
-    .allow('', null)
-    .messages({
-      'string.pattern.base': 'Số điện thoại phải gồm 10 chữ số và bắt đầu bằng số 0',
-    }),
-  gender: Joi.string().valid('male', 'female').optional().allow('', null).messages({
-    'any.only': 'Giới tính chỉ chấp nhận male hoặc female',
-  }),
-  className: Joi.string().trim().optional().allow('', null),
-  faculty: Joi.string().trim().optional().allow('', null),
-});
-
 const loginSchema = Joi.object({
-  email: Joi.string().email({ tlds: false }).trim().required().messages({
-    'string.email': 'Email không đúng định dạng',
-    'string.empty': 'Email không được để trống',
-    'any.required': 'Email là bắt buộc',
-  }),
+  identifier: Joi.string().trim().optional(),
+  email: Joi.string().trim().optional(),
+  username: Joi.string().trim().optional(),
   password: Joi.string().required().messages({
     'string.empty': 'Mật khẩu không được để trống',
     'any.required': 'Mật khẩu là bắt buộc',
   }),
+}).or('identifier', 'email', 'username').messages({
+  'object.missing': 'Vui lòng cung cấp email hoặc mã sinh viên để đăng nhập',
 });
 
 const changePasswordSchema = Joi.object({
-  oldPassword: Joi.string().required().messages({
+  currentPassword: Joi.string().required().messages({
     'string.empty': 'Mật khẩu hiện tại không được để trống',
     'any.required': 'Mật khẩu hiện tại là bắt buộc',
   }),
-  newPassword: Joi.string()
-    .pattern(passwordRegex)
-    .invalid(Joi.ref('oldPassword'))
-    .required()
-    .messages({
-      'string.pattern.base': 'Mật khẩu mới phải có ít nhất 8 ký tự, bao gồm cả chữ và số',
-      'any.invalid': 'Mật khẩu mới không được trùng với mật khẩu hiện tại',
-      'string.empty': 'Mật khẩu mới không được để trống',
-      'any.required': 'Mật khẩu mới là bắt buộc',
-    }),
+  newPassword: Joi.string().min(6).required().messages({
+    'string.min': 'Mật khẩu mới phải có tối thiểu 6 ký tự',
+    'string.empty': 'Mật khẩu mới không được để trống',
+    'any.required': 'Mật khẩu mới là bắt buộc',
+  }),
+  confirmPassword: Joi.string().valid(Joi.ref('newPassword')).required().messages({
+    'any.only': 'Xác nhận mật khẩu mới không khớp',
+    'any.required': 'Xác nhận mật khẩu là bắt buộc',
+  }),
 });
 
 module.exports = {
-  registerSchema,
   loginSchema,
   changePasswordSchema,
 };

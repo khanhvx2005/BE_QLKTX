@@ -157,10 +157,17 @@ flowchart LR
     1. **Hóa đơn tiền cọc (`deposit`):** Bằng số tiền cọc quy định của phòng.
     2. **Hóa đơn tiền phòng trọn gói (`room_semester`):** Tính bằng $\text{pricePerMonth} \times (6 \text{ hoặc } 12 \text{ tháng})$.
 - **FR-33 (Từ chối / Hủy đơn đăng ký):** Admin/Staff từ chối đơn kèm lý do (hệ thống gửi email thông báo từ chối cho sinh viên, không khóa giường); sinh viên có thể tự tra cứu tiến độ đơn bằng MSSV + Email.
-- **FR-34 (Trả phòng & Thanh lý hợp đồng):** Admin/Staff duyệt trả phòng:
-  - Kiểm tra điều kiện: Sinh viên phải thanh toán hết toàn bộ hóa đơn tiền phòng cá nhân và phòng không còn nợ hóa đơn điện nước tồn đọng.
-  - Giải phóng giường về trạng thái trống (`available`).
-  - Hợp đồng chuyển sang trạng thái `terminated` (chấm dứt).
+- **FR-34 (Trả phòng & Thanh lý hợp đồng KTX — Hoàn tiền cọc cho sinh viên):** Admin/Staff duyệt trả phòng khi hết hạn hoặc xin ra KTX sớm:
+  - **Kiểm tra điều kiện công nợ:** Sinh viên phải thanh toán hết toàn bộ hóa đơn tiền phòng cá nhân và phòng không còn nợ hóa đơn điện nước tồn đọng.
+  - **Quy trình hoàn tiền cọc (`Deposit Refund`):**
+    - Hệ thống kiểm tra trạng thái tiền cọc ban đầu của sinh viên: nếu sinh viên đã hoàn thành đóng tiền cọc (`depositStatus === 'paid'`), sinh viên đủ điều kiện nhận lại tiền cọc khi out KTX.
+    - Cán bộ cùng sinh viên kiểm kê hiện trạng cơ sở vật chất phòng:
+      - Nếu không có hư hỏng: Hoàn trả 100% tiền cọc (`depositRefundAmount = depositAmount`).
+      - Nếu có hư hại tài sản: Cán bộ nhập số tiền khấu trừ đền bù (`depositDeductionAmount`) và ghi chú lý do (`depositRefundReason`). Số tiền hoàn trả thực tế:
+        $$\text{depositRefundAmount} = \text{depositAmount} - \text{depositDeductionAmount}$$
+    - Hệ thống tạo bản ghi phiếu chi hoàn tiền trong `payments` (`paymentType: 'refund'`), cập nhật `depositStatus: 'refunded'` và ghi nhận thời điểm hoàn tiền.
+  - **Giải phóng giường:** Chuyển giường về trạng thái trống (`available`), xóa gắn kết sinh viên.
+  - **Chấm dứt hợp đồng:** Chuyển trạng thái hợp đồng sang `terminated`.
 
 ---
 

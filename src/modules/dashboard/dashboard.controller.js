@@ -1,43 +1,31 @@
 /**
- * Controller cho Module Dashboard (Thống kê & Vận hành).
- * Tiếp nhận request HTTP, gọi dashboard.service và trả về ApiResponse envelope chuẩn.
- * Tuân thủ theo API.md §11.
+ * Controller cho Module Dashboard (Báo cáo & Thống kê KTX HaUI).
  */
 
 const dashboardService = require('./dashboard.service');
 const ApiResponse = require('../../core/utils/response');
 const asyncHandler = require('../../core/utils/async-handler');
 
-/**
- * Tỷ lệ lấp đầy phòng/giường toàn hệ thống và theo từng tòa.
- * GET /api/dashboard/occupancy
- */
-const getOccupancy = asyncHandler(async (req, res) => {
-  const result = await dashboardService.getOccupancyStats();
-  return ApiResponse.success(res, result, 'Lấy thống kê lấp đầy thành công');
+// 1. Thống kê KPI tổng quan (FR-70)
+const getSummaryKPI = asyncHandler(async (req, res) => {
+  const result = await dashboardService.getSummaryKPI();
+  return ApiResponse.success(res, result, 'Lấy thống kê tổng quan KPI thành công');
 });
 
-/**
- * Tổng hợp số liệu vận hành Dashboard (Lấp đầy, Doanh thu, Công nợ, Hàng đợi xử lý).
- * GET /api/dashboard/summary
- */
-const getSummary = asyncHandler(async (req, res) => {
-  const result = await dashboardService.getSummaryStats();
-  return ApiResponse.success(res, result, 'Lấy dữ liệu tổng quan Dashboard thành công');
+// 2. Báo cáo lấp đầy theo tòa nhà (FR-71)
+const getBuildingOccupancy = asyncHandler(async (req, res) => {
+  const result = await dashboardService.getBuildingOccupancy();
+  return ApiResponse.success(res, result, 'Lấy báo cáo tỷ lệ lấp đầy theo tòa nhà thành công');
 });
 
-/**
- * Biểu đồ doanh thu theo thời gian.
- * GET /api/dashboard/revenue
- */
-const getRevenue = asyncHandler(async (req, res) => {
-  const months = parseInt(req.query.months, 10) || 6;
-  const result = await dashboardService.getRevenueChartData(months);
-  return ApiResponse.success(res, result, 'Lấy dữ liệu doanh thu thành công');
+// 3. Báo cáo doanh thu KTX (FR-72 - chỉ Admin)
+const getRevenueReport = asyncHandler(async (req, res) => {
+  const result = await dashboardService.getRevenueReport();
+  return ApiResponse.success(res, result, 'Lấy báo cáo doanh thu tài chính thành công');
 });
 
 module.exports = {
-  getOccupancy,
-  getSummary,
-  getRevenue,
+  getSummaryKPI,
+  getBuildingOccupancy,
+  getRevenueReport,
 };

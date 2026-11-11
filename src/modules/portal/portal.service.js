@@ -1,372 +1,178 @@
 /**
- * Service xử lý nghiệp vụ cho Cổng sinh viên (Student Portal - /api/portal/*).
- * Tuân thủ theo API.md §10 và DATA-SCHEMA.md.
+ * Service xử lý nghiệp vụ cho Cổng dịch vụ Sinh viên KTX HaUI (Student Portal).
+ * Tuân thủ theo EDIT_DOCS_DAC_TA_YEU_CAU.md §3.7 (FR-60 đến FR-63).
+ * 
+ * ============================================================================
+ * [TỐI ƯU HIỆU NĂNG - DÀNH CHO TEAM 5]:
+ * - Thông tin phòng ở và bạn cùng phòng (FR-60) được Cache bằng Redis:
+ *   Key: `portal:my-room:<studentId>`, TTL: 300s.
+ * - Danh sách bạn cùng phòng chỉ hiển thị Họ tên và MSSV để đảm bảo tính riêng tư.
+ * ============================================================================
  */
 
 const Student = require('../students/student.model');
 const Contract = require('../contracts/contract.model');
-const Residency = require('../residencies/residency.model');
-const Bed = require('../rooms/bed.model');
 const Room = require('../rooms/room.model');
 const Invoice = require('../fees/invoice.model');
 const Payment = require('../payments/payment.model');
 const ApiError = require('../../core/errors/api-error');
+const cache = require('../../core/utils/cache');
 
 /**
- * Tính tổng công nợ chưa trả của sinh viên
+ * 1. Hồ sơ & Phòng ở của tôi (FR-60)
+ * Trả về: Thông tin cá nhân, Tòa nhà, Số phòng, Số giường và Danh sách bạn cùng phòng
  */
-const calculateStudentDebt = async (studentId) => {
-  const invoices = await Invoice.find({
-    studentId,
-    status: { $in: ['unpaid', 'partial', 'overdue'] },
-  });
-  return invoices.reduce((sum, inv) => sum + (inv.totalAmount - (inv.paidAmount || 0)), 0);
-};
+const getMyRoom = async (studentId) => {
+  const cacheKey = `portal:my-room:${studentId}`;
 
-/**
- * Lấy hồ sơ cá nhân sinh viên
- * GET /api/portal/profile
- */
-const getProfile = async (studentId) => {
-  const student = await Student.findById(studentId);
-  if (!student) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hồ sơ sinh viên');
-  }
+  return cache.wrap(
+    cacheKey,
+    async () => {
+      const student = await Student.findById(studentId);
+      if (!student) {
+        throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hồ sơ sinh viên');
+      }
 
-  return {
-    id: student._id.toString(),
-    studentCode: student.studentCode,
-    fullName: student.fullName,
-    gender: student.gender,
-    faculty: student.faculty || '',
-    className: student.className || '',
-    phone: student.phone,
-    email: student.email || '',
-    dob: student.dob,
-    emergencyContact: student.emergencyContact || null,
-    status: student.status,
-  };
-};
-
-/**
- * Lấy thông tin chỗ ở hiện tại của sinh viên (v1.2.8)
- * GET /api/portal/my-residence
- */
-const getMyResidence = async (studentId) => {
-  const contract = await Contract.findOne({ studentId, status: 'active' })
-    .populate({
-      path: 'bedId',
-      populate: {
+      // Tìm hợp đồng đang active của sinh viên
+      const contract = await Contract.findOne({
+        studentId,
+        status: 'active',
+      }).populate({
         path: 'roomId',
-        populate: [
-          { path: 'buildingId' },
-          { path: 'roomTypeId' },
-        ],
-      },
-    });
+        populate: { path: 'buildingId', select: 'code name description' },
+      });
 
-  if (!contract) {
-    return { hasResidence: false };
-  }
+      if (!contract || !contract.roomId) {
+        return {
+          hasRoom: false,
+          student: {
+            studentCode: student.studentCode,
+            fullName: student.fullName,
+            gender: student.gender,
+            phone: student.phone,
+            email: student.email,
+            faculty: student.faculty,
+            className: student.className,
+          },
+          message: 'Bạn hiện chưa có phòng ở KTX đang hoạt động',
+        };
+      }
 
-  const bed = contract.bedId;
-  const room = bed?.roomId;
-  const building = room?.buildingId;
-  const roomType = room?.roomTypeId;
+      const room = contract.roomId;
+      const building = room.buildingId;
 
-  // Lấy danh sách bạn cùng phòng (roommates) - không để lộ thông tin nhạy cảm (BR-86)
-  const roomBeds = await Bed.find({ roomId: room?._id });
-  const bedIds = roomBeds.map((b) => b._id).filter((id) => id.toString() !== bed?._id?.toString());
+      // Lấy danh sách bạn cùng phòng (chỉ lấy Họ tên và MSSV để bảo mật riêng tư)
+      const roommateStudentIds = room.beds
+        .filter((b) => b.status === 'occupied' && b.studentId && b.studentId.toString() !== studentId.toString())
+        .map((b) => b.studentId);
 
-  const activeResidencies = await Residency.find({
-    bedId: { $in: bedIds },
-    status: 'active',
-  }).populate('studentId', 'studentCode fullName');
+      const roommates = await Student.find({
+        _id: { $in: roommateStudentIds },
+      }).select('studentCode fullName gender className faculty');
 
-  const roommates = activeResidencies
-    .filter((r) => r.studentId)
-    .map((r) => ({
-      studentCode: r.studentId.studentCode,
-      fullName: r.studentId.fullName,
-    }));
-
-  const includedInRoom = Array.from(
-    new Set([...(roomType?.amenities || []), ...(roomType?.includedSupplies || [])])
+      return {
+        hasRoom: true,
+        student: {
+          studentCode: student.studentCode,
+          fullName: student.fullName,
+          gender: student.gender,
+          phone: student.phone,
+          email: student.email,
+          faculty: student.faculty,
+          className: student.className,
+        },
+        residence: {
+          buildingCode: building.code,
+          buildingName: building.name,
+          roomNumber: room.roomNumber,
+          floor: room.floor,
+          bedNumber: contract.bedNumber,
+          capacity: room.capacity,
+          term: contract.term,
+          startDate: contract.startDate,
+          endDate: contract.endDate,
+        },
+        roommates,
+      };
+    },
+    300 // Cache trong 5 phút
   );
-
-  const totalDebt = await calculateStudentDebt(studentId);
-  const unpaidInvoiceCount = await Invoice.countDocuments({
-    studentId,
-    status: { $in: ['unpaid', 'partial', 'overdue'] },
-  });
-
-  return {
-    hasResidence: true,
-    contract: {
-      id: contract._id.toString(),
-      contractCode: contract.contractCode,
-      status: contract.status,
-      startDate: contract.startDate,
-      endDate: contract.endDate,
-      monthlyPrice: contract.monthlyPrice,
-      depositAmount: contract.depositAmount,
-      bedCode: bed?.bedCode || '',
-      roomId: room?._id?.toString() || '',
-      roomNumber: room?.roomNumber || '',
-      buildingName: building?.name || '',
-      roomTypeId: roomType?._id?.toString() || '',
-      roomTypeName: roomType?.name || '',
-    },
-    roomType: {
-      id: roomType?._id?.toString() || '',
-      name: roomType?.name || '',
-      tier: roomType?.tier || 'standard',
-      pricePerMonth: roomType?.pricePerMonth || 0,
-    },
-    includedInRoom,
-    roommates,
-    debtSummary: {
-      totalDebt,
-      unpaidInvoiceCount,
-    },
-  };
 };
 
 /**
- * Lấy danh sách hợp đồng của sinh viên
- * GET /api/portal/my-contracts
+ * 2. Hợp đồng của tôi (FR-61)
  */
-const getMyContracts = async (studentId) => {
-  const contracts = await Contract.find({ studentId })
+const getMyContract = async (studentId) => {
+  const contract = await Contract.findOne({
+    studentId,
+    status: { $in: ['active', 'pending'] },
+  })
     .populate({
-      path: 'bedId',
-      populate: {
-        path: 'roomId',
-        populate: [
-          { path: 'buildingId' },
-          { path: 'roomTypeId' },
-        ],
-      },
+      path: 'roomId',
+      populate: { path: 'buildingId', select: 'code name' },
     })
-    .sort({ startDate: -1 });
-
-  return contracts.map((c) => {
-    const bed = c.bedId;
-    const room = bed?.roomId;
-    const building = room?.buildingId;
-    const roomType = room?.roomTypeId;
-
-    return {
-      id: c._id.toString(),
-      contractCode: c.contractCode,
-      status: c.status,
-      startDate: c.startDate,
-      endDate: c.endDate,
-      monthlyPrice: c.monthlyPrice,
-      depositAmount: c.depositAmount,
-      bedCode: bed?.bedCode || '',
-      roomNumber: room?.roomNumber || '',
-      buildingName: building?.name || '',
-      roomTypeName: roomType?.name || '',
-      tier: roomType?.tier || 'standard',
-      terminationReason: c.terminationReason || null,
-      terminatedAt: c.terminatedAt || null,
-    };
-  });
-};
-
-/**
- * Lấy danh sách hóa đơn của sinh viên
- * GET /api/portal/my-invoices
- */
-const getMyInvoices = async (studentId, query = {}) => {
-  const filter = { studentId };
-  if (query.status) filter.status = query.status;
-  if (query.type) filter.type = query.type;
-
-  const invoices = await Invoice.find(filter).sort({ createdAt: -1 });
-
-  return invoices.map((inv) => ({
-    id: inv._id.toString(),
-    invoiceCode: inv.invoiceCode,
-    type: inv.type,
-    billingPeriod: inv.billingPeriod,
-    totalAmount: inv.totalAmount,
-    paidAmount: inv.paidAmount || 0,
-    remainingAmount: Math.max(0, inv.totalAmount - (inv.paidAmount || 0)),
-    dueDate: inv.dueDate.toISOString().slice(0, 10),
-    status: inv.status,
-    lineItems: inv.lineItems,
-    createdAt: inv.createdAt,
-  }));
-};
-
-/**
- * Lấy chi tiết hóa đơn của sinh viên
- * GET /api/portal/my-invoices/:id
- */
-const getMyInvoiceById = async (studentId, invoiceId) => {
-  const invoice = await Invoice.findOne({ _id: invoiceId, studentId }).populate(
-    'lineItems.feeTypeId',
-    'name unit defaultAmount'
-  );
-
-  if (!invoice) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn');
-  }
-
-  const payments = await Payment.find({ invoiceId: invoice._id, status: 'success' })
-    .populate('recordedBy', 'fullName')
-    .sort({ paidAt: -1 });
-
-  return {
-    id: invoice._id.toString(),
-    invoiceCode: invoice.invoiceCode,
-    type: invoice.type,
-    billingPeriod: invoice.billingPeriod,
-    totalAmount: invoice.totalAmount,
-    paidAmount: invoice.paidAmount || 0,
-    remainingAmount: Math.max(0, invoice.totalAmount - (invoice.paidAmount || 0)),
-    dueDate: invoice.dueDate.toISOString().slice(0, 10),
-    status: invoice.status,
-    lineItems: invoice.lineItems,
-    payments: payments.map((p) => ({
-      id: p._id.toString(),
-      transactionRef: p.transactionRef,
-      amount: p.amount,
-      type: p.type,
-      method: p.method,
-      status: p.status,
-      paidAt: p.paidAt,
-      recordedByName: p.recordedBy?.fullName || 'Ban quản lý',
-      bankReference: p.bankReference || null,
-      gatewayTransactionId: p.gatewayTransactionId || null,
-      note: p.note || '',
-    })),
-    createdAt: invoice.createdAt,
-  };
-};
-
-/**
- * Lấy lịch sử thanh toán của sinh viên (API.md §10 v1.2.16 - SCR-65)
- * Hỗ trợ lọc theo ?transactionRef= để polling kiểm tra kết quả giao dịch.
- * GET /api/portal/my-payments
- */
-const getMyPayments = async (studentId, query = {}) => {
-  const filter = { studentId };
-  if (query.transactionRef && query.transactionRef.trim()) {
-    filter.transactionRef = query.transactionRef.trim();
-  }
-
-  const payments = await Payment.find(filter)
-    .populate('invoiceId', 'invoiceCode type')
     .sort({ createdAt: -1 });
 
-  return payments.map((p) => ({
-    id: p._id.toString(),
-    transactionRef: p.transactionRef,
-    invoiceId: p.invoiceId?._id ? p.invoiceId._id.toString() : (p.invoiceId ? p.invoiceId.toString() : null),
-    invoiceCode: p.invoiceId?.invoiceCode || '',
-    invoiceType: p.invoiceId?.type || '',
-    amount: p.amount,
-    type: p.type,
-    method: p.method,
-    status: p.status,
-    gatewayTransactionId: p.gatewayTransactionId || null,
-    createdAt: p.createdAt,
-    paidAt: p.paidAt,
-  }));
-};
-
-/**
- * Danh mục mua sắm nhu yếu phẩm cho sinh viên (API.md §10 GET /api/portal/supply-items).
- * Lọc bỏ những món đã được cấp sẵn theo loại phòng.
- */
-const getSupplyItems = async (studentId) => {
-  const contract = await Contract.findOne({ studentId, status: 'active' }).populate({
-    path: 'bedId',
-    populate: {
-      path: 'roomId',
-      populate: { path: 'roomTypeId' },
-    },
-  });
   if (!contract) {
-    throw new ApiError(422, 'CONTRACT_NOT_ACTIVE', 'Bạn chưa có hợp đồng đang hiệu lực');
+    return { hasContract: false, message: 'Bạn chưa có hợp đồng KTX nào' };
   }
 
-  const roomType = contract.bedId?.roomId?.roomTypeId;
-  const SupplyItem = require('../supplies/supply-item.model');
-  const allActiveSupplies = await SupplyItem.find({ isActive: true });
-
-  const roomTypeIdStr = roomType?._id?.toString();
-
-  // Vật phẩm đã cấp kèm phòng
-  const includedItems = allActiveSupplies.filter((item) =>
-    item.includedInRoomTypes && item.includedInRoomTypes.some((rt) => rt.toString() === roomTypeIdStr)
-  );
-
-  // Vật phẩm bán trong shop (chưa được cấp theo phòng)
-  const shopItems = allActiveSupplies.filter((item) =>
-    !item.includedInRoomTypes || !item.includedInRoomTypes.some((rt) => rt.toString() === roomTypeIdStr)
-  );
-
-  const includedInRoom = [
-    ...(roomType?.amenities || []),
-    ...includedItems.map((i) => i.name),
-  ];
-
   return {
-    roomType: {
-      name: roomType?.name || '',
-    },
-    includedInRoom,
-    items: shopItems.map((i) => ({
-      id: i._id.toString(),
-      name: i.name,
-      category: i.category,
-      unit: i.unit,
-      price: i.price,
-      imageUrl: i.imageUrl,
-    })),
+    hasContract: true,
+    contract,
   };
 };
 
 /**
- * Lấy danh sách đơn hàng nhu yếu phẩm của sinh viên
- * GET /api/portal/my-supply-orders
+ * 3. Hóa đơn cá nhân & Hóa đơn Điện nước phòng (FR-62)
+ * Trả về:
+ * - Hóa đơn cá nhân (Tiền phòng kỳ, Tiền cọc)
+ * - Hóa đơn Điện nước của phòng (kèm số tiền chia bình quân mỗi bạn)
  */
-const getMySupplyOrders = async (studentId, query = {}) => {
-  const supplyService = require('../supplies/supply.service');
-  return await supplyService.getStudentSupplyOrders(studentId, query);
+const getMyInvoices = async (studentId) => {
+  // 1. Hóa đơn cá nhân
+  const personalInvoices = await Invoice.find({
+    studentId,
+    type: { $in: ['room_semester', 'deposit'] },
+  }).sort({ createdAt: -1 });
+
+  // 2. Tìm phòng hiện tại của sinh viên
+  const activeContract = await Contract.findOne({
+    studentId,
+    status: 'active',
+  });
+
+  let roomUtilityInvoices = [];
+  if (activeContract && activeContract.roomId) {
+    roomUtilityInvoices = await Invoice.find({
+      roomId: activeContract.roomId,
+      type: 'utility',
+    })
+      .populate('studentId', 'studentCode fullName') // Người đại diện đã nộp (nếu có)
+      .populate('utilityReadingId')
+      .sort({ createdAt: -1 });
+  }
+
+  return {
+    personalInvoices,
+    roomUtilityInvoices,
+  };
 };
 
 /**
- * Đặt mua nhu yếu phẩm
- * POST /api/portal/my-supply-orders
+ * 4. Lịch sử thanh toán & Hoàn cọc (FR-63)
  */
-const placeMySupplyOrder = async (studentId, items) => {
-  const supplyService = require('../supplies/supply.service');
-  return await supplyService.placeSupplyOrder(studentId, items);
-};
+const getMyPayments = async (studentId) => {
+  const payments = await Payment.find({ studentId })
+    .populate('invoiceId', 'invoiceCode type amount description')
+    .sort({ paidAt: -1 });
 
-/**
- * Hủy đơn hàng nhu yếu phẩm khi còn pending_payment
- * PATCH /api/portal/my-supply-orders/:id/cancel
- */
-const cancelMySupplyOrder = async (studentId, orderId) => {
-  const supplyService = require('../supplies/supply.service');
-  return await supplyService.cancelStudentSupplyOrder(orderId, studentId);
+  return payments;
 };
 
 module.exports = {
-  getProfile,
-  getMyResidence,
-  getMyContracts,
+  getMyRoom,
+  getMyContract,
   getMyInvoices,
-  getMyInvoiceById,
   getMyPayments,
-  getSupplyItems,
-  getMySupplyOrders,
-  placeMySupplyOrder,
-  cancelMySupplyOrder,
 };

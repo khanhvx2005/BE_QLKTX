@@ -1,5 +1,5 @@
 /**
- * Utility sinh mã tự động cho các thực thể theo chuẩn tài liệu DATA-SCHEMA.md và API.md.
+ * Utility sinh mã tự động cho các thực thể theo chuẩn HaUI - DMS.
  * Đảm bảo tính duy nhất, format chuẩn và dễ đọc.
  */
 
@@ -13,14 +13,6 @@ const getRandom5Digits = () => {
 };
 
 /**
- * Mã đơn đăng ký: DK-YYYY-XXXXX (e.g. DK-2026-00043)
- */
-const generateApplicationCode = () => {
-  const year = new Date().getFullYear();
-  return `DK-${year}-${getRandom5Digits()}`;
-};
-
-/**
  * Mã hợp đồng: HD-YYYY-XXXXX (e.g. HD-2026-00087)
  */
 const generateContractCode = () => {
@@ -29,7 +21,7 @@ const generateContractCode = () => {
 };
 
 /**
- * Mã hóa đơn: INV-YYYYMM-XXXXX (e.g. INV-202609-00101)
+ * Mã hóa đơn cá nhân (Tiền phòng, Tiền cọc): INV-YYYYMM-XXXXX (e.g. INV-202610-00101)
  */
 const generateInvoiceCode = (date = new Date()) => {
   const year = date.getFullYear();
@@ -38,23 +30,24 @@ const generateInvoiceCode = (date = new Date()) => {
 };
 
 /**
- * Mã yêu cầu tự phục vụ: YC-YYYY-XXXXX (e.g. YC-2026-00005)
+ * Mã hóa đơn Điện Nước theo Phòng:
+ * ============================================================================
+ * [QUAN TRỌNG - KHẮC PHỤC LỖI TRÙNG MÃ GIỮA CÁC TÒA NHÀ]:
+ * - Công thức: INV-UTIL-<MÃ TÒA>-<SỐ PHÒNG>-<YYYYMM>
+ * - Ví dụ: Tòa K1, phòng 302, tháng 10/2026 -> INV-UTIL-K1-302-202610
+ * - Tòa K2, phòng 302, tháng 10/2026 -> INV-UTIL-K2-302-202610
+ * -> Nhờ có <MÃ TÒA>, không bao giờ bị trùng lặp mã khi chốt số cùng lúc!
+ * ============================================================================
  */
-const generateRequestCode = () => {
-  const year = new Date().getFullYear();
-  return `YC-${year}-${getRandom5Digits()}`;
+const generateUtilityInvoiceCode = (buildingCode, roomNumber, monthYear) => {
+  const cleanBuilding = String(buildingCode || 'KTX').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+  const cleanRoom = String(roomNumber || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+  const cleanMonth = String(monthYear || '').replace(/[^0-9]/g, '');
+  return `INV-UTIL-${cleanBuilding}-${cleanRoom}-${cleanMonth}`;
 };
 
 /**
- * Mã đơn hàng nhu yếu phẩm: DH-YYYY-XXXXX (e.g. DH-2026-00012)
- */
-const generateOrderCode = () => {
-  const year = new Date().getFullYear();
-  return `DH-${year}-${getRandom5Digits()}`;
-};
-
-/**
- * Mã tham chiếu thanh toán: PAYYYYYMMDDXXXXXX (e.g. PAY20261108DEF456)
+ * Mã phiếu thu / giao dịch thanh toán: PAYYYYYMMDDXXXXXX (e.g. PAY20261110DEF456)
  */
 const generateTransactionRef = () => {
   const now = new Date();
@@ -64,10 +57,8 @@ const generateTransactionRef = () => {
 };
 
 module.exports = {
-  generateApplicationCode,
   generateContractCode,
   generateInvoiceCode,
-  generateRequestCode,
-  generateOrderCode,
+  generateUtilityInvoiceCode,
   generateTransactionRef,
 };

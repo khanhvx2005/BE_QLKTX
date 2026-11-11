@@ -1,42 +1,21 @@
 /**
- * Mongoose Schema cho collection Contracts.
- * Quản lý thông tin hợp đồng thuê phòng KTX theo DATA-SCHEMA.md §3.7 và API.md §6.
+ * Mongoose Schema cho collection Contracts (EDIT_DOCS_DATA_SCHEMA.md §3.5).
+ * 
+ * ============================================================================
+ * [KIẾN TRÚC TINH GỌN HaUI DMS - DÀNH CHO TEAM 5]:
+ * - Hợp nhất toàn diện: Đơn đăng ký Online (Application) và Hợp đồng lưu trú (Contract).
+ *   + Khi sinh viên nộp đơn online: status = 'pending'.
+ *   + Khi cán bộ duyệt đơn: status = 'active' (đồng thời khóa giường nguyên tử).
+ *   + Khi hết hạn hoặc trả phòng: status = 'terminated'.
+ * - Quản lý trọn gói theo Kỳ (6 tháng hoặc 12 tháng).
+ * - [ĐẶC BIỆT - NGHIỆP VỤ HOÀN TIỀN CỌC]:
+ *   + Tích hợp đầy đủ các trường quản lý hoàn cọc khi trả phòng: `depositStatus`,
+ *     `depositRefundAmount`, `depositDeductionAmount`, `depositRefundReason`.
+ * ============================================================================
  */
 
 const mongoose = require('mongoose');
-const { CONTRACT_STATUS } = require('../../shared/constants/enums');
-
-const contractHistorySchema = new mongoose.Schema(
-  {
-    at: {
-      type: Date,
-      default: Date.now,
-    },
-    type: {
-      type: String,
-      enum: [
-        'application_submitted',
-        'application_approved',
-        'request_renewal',
-        'request_checkout',
-        'terminated',
-        'expired',
-      ],
-      required: true,
-    },
-    title: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    description: {
-      type: String,
-      default: '',
-      trim: true,
-    },
-  },
-  { _id: false }
-);
+const { CONTRACT_TERMS, CONTRACT_STATUS, DEPOSIT_STATUS } = require('../../shared/constants/enums');
 
 const contractSchema = new mongoose.Schema(
   {
@@ -47,68 +26,114 @@ const contractSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
-    residencyId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Residency',
-      required: [true, 'Bản ghi lưu trú là bắt buộc'],
-      unique: true,
-    },
     studentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Student',
       required: [true, 'Sinh viên là bắt buộc'],
     },
-    bedId: {
+    roomId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Bed',
-      required: [true, 'Giường là bắt buộc'],
+      ref: 'Room',
+      required: [true, 'Phòng KTX là bắt buộc'],
+    },
+    bedNumber: {
+      type: Number,
+      required: [true, 'Vị trí giường trong phòng là bắt buộc'],
+      min: [1, 'Số thứ tự giường tối thiểu là 1'],
+    },
+    term: {
+      type: String,
+      enum: {
+        values: CONTRACT_TERMS,
+        message: 'Kỳ hạn hợp đồng {VALUE} không hợp lệ, chỉ chấp nhận 6_months hoặc 12_months',
+      },
+      required: [true, 'Kỳ hạn hợp đồng là bắt buộc (6_months hoặc 12_months)'],
     },
     startDate: {
       type: Date,
-      required: [true, 'Ngày bắt đầu hợp đồng là bắt buộc'],
+      default: Date.now,
     },
     endDate: {
       type: Date,
-      required: [true, 'Ngày kết thúc hợp đồng là bắt buộc'],
+      default: null,
     },
-    monthlyPrice: {
+    pricePerMonth: {
       type: Number,
-      required: [true, 'Đơn giá thuê phòng theo tháng là bắt buộc'],
+      required: [true, 'Đơn giá thuê tháng là bắt buộc'],
       min: [0, 'Đơn giá thuê không được âm'],
+    },
+    totalRoomFee: {
+      type: Number,
+      required: [true, 'Tổng tiền phòng cả kỳ là bắt buộc'],
+      min: [0, 'Tổng tiền phòng không được âm'],
     },
     depositAmount: {
       type: Number,
-      default: 0,
+      required: [true, 'Tiền cọc phòng là bắt buộc'],
       min: [0, 'Tiền cọc không được âm'],
+      default: 500000,
     },
-    depositRefunded: {
+
+    // ========================================================================
+    // QUẢN LÝ TIỀN CỌC & HOÀN CỌC KHI OUT KTX (THEO YÊU CẦU ĐẶC TẢ MỚI)
+    // ========================================================================
+    depositStatus: {
+      type: String,
+      enum: {
+        values: DEPOSIT_STATUS,
+        message: 'Trạng thái tiền cọc {VALUE} không hợp lệ',
+      },
+      default: 'unpaid', // unpaid -> paid -> refunded (hoặc forfeited)
+    },
+    depositRefundAmount: {
       type: Number,
       default: 0,
-      min: [0, 'Tiền cọc hoàn trả không được âm'],
+      min: [0, 'Số tiền cọc hoàn trả không được âm'],
     },
-    terms: {
+    depositDeductionAmount: {
+      type: Number,
+      default: 0,
+      min: [0, 'Số tiền khấu trừ không được âm'],
+    },
+    depositRefundReason: {
       type: String,
       default: '',
+      trim: true,
     },
+    depositRefundedAt: {
+      type: Date,
+      default: null,
+    },
+    depositRefundedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+
+    // ========================================================================
+    // TRẠNG THÁI HỢP ĐỒNG & PHÊ DUYỆT
+    // ========================================================================
     status: {
       type: String,
       enum: {
         values: CONTRACT_STATUS,
         message: 'Trạng thái hợp đồng {VALUE} không hợp lệ',
       },
-      default: 'active',
+      default: 'pending', // pending -> active -> expired -> terminated
     },
-    terminationReason: {
+    rejectionReason: {
       type: String,
+      default: '',
+      trim: true,
+    },
+    approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
       default: null,
     },
-    terminatedAt: {
+    approvedAt: {
       type: Date,
       default: null,
-    },
-    history: {
-      type: [contractHistorySchema],
-      default: [],
     },
   },
   {
@@ -125,7 +150,7 @@ const contractSchema = new mongoose.Schema(
 );
 
 contractSchema.index({ studentId: 1, status: 1 });
-contractSchema.index({ endDate: 1 });
+contractSchema.index({ roomId: 1, bedNumber: 1, status: 1 });
 
 const Contract = mongoose.model('Contract', contractSchema);
 

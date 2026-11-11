@@ -11,11 +11,7 @@
     "start": "node src/server.js",
     "db:test": "node src/scripts/test-db.js",
     "seed": "node src/scripts/seed.js",
-    "test:phase5": "node src/scripts/test-phase5-api.js",
-    "test:phase6": "node src/scripts/test-phase6-api.js",
-    "test:phase7": "node src/scripts/test-phase7-api.js",
-    "job": "node src/core/cron/scheduler.js run-now",
-    "test": "node src/scripts/test-all.js"
+    "test": "node src/scripts/test-haui-dms.js"
   },
   "author": "",
   "license": "ISC",
@@ -24,6 +20,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "ioredis": "^6.0.0",
     "joi": "^18.2.9",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.10.0",

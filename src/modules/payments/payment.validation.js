@@ -1,78 +1,46 @@
 /**
- * Validation schema cho Module Payments sử dụng Joi.
- * Tuân thủ theo API.md §8 và DATA-SCHEMA.md §3.11.
+ * Joi Validation cho Module Payments (Thanh toán & Hoàn cọc KTX HaUI).
  */
 
 const Joi = require('joi');
+const { PAYMENT_METHOD, PAYMENT_TYPE } = require('../../shared/constants/enums');
 
-const recordOfflinePaymentSchema = Joi.object({
+// 1. Thu tiền mặt tại KTX (FR-52)
+const payCashSchema = Joi.object({
   invoiceId: Joi.string().hex().length(24).required().messages({
-    'string.hex': 'ID hóa đơn không hợp lệ (phải là ObjectId)',
-    'any.required': 'Hóa đơn là bắt buộc',
+    'any.required': 'Mã hóa đơn là bắt buộc',
   }),
-  amount: Joi.number().integer().min(1).required().messages({
-    'number.min': 'Số tiền thanh toán tối thiểu là 1 VNĐ',
-    'any.required': 'Số tiền thanh toán là bắt buộc',
+  studentId: Joi.string().hex().length(24).optional().messages({
+    'string.hex': 'Mã sinh viên không đúng định dạng ObjectId',
   }),
-  method: Joi.string().valid('cash', 'bank_transfer').default('cash').messages({
-    'any.only': 'Phương thức thanh toán phải là cash hoặc bank_transfer',
-  }),
-  paidAt: Joi.date().iso().optional().messages({
-    'date.format': 'Ngày thanh toán phải có định dạng chuẩn ISO',
-  }),
-  bankReference: Joi.when('method', {
-    is: 'bank_transfer',
-    then: Joi.string().trim().required().messages({
-      'any.required': 'Mã tham chiếu ngân hàng là bắt buộc khi chuyển khoản',
-      'string.empty': 'Mã tham chiếu ngân hàng không được để trống',
-    }),
-    otherwise: Joi.string().trim().optional().allow('', null),
-  }),
-  note: Joi.string().trim().optional().allow(''),
+  note: Joi.string().trim().allow('', null),
 });
 
-const onlineCheckoutSchema = Joi.object({
+// 2. Xác nhận chuyển khoản ngân hàng qua VietQR (FR-54)
+const confirmBankTransferSchema = Joi.object({
   invoiceId: Joi.string().hex().length(24).required().messages({
-    'string.hex': 'ID hóa đơn không hợp lệ',
-    'any.required': 'Hóa đơn cần thanh toán là bắt buộc',
+    'any.required': 'Mã hóa đơn là bắt buộc',
   }),
-  gateway: Joi.string().valid('vnpay', 'zalopay').default('vnpay').messages({
-    'any.only': 'Cổng thanh toán hỗ trợ vnpay hoặc zalopay',
-  }),
-  amount: Joi.number().integer().min(1).optional().messages({
-    'number.min': 'Số tiền thanh toán tối thiểu là 1 VNĐ',
-  }),
-});
-
-const verifyVNPaySchema = Joi.object({
-  vnp_TxnRef: Joi.string().required().messages({
-    'any.required': 'Mã giao dịch vnp_TxnRef là bắt buộc',
-  }),
-  vnp_Amount: Joi.string().optional(),
-  vnp_ResponseCode: Joi.string().required().messages({
-    'any.required': 'Mã phản hồi vnp_ResponseCode là bắt buộc',
-  }),
-  vnp_SecureHash: Joi.string().required().messages({
-    'any.required': 'Chữ ký vnp_SecureHash là bắt buộc',
-  }),
-}).unknown(true); // Cho phép các tham số khác do VNPay gửi kèm
-
-const queryPaymentSchema = Joi.object({
-  search: Joi.string().trim().optional().allow(''),
-  invoiceId: Joi.string().hex().length(24).optional(),
   studentId: Joi.string().hex().length(24).optional(),
-  method: Joi.string().valid('cash', 'bank_transfer', 'vnpay', 'zalopay').optional(),
-  status: Joi.string().valid('pending', 'success', 'failed', 'expired').optional(),
-  type: Joi.string().valid('payment', 'refund').optional(),
-  from: Joi.string().optional(),
-  to: Joi.string().optional(),
+  transactionCode: Joi.string().trim().required().messages({
+    'string.empty': 'Mã giao dịch ngân hàng đối soát không được để trống',
+    'any.required': 'Mã giao dịch ngân hàng là bắt buộc',
+  }),
+  note: Joi.string().trim().allow('', null),
+});
+
+// 3. Query danh sách giao dịch
+const queryPaymentSchema = Joi.object({
+  studentId: Joi.string().hex().length(24).optional(),
+  invoiceId: Joi.string().hex().length(24).optional(),
+  type: Joi.string().valid(...PAYMENT_TYPE).optional(),
+  method: Joi.string().valid(...PAYMENT_METHOD).optional(),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
 });
 
 module.exports = {
-  recordOfflinePaymentSchema,
-  onlineCheckoutSchema,
-  verifyVNPaySchema,
+  payCashSchema,
+  confirmBankTransferSchema,
   queryPaymentSchema,
 };

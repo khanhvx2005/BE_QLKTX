@@ -1,7 +1,6 @@
 /**
- * Controller cho Module Rooms (Tòa nhà, Loại phòng, Phòng, Giường).
- * Tiếp nhận request HTTP, gọi room.service và trả về ApiResponse envelope.
- * Tuân thủ theo API.md §4.
+ * Controller cho Module Rooms (Tòa nhà & Phòng KTX HaUI).
+ * Tiếp nhận request HTTP, gọi room.service và trả về ApiResponse.
  */
 
 const roomService = require('./room.service');
@@ -28,26 +27,7 @@ const updateBuilding = asyncHandler(async (req, res) => {
 });
 
 // ==========================================
-// 2. Loại phòng (Room Types)
-// ==========================================
-
-const getRoomTypes = asyncHandler(async (req, res) => {
-  const result = await roomService.getRoomTypes(req.query, req.user);
-  return ApiResponse.success(res, result, 'Lấy danh sách loại phòng thành công');
-});
-
-const createRoomType = asyncHandler(async (req, res) => {
-  const result = await roomService.createRoomType(req.body);
-  return ApiResponse.success(res, result, 'Tạo loại phòng thành công', 201);
-});
-
-const updateRoomType = asyncHandler(async (req, res) => {
-  const result = await roomService.updateRoomType(req.params.id, req.body);
-  return ApiResponse.success(res, result, 'Cập nhật loại phòng thành công');
-});
-
-// ==========================================
-// 3. Phòng (Rooms)
+// 2. Phòng KTX (Rooms)
 // ==========================================
 
 const getRooms = asyncHandler(async (req, res) => {
@@ -55,8 +35,9 @@ const getRooms = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, result, 'Lấy danh sách phòng thành công');
 });
 
+// Tra cứu phòng trống (Stack Allocation & Cache)
 const getAvailableRooms = asyncHandler(async (req, res) => {
-  const result = await roomService.getAvailableRooms(req.query, req.user);
+  const result = await roomService.getAvailableRooms(req.query);
   return ApiResponse.success(res, result, 'Lấy danh sách phòng còn chỗ thành công');
 });
 
@@ -67,7 +48,7 @@ const getRoomById = asyncHandler(async (req, res) => {
 
 const createRoom = asyncHandler(async (req, res) => {
   const result = await roomService.createRoom(req.body);
-  return ApiResponse.success(res, result, 'Thêm phòng thành công', 201);
+  return ApiResponse.success(res, result, 'Thêm phòng và sinh giường tự động thành công', 201);
 });
 
 const updateRoom = asyncHandler(async (req, res) => {
@@ -75,26 +56,13 @@ const updateRoom = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, result, 'Cập nhật thông tin phòng thành công');
 });
 
-// ==========================================
-// 4. Giường (Beds)
-// ==========================================
-
-const updateBedStatus = asyncHandler(async (req, res) => {
-  const result = await roomService.updateBedStatus(req.params.id, req.body);
-  return ApiResponse.success(res, result, 'Cập nhật trạng thái giường thành công');
-});
-
 module.exports = {
   getBuildings,
   createBuilding,
   updateBuilding,
-  getRoomTypes,
-  createRoomType,
-  updateRoomType,
   getRooms,
   getAvailableRooms,
   getRoomById,
   createRoom,
   updateRoom,
-  updateBedStatus,
 };

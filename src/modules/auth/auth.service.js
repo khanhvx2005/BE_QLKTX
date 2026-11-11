@@ -1,193 +1,114 @@
 /**
- * Service xử lý logic nghiệp vụ cho Module Auth.
- * Tuân thủ theo API.md §2, DATA-SCHEMA.md §3.1 và 07-PHAN-QUYEN-BAO-MAT.md.
+ * Service xử lý logic nghiệp vụ cho Module Auth (Xác thực & Tài khoản).
+ * Tuân thủ theo EDIT_DOCS_DAC_TA_YEU_CAU.md §3.1 (FR-01 đến FR-06).
+ * 
+ * ============================================================================
+ * [LUỒNG XÁC THỰC CỐT LÕI - DÀNH CHO TEAM 5]:
+ * 1. Đăng nhập linh hoạt (FR-01):
+ *    - Đăng nhập bằng Email HOẶC Mã sinh viên (MSSV) HaUI.
+ *    - Trả về JWT 7 ngày kèm cờ `mustChangePassword`.
+ * 2. Cấp tài khoản tự động (FR-02):
+ *    - Không mở đăng ký tự do để chống tài khoản rác/mạo danh.
+ *    - Tài khoản sinh viên được sinh tự động khi duyệt đơn KTX.
+ * 3. Bắt buộc đổi mật khẩu lần đầu (FR-05):
+ *    - Người dùng đổi mật khẩu, hệ thống tự động tắt cờ `mustChangePassword = false`.
+ * ============================================================================
  */
 
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const User = require('./user.model');
 const Student = require('../students/student.model');
 const ApiError = require('../../core/errors/api-error');
 const { generateToken } = require('../../core/utils/jwt');
 
 /**
- * Sinh mật khẩu tạm thời ngẫu nhiên tuân thủ BR-85
- * (Có ít nhất chữ hoa, chữ thường, chữ số, độ dài 10 ký tự)
+ * Sinh mật khẩu tạm ngẫu nhiên an toàn
  */
-const generateTemporaryPassword = (length = 10) => {
-  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-  const lower = 'abcdefghijkmnpqrstuvwxyz';
-  const digits = '23456789';
-  const all = upper + lower + digits;
-
-  const chars = [
-    upper[crypto.randomInt(0, upper.length)],
-    lower[crypto.randomInt(0, lower.length)],
-    digits[crypto.randomInt(0, digits.length)],
-  ];
-
-  for (let i = 3; i < length; i++) {
-    chars.push(all[crypto.randomInt(0, all.length)]);
+const generateTemporaryPassword = (length = 8) => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let pwd = '';
+  for (let i = 0; i < length; i++) {
+    pwd += chars[crypto.randomInt(0, chars.length)];
   }
-
-  // Shuffle mảng ký tự
-  for (let i = chars.length - 1; i > 0; i--) {
-    const j = crypto.randomInt(0, i + 1);
-    [chars[i], chars[j]] = [chars[j], chars[i]];
-  }
-
-  return chars.join('');
-};
-
-const normalizeFullName = (name) => {
-  return (name || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
+  return pwd;
 };
 
 /**
- * Đăng ký tài khoản tự phục vụ cho sinh viên (API.md §2 v1.2.18 - SCR-02).
- * Bắt buộc liên kết với hồ sơ Student đã có do ban quản lý tạo trước (FR-80/81).
+ * 1. Đăng nhập hệ thống bằng Email hoặc MSSV (FR-01)
  */
-const register = async (data) => {
-  const { email, password, fullName, studentCode, phone, gender } = data;
-
-  // 1. Kiểm tra mã sinh viên tồn tại trong hồ sơ KTX (FR-81)
-  const student = await Student.findOne({ studentCode: studentCode.trim().toUpperCase() });
-  if (!student) {
-    throw new ApiError(
-      422,
-      'STUDENT_NOT_FOUND',
-      'Không tìm thấy hồ sơ sinh viên với mã này. Vui lòng liên hệ ban quản lý KTX'
-    );
+const login = async ({ identifier, email, username, password }) => {
+  const loginId = (identifier || username || email || '').trim();
+  if (!loginId || !password) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'Vui lòng nhập tài khoản (Email/MSSV) và mật khẩu');
   }
 
-  // 2. Kiểm tra họ và tên có khớp với hồ sơ (bỏ qua dấu, chữ hoa/thường, khoảng trắng thừa)
-  if (normalizeFullName(student.fullName) !== normalizeFullName(fullName)) {
-    throw new ApiError(
-      422,
-      'STUDENT_INFO_MISMATCH',
-      'Họ và tên không khớp với hồ sơ sinh viên'
-    );
-  }
+  // Tìm kiếm tài khoản theo email hoặc theo MSSV của sinh viên
+  let user = await User.findOne({ email: loginId.toLowerCase() }).select('+passwordHash');
+  let student = null;
 
-  // 3. Kiểm tra sinh viên đã có tài khoản User chưa
-  const existingUserForStudent = await User.findOne({ studentId: student._id });
-  if (student.userId || existingUserForStudent) {
-    throw new ApiError(
-      409,
-      'STUDENT_ALREADY_HAS_ACCOUNT',
-      'Sinh viên này đã có tài khoản trên hệ thống'
-    );
-  }
-
-  // 4. Kiểm tra trùng email
-  const existingEmail = await User.findOne({ email: email.toLowerCase().trim() });
-  if (existingEmail) {
-    throw new ApiError(409, 'DUPLICATE_ENTRY', 'Email đã tồn tại trong hệ thống', {
-      errors: [{ field: 'email', message: 'Email này đã được sử dụng' }],
-    });
-  }
-
-  // 5. Hash mật khẩu và tạo User
-  const passwordHash = await User.hashPassword(password);
-  const user = await User.create({
-    email: email.toLowerCase().trim(),
-    passwordHash,
-    fullName: student.fullName,
-    role: 'student', // Bắt buộc ép role student
-    studentId: student._id,
-    isActive: true,
-  });
-
-  // 6. Cập nhật liên kết hồ sơ Sinh viên
-  student.userId = user._id;
-  if (phone) student.phone = phone.trim();
-  if (gender) student.gender = gender;
-  student.email = email.toLowerCase().trim();
-  await student.save();
-
-  // 7. Sinh JWT Token (hạn 7 ngày)
-  const token = generateToken({
-    id: user._id,
-    role: user.role,
-    studentId: student._id,
-    mustChangePassword: false,
-  });
-
-  return {
-    token,
-    expiresIn: 7 * 24 * 60 * 60, // 604800 giây
-    user: {
-      id: user._id,
-      email: user.email,
-      fullName: user.fullName,
-      role: user.role,
-      studentId: student._id,
-      mustChangePassword: false,
-    },
-  };
-};
-
-/**
- * Đăng nhập hệ thống (User + Staff + Admin).
- */
-const login = async ({ email, password }) => {
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+passwordHash');
   if (!user) {
-    throw new ApiError(401, 'INVALID_CREDENTIALS', 'Email hoặc mật khẩu không chính xác');
+    // Nếu không khớp email, thử tra cứu theo Mã sinh viên HaUI
+    student = await Student.findOne({ studentCode: loginId.toUpperCase() });
+    if (student && student.userId) {
+      user = await User.findById(student.userId).select('+passwordHash');
+    }
+  }
+
+  if (!user) {
+    throw new ApiError(401, 'INVALID_CREDENTIALS', 'Tên đăng nhập hoặc mật khẩu không chính xác');
   }
 
   if (!user.isActive) {
-    throw new ApiError(403, 'ACCOUNT_LOCKED', 'Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ ban quản lý');
+    throw new ApiError(403, 'ACCOUNT_LOCKED', 'Tài khoản của bạn đã bị khóa. Vui lòng liên hệ ban quản lý KTX');
   }
 
   const isPasswordMatch = await user.comparePassword(password);
   if (!isPasswordMatch) {
-    throw new ApiError(401, 'INVALID_CREDENTIALS', 'Email hoặc mật khẩu không chính xác');
+    throw new ApiError(401, 'INVALID_CREDENTIALS', 'Tên đăng nhập hoặc mật khẩu không chính xác');
   }
 
   // Cập nhật thời điểm đăng nhập gần nhất
   user.lastLoginAt = new Date();
   await user.save();
 
-  // Tìm studentId nếu người dùng là sinh viên
-  let studentId = null;
-  if (user.role === 'student') {
-    const student = await Student.findOne({ userId: user._id });
-    if (student) {
-      studentId = student._id;
-    }
+  // Lấy studentId nếu là sinh viên
+  let studentId = user.studentId;
+  let studentCode = null;
+  if (!student && studentId) {
+    student = await Student.findById(studentId);
+  }
+  if (student) {
+    studentId = student._id.toString();
+    studentCode = student.studentCode;
   }
 
-  // Sinh JWT Token (hạn 7 ngày)
+  // Sinh JWT Token hạn 7 ngày
   const token = generateToken({
-    id: user._id,
+    id: user._id.toString(),
     role: user.role,
     studentId,
-    mustChangePassword: user.mustChangePassword,
+    studentCode,
+    mustChangePassword: Boolean(user.mustChangePassword),
   });
 
   return {
     token,
-    expiresIn: 7 * 24 * 60 * 60,
+    expiresIn: 7 * 24 * 60 * 60, // 7 ngày
     user: {
-      id: user._id,
+      id: user._id.toString(),
       email: user.email,
       fullName: user.fullName,
       role: user.role,
       studentId,
-      mustChangePassword: user.mustChangePassword,
+      studentCode,
+      mustChangePassword: Boolean(user.mustChangePassword),
     },
   };
 };
 
 /**
- * Lấy thông tin cá nhân của người dùng hiện tại từ JWT.
+ * 2. Lấy thông tin tài khoản hiện tại (FR-04)
  */
 const getMe = async (userId) => {
   const user = await User.findById(userId);
@@ -196,75 +117,51 @@ const getMe = async (userId) => {
   }
 
   let studentProfile = null;
-  if (user.role === 'student') {
-    studentProfile = await Student.findOne({ userId: user._id });
+  if (user.role === 'student' && user.studentId) {
+    studentProfile = await Student.findById(user.studentId);
   }
 
   return {
-    ...user.toJSON(),
+    user: user.toJSON(),
     student: studentProfile,
   };
 };
 
 /**
- * Đổi mật khẩu cá nhân.
+ * 3. Đổi mật khẩu cá nhân — Bắt buộc thực hiện ở lần đăng nhập đầu tiên (FR-05)
  */
-const changePassword = async (userId, { oldPassword, newPassword }) => {
-  const user = await User.findById(userId).select('+passwordHash');
-  if (!user) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy người dùng');
+const changePassword = async (userId, { currentPassword, newPassword, confirmPassword }) => {
+  if (newPassword !== confirmPassword) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'Mật khẩu mới và xác nhận mật khẩu không khớp nhau');
   }
 
-  const isMatch = await user.comparePassword(oldPassword);
-  if (!isMatch) {
+  if (newPassword.length < 6) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'Mật khẩu mới phải có tối thiểu 6 ký tự');
+  }
+
+  const user = await User.findById(userId).select('+passwordHash');
+  if (!user) {
+    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy tài khoản');
+  }
+
+  const isCurrentMatch = await user.comparePassword(currentPassword);
+  if (!isCurrentMatch) {
     throw new ApiError(400, 'INVALID_CURRENT_PASSWORD', 'Mật khẩu hiện tại không chính xác');
   }
 
-  user.passwordHash = await User.hashPassword(newPassword);
+  // Cập nhật mật khẩu mới và TỰ ĐỘNG TẮT cờ mustChangePassword
+  user.passwordHash = await bcrypt.hash(newPassword, 10);
   user.mustChangePassword = false;
   await user.save();
 
-  return { message: 'Đổi mật khẩu thành công' };
-};
-
-/**
- * Admin hoặc Staff đặt lại mật khẩu tạm thời cho người dùng (FR-09, API.md §2).
- * Quy tắc: Staff không được đặt lại mật khẩu của Admin (BR-84); không được tự reset mình.
- */
-const resetPassword = async (targetUserId, actorRole, actorUserId) => {
-  // Không được tự reset mật khẩu của chính mình
-  if (actorUserId && actorUserId.toString() === targetUserId.toString()) {
-    throw new ApiError(422, 'CANNOT_MODIFY_SELF', 'Không thể tự đặt lại mật khẩu cho chính mình (vui lòng sử dụng tính năng Đổi mật khẩu)');
-  }
-
-  const targetUser = await User.findById(targetUserId);
-  if (!targetUser) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy tài khoản người dùng cần reset mật khẩu');
-  }
-
-  // Quy tắc kiểm tra phân quyền bảo mật (API.md §2, BR-84)
-  if (actorRole === 'staff' && targetUser.role === 'admin') {
-    throw new ApiError(403, 'FORBIDDEN', 'Nhân viên không có quyền đặt lại mật khẩu cho tài khoản Quản trị viên');
-  }
-
-  // Sinh mật khẩu ngẫu nhiên 10 ký tự tuân thủ BR-85 (gồm chữ hoa, chữ thường và số)
-  const temporaryPassword = generateTemporaryPassword(10);
-  targetUser.passwordHash = await User.hashPassword(temporaryPassword);
-  targetUser.mustChangePassword = true;
-  await targetUser.save();
-
-  // Mật khẩu tạm trả về 1 lần duy nhất và không được ghi log
   return {
-    temporaryPassword,
-    mustChangePassword: true,
+    message: 'Đổi mật khẩu thành công! Bạn có thể sử dụng đầy đủ các chức năng của hệ thống.',
   };
 };
 
 module.exports = {
-  generateTemporaryPassword,
-  register,
   login,
   getMe,
   changePassword,
-  resetPassword,
+  generateTemporaryPassword,
 };

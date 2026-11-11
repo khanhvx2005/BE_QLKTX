@@ -43,6 +43,14 @@ const config = {
     enableCron: process.env.ENABLE_CRON === 'true',
     timezone: process.env.TZ || 'Asia/Ho_Chi_Minh',
   },
+
+  redis: {
+    uri: process.env.REDIS_URI || process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+    host: process.env.REDIS_HOST || '127.0.0.1',
+    port: parseInt(process.env.REDIS_PORT, 10) || 6379,
+    password: process.env.REDIS_PASSWORD || undefined,
+    enabled: process.env.ENABLE_REDIS !== 'false',
+  },
 };
 
 module.exports = config;
