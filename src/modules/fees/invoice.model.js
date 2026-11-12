@@ -1,106 +1,40 @@
 /**
- * Mongoose Schema cho collection Invoices (EDIT_DOCS_DATA_SCHEMA.md §3.7).
- * Quản lý hóa đơn thu tiền của hệ thống KTX HaUI (v2.0-HaUI).
- * 
- * ============================================================================
- * [KIẾN TRÚC TINH GỌN HaUI DMS - DÀNH CHO TEAM 5]:
- * - Đã loại bỏ bảng FeeType động và subdocument lineItems phức tạp.
- * - Hóa đơn cố định 3 loại:
- *   1. 'room_semester': Tiền phòng trọn gói kỳ (gắn với sinh viên).
- *   2. 'deposit': Tiền đặt cọc phòng (gắn với sinh viên).
- *   3. 'utility': Tiền điện nước dùng chung (gắn trực tiếp với roomId của cả phòng).
- * - Lưu ý sinh mã điện nước: `INV-UTIL-<Mã Tòa>-<Số Phòng>-<YYYYMM>`
- *   (bắt buộc có mã tòa để chống trùng phòng giữa các tòa nhà!).
- * ============================================================================
+ * Hóa đơn — API.md §8. Ba loại cố định, hai trạng thái, thu đủ một lần.
+ *   personal: tiền cọc / tiền phòng cả kỳ của MỘT sinh viên (sinh ra khi duyệt đơn)
+ *   room:     điện nước của cả phòng một tháng (sinh ra khi chốt), một bạn nộp đại diện (BR-03, D5)
  */
 
 const mongoose = require('mongoose');
-const { INVOICE_STATUS, INVOICE_TYPE } = require('../../shared/constants/enums');
+const { INVOICE_STATUS, INVOICE_TYPE, INVOICE_SCOPE } = require('../../shared/constants/enums');
+const toJSON = require('../../shared/to-json');
+
+const ref = (model) => ({ type: mongoose.Schema.Types.ObjectId, ref: model, default: null });
 
 const invoiceSchema = new mongoose.Schema(
   {
-    invoiceCode: {
-      type: String,
-      required: [true, 'Mã hóa đơn là bắt buộc'],
-      unique: true,
-      uppercase: true,
-      trim: true,
-    },
-    // Gắn với phòng KTX (Bắt buộc nếu là hóa đơn điện nước phòng type = 'utility')
-    roomId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Room',
-      default: null,
-    },
-    // Gắn với sinh viên thụ hưởng (nếu là tiền phòng/cọc) hoặc bạn đại diện đã nộp tiền (nếu là điện nước phòng)
-    studentId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Student',
-      default: null,
-    },
-    contractId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Contract',
-      default: null,
-    },
-    utilityReadingId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'UtilityReading',
-      default: null,
-    },
-    type: {
-      type: String,
-      enum: {
-        values: INVOICE_TYPE,
-        message: 'Loại hóa đơn {VALUE} không hợp lệ, chỉ chấp nhận room_semester, deposit hoặc utility',
-      },
-      required: [true, 'Loại hóa đơn là bắt buộc'],
-    },
-    amount: {
-      type: Number,
-      required: [true, 'Số tiền hóa đơn là bắt buộc'],
-      min: [0, 'Số tiền hóa đơn không được âm'],
-    },
-    description: {
-      type: String,
-      default: '',
-      trim: true,
-    },
-    dueDate: {
-      type: Date,
-      required: [true, 'Hạn thanh toán là bắt buộc'],
-    },
-    status: {
-      type: String,
-      enum: {
-        values: INVOICE_STATUS,
-        message: 'Trạng thái hóa đơn {VALUE} không hợp lệ',
-      },
-      default: 'unpaid',
-    },
-    paidAt: {
-      type: Date,
-      default: null,
-    },
+    invoiceCode: { type: String, required: true, unique: true, trim: true },
+    type: { type: String, enum: INVOICE_TYPE, required: true },
+    scope: { type: String, enum: INVOICE_SCOPE, required: true },
+    amount: { type: Number, required: true, min: 0 },
+    description: { type: String, default: '' },
+    /** Chủ hóa đơn (personal). Hóa đơn phòng để null */
+    studentId: ref('Student'),
+    /** Luôn có: phòng của hợp đồng (personal) hoặc phòng được chốt điện nước (room) */
+    roomId: { ...ref('Room'), required: true },
+    contractId: ref('Contract'),
+    utilityReadingId: ref('UtilityReading'),
+    monthYear: { type: String, default: null },
+    dueDate: { type: String, required: true },
+    status: { type: String, enum: INVOICE_STATUS, default: 'unpaid' },
+    paidAt: { type: Date, default: null },
+    /** Người nộp: chủ hóa đơn (personal) hoặc bạn đại diện phòng (room) */
+    payerStudentId: ref('Student'),
   },
-  {
-    timestamps: true,
-    toJSON: {
-      transform(doc, ret) {
-        ret.id = ret._id;
-        delete ret._id;
-        delete ret.__v;
-        return ret;
-      },
-    },
-  }
+  { timestamps: true, toJSON }
 );
 
-invoiceSchema.index({ roomId: 1, type: 1, status: 1 });
 invoiceSchema.index({ studentId: 1, status: 1 });
-invoiceSchema.index({ type: 1, status: 1 });
-invoiceSchema.index({ status: 1, dueDate: 1 });
+invoiceSchema.index({ roomId: 1, type: 1, status: 1 });
+invoiceSchema.index({ contractId: 1 });
 
-const Invoice = mongoose.model('Invoice', invoiceSchema);
-
-module.exports = Invoice;
+module.exports = mongoose.model('Invoice', invoiceSchema);

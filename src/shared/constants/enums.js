@@ -1,49 +1,30 @@
 /**
- * Định nghĩa toàn bộ hằng số Enum dùng chung trong hệ thống HaUI - DMS (v2.0-HaUI).
- * Quy ước: Tất cả giá trị enum đều viết thường (lowercase) theo EDIT_DOCS_DATA_SCHEMA.md.
+ * Hằng số enum dùng chung — khớp FE `docs/API.md` §1.3 (hợp đồng chung FE–BE, bản v2).
+ * Quy ước: giá trị viết thường. ⚠️ Đổi giá trị ở đây là đổi hợp đồng: sửa `API.md` trước, báo FE.
  */
 
-// Vai trò người dùng trong hệ thống (RBAC 3 cấp, đã loại bỏ viewer)
 const ROLES = ['admin', 'staff', 'student'];
-
-// Giới tính (dùng cho Student và kiểm tra xếp phòng nam/nữ BR-01)
 const GENDER = ['male', 'female'];
-
-// Trạng thái hồ sơ sinh viên
 const STUDENT_STATUS = ['active', 'inactive'];
-
-// Trạng thái phòng KTX
 const ROOM_STATUS = ['active', 'maintenance'];
-
-// Sức chứa phòng KTX (cố định 3 mức tiêu chuẩn)
 const ROOM_CAPACITY = [4, 6, 8];
-
-// Trạng thái vị trí giường nhúng trong phòng
 const BED_STATUS = ['available', 'occupied', 'maintenance'];
-
-// Thời hạn hợp đồng KTX trọn gói theo kỳ
 const CONTRACT_TERMS = ['6_months', '12_months'];
+const TERM_MONTHS = { '6_months': 6, '12_months': 12 };
 
-// Trạng thái hợp đồng KTX (Hợp nhất Đơn đăng ký và Hợp đồng lưu trú)
-const CONTRACT_STATUS = ['pending', 'active', 'expired', 'terminated'];
+/**
+ * Trạng thái LƯU trong CSDL. `expired` KHÔNG lưu: suy ra lúc đọc (active + đã qua endDate) — API.md §6.
+ * ⚠️ Không có job đổi active → expired: hợp đồng quá hạn vẫn giữ giường tới khi cán bộ thanh lý (BR-04).
+ */
+const CONTRACT_STATUS = ['pending', 'active', 'terminated', 'rejected'];
+/** Trạng thái TRẢ RA cho FE */
+const CONTRACT_STATUS_VIEW = ['pending', 'active', 'expired', 'terminated', 'rejected'];
 
-// Trạng thái tiền cọc phòng (Hỗ trợ nghiệp vụ Hoàn tiền cọc khi trả phòng)
-const DEPOSIT_STATUS = ['unpaid', 'paid', 'refunded', 'forfeited'];
-
-// 3 loại hóa đơn cố định trong hệ thống HaUI DMS (đã bỏ FeeType động)
 const INVOICE_TYPE = ['room_semester', 'deposit', 'utility'];
-
-// Trạng thái hóa đơn
 const INVOICE_STATUS = ['unpaid', 'paid'];
-
-// Phương thức thanh toán (Hỗ trợ Tiền mặt tại KTX & Quét VietQR)
-const PAYMENT_METHOD = ['cash', 'vietqr', 'bank_transfer'];
-
-// Trạng thái giao dịch thanh toán
-const PAYMENT_STATUS = ['pending', 'success', 'failed'];
-
-// Loại giao dịch tài chính: Thu tiền hóa đơn hoặc Hoàn cọc cho sinh viên
-const PAYMENT_TYPE = ['payment', 'refund'];
+/** personal: hóa đơn của một sinh viên · room: hóa đơn điện nước của cả phòng (BR-03) */
+const INVOICE_SCOPE = ['personal', 'room'];
+const PAYMENT_METHOD = ['cash', 'vietqr'];
 
 module.exports = {
   ROLES,
@@ -53,11 +34,11 @@ module.exports = {
   ROOM_CAPACITY,
   BED_STATUS,
   CONTRACT_TERMS,
+  TERM_MONTHS,
   CONTRACT_STATUS,
-  DEPOSIT_STATUS,
+  CONTRACT_STATUS_VIEW,
   INVOICE_TYPE,
   INVOICE_STATUS,
+  INVOICE_SCOPE,
   PAYMENT_METHOD,
-  PAYMENT_STATUS,
-  PAYMENT_TYPE,
 };

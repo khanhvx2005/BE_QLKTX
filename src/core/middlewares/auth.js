@@ -36,7 +36,7 @@ const authenticate = asyncHandler(async (req, res, next) => {
   const userId = payload.userId || payload.id;
 
   // G3: Tra cứu trạng thái người dùng trong DB
-  const user = await User.findById(userId).select('isActive role studentId mustChangePassword');
+  const user = await User.findById(userId).select('isActive role studentId mustChangePassword fullName email');
   if (!user) {
     throw new ApiError(401, 'UNAUTHORIZED', 'Tài khoản không tồn tại trên hệ thống');
   }
@@ -49,11 +49,20 @@ const authenticate = asyncHandler(async (req, res, next) => {
     );
   }
 
-  // Gắn thông tin người dùng vào request
+  // API.md §1.4 (FR-01, BR-06): còn cờ buộc đổi mật khẩu thì chỉ được xem mình, đăng xuất, đổi mật khẩu.
+  // ⚠️ Không chặn ở đây thì tài khoản vừa cấp (mật khẩu = MSSV) dùng được mọi chức năng mà chưa đổi mật khẩu.
+  const ALLOWED_WHILE_FORCED = ['/api/auth/me', '/api/auth/logout', '/api/auth/change-password'];
+  if (user.mustChangePassword && !ALLOWED_WHILE_FORCED.includes(req.originalUrl.split('?')[0])) {
+    throw new ApiError(403, 'MUST_CHANGE_PASSWORD', 'Bạn cần đổi mật khẩu trước khi tiếp tục');
+  }
+
+  // Gắn thông tin người dùng vào request. Danh tính sinh viên luôn lấy từ CSDL, không từ query/body (API.md §1.4)
   req.user = {
     id: user._id.toString(),
     role: user.role,
-    studentId: user.studentId ? user.studentId.toString() : (payload.studentId || null),
+    fullName: user.fullName,
+    email: user.email,
+    studentId: user.studentId ? user.studentId.toString() : null,
     mustChangePassword: Boolean(user.mustChangePassword),
   };
 

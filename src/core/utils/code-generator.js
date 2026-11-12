@@ -1,64 +1,45 @@
 /**
- * Utility sinh mã tự động cho các thực thể theo chuẩn HaUI - DMS.
- * Đảm bảo tính duy nhất, format chuẩn và dễ đọc.
+ * Sinh mã chứng từ — dễ đọc, tăng dần, không trùng.
+ *   Hợp đồng  HD-2026-0001 · Hóa đơn cá nhân INV-2026-0001 · Phiếu thu PAY-2026-0001
+ *   Hóa đơn điện nước INV-UTIL-K1-302-202611 (có mã tòa: phòng cùng số ở hai tòa không trùng — API.md §7)
+ *
+ * ⚠️ Số thứ tự lấy từ mã lớn nhất hiện có rồi +1. Hai yêu cầu cùng lúc có thể ra cùng số → index unique chặn,
+ *    `createWithCode` thử lại với số kế tiếp. Đừng bỏ vòng thử lại.
  */
 
-const crypto = require('crypto');
+const { localDate } = require('./dates');
+
+const pad = (n, w = 4) => String(n).padStart(w, '0');
+
+/** Số thứ tự kế tiếp cho tiền tố, VD prefix 'HD-2026-' */
+async function nextSeq(Model, field, prefix) {
+  const last = await Model.findOne({ [field]: { $regex: `^${prefix.replace(/[-]/g, '\\-')}\\d+$` } })
+    .sort({ [field]: -1 }).select(field).lean();
+  return last ? Number(String(last[field]).slice(prefix.length)) + 1 : 1;
+}
 
 /**
- * Sinh số ngẫu nhiên 5 chữ số có đệm 0
+ * Tạo bản ghi với mã tăng dần; trùng mã (E11000 trên `field`) thì thử số kế tiếp, tối đa 5 lần.
+ * `build(code)` trả object để `Model.create`.
  */
-const getRandom5Digits = () => {
-  return String(crypto.randomInt(1, 100000)).padStart(5, '0');
+async function createWithCode(Model, field, prefix, build, { session } = {}) {
+  let seq = await nextSeq(Model, field, prefix);
+  for (let attempt = 0; attempt < 5; attempt += 1, seq += 1) {
+    try {
+      const [doc] = await Model.create([build(`${prefix}${pad(seq)}`)], session ? { session } : {});
+      return doc;
+    } catch (err) {
+      if (!(err.code === 11000 && err.keyPattern?.[field])) throw err;
+    }
+  }
+  throw new Error(`Không sinh được mã ${prefix}`);
+}
+
+const yearPrefix = (kind) => `${kind}-${localDate().slice(0, 4)}-`;
+
+const utilityInvoiceCode = (buildingCode, roomNumber, monthYear) => {
+  const clean = (v) => String(v || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+  return `INV-UTIL-${clean(buildingCode)}-${clean(roomNumber)}-${String(monthYear).replace('-', '')}`;
 };
 
-/**
- * Mã hợp đồng: HD-YYYY-XXXXX (e.g. HD-2026-00087)
- */
-const generateContractCode = () => {
-  const year = new Date().getFullYear();
-  return `HD-${year}-${getRandom5Digits()}`;
-};
-
-/**
- * Mã hóa đơn cá nhân (Tiền phòng, Tiền cọc): INV-YYYYMM-XXXXX (e.g. INV-202610-00101)
- */
-const generateInvoiceCode = (date = new Date()) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  return `INV-${year}${month}-${getRandom5Digits()}`;
-};
-
-/**
- * Mã hóa đơn Điện Nước theo Phòng:
- * ============================================================================
- * [QUAN TRỌNG - KHẮC PHỤC LỖI TRÙNG MÃ GIỮA CÁC TÒA NHÀ]:
- * - Công thức: INV-UTIL-<MÃ TÒA>-<SỐ PHÒNG>-<YYYYMM>
- * - Ví dụ: Tòa K1, phòng 302, tháng 10/2026 -> INV-UTIL-K1-302-202610
- * - Tòa K2, phòng 302, tháng 10/2026 -> INV-UTIL-K2-302-202610
- * -> Nhờ có <MÃ TÒA>, không bao giờ bị trùng lặp mã khi chốt số cùng lúc!
- * ============================================================================
- */
-const generateUtilityInvoiceCode = (buildingCode, roomNumber, monthYear) => {
-  const cleanBuilding = String(buildingCode || 'KTX').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
-  const cleanRoom = String(roomNumber || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
-  const cleanMonth = String(monthYear || '').replace(/[^0-9]/g, '');
-  return `INV-UTIL-${cleanBuilding}-${cleanRoom}-${cleanMonth}`;
-};
-
-/**
- * Mã phiếu thu / giao dịch thanh toán: PAYYYYYMMDDXXXXXX (e.g. PAY20261110DEF456)
- */
-const generateTransactionRef = () => {
-  const now = new Date();
-  const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
-  const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase();
-  return `PAY${dateStr}${randomHex}`;
-};
-
-module.exports = {
-  generateContractCode,
-  generateInvoiceCode,
-  generateUtilityInvoiceCode,
-  generateTransactionRef,
-};
+module.exports = { createWithCode, yearPrefix, utilityInvoiceCode };

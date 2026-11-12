@@ -23,10 +23,11 @@ const errorHandler = (err, req, res, next) => {
   }
   // 2. Xử lý lỗi Mongoose CastError (ObjectId không đúng định dạng)
   else if (err.name === 'CastError') {
-    statusCode = 400;
-    errorCode = 'VALIDATION_ERROR';
-    message = `Định dạng dữ liệu không hợp lệ cho trường: ${err.path}`;
-    data = { field: err.path };
+    // Id sai định dạng = không có bản ghi đó (API.md: 404 NOT_FOUND), không phải lỗi nhập liệu
+    statusCode = err.path === '_id' ? 404 : 400;
+    errorCode = err.path === '_id' ? 'NOT_FOUND' : 'VALIDATION_ERROR';
+    message = err.path === '_id' ? 'Không tìm thấy dữ liệu' : `Định dạng dữ liệu không hợp lệ cho trường: ${err.path}`;
+    data = err.path === '_id' ? null : { errors: [{ field: err.path, message }] };
   }
   // 3. Xử lý lỗi Mongoose ValidationError (schema validation fail)
   else if (err.name === 'ValidationError') {
@@ -46,7 +47,7 @@ const errorHandler = (err, req, res, next) => {
     const fields = Object.keys(err.keyPattern || err.keyValue || {});
     const fieldName = fields[0] || 'dữ liệu';
     message = `Giá trị của '${fieldName}' đã tồn tại trong hệ thống`;
-    data = { duplicateFields: fields };
+    data = { errors: fields.map((field) => ({ field, message: 'Giá trị này đã tồn tại' })) };
   }
   // 5. Xử lý lỗi JWT
   else if (err.name === 'TokenExpiredError') {

@@ -30,13 +30,14 @@ const config = {
       : ['http://localhost:5173'],
   },
 
-  payment: {
-    vnpay: {
-      tmnCode: process.env.VNP_TMN_CODE || process.env.VNPAY_CODE || '',
-      hashSecret: process.env.VNP_HASH_SECRET || process.env.VNPAY_SECRET || '',
-      url: process.env.VNP_URL || process.env.VNPAY_URL || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
-      returnUrl: process.env.VNP_RETURN_URL || 'http://localhost:5173/portal/payment-result',
-    },
+  /**
+   * Tài khoản nhận tiền cho mã VietQR (FR-53). Mặc định là SỐ MẪU — điền tài khoản thật vào .env khi triển khai.
+   * bankBin là mã BIN ngân hàng 6 số (VD 970436 Vietcombank).
+   */
+  vietqr: {
+    bankBin: process.env.VIETQR_BANK_BIN || '970436',
+    accountNumber: process.env.VIETQR_ACCOUNT_NUMBER || '0011001234567',
+    accountName: process.env.VIETQR_ACCOUNT_NAME || 'KY TUC XA HAUI',
   },
 
   scheduler: {

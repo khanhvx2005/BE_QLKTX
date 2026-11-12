@@ -22,7 +22,7 @@ async function connectDatabase() {
       socketTimeoutMS: 45000,          // Ngắt truy vấn treo sau 45s
       maxPoolSize: 10,                 // Tối ưu connection pool cho cụm Atlas M0 Free
     });
-    console.log(`[DB] ✅ Kết nối MongoDB Atlas thành công → CSDL: ${mongoose.connection.name} (Host: ${mongoose.connection.host})`);
+    console.log(`[DB] ✅ Kết nối MongoDB thành công → CSDL: ${mongoose.connection.name} (Host: ${mongoose.connection.host})`);
   } catch (err) {
     console.error('[DB] ❌ Kết nối MongoDB Atlas thất bại:', err.message);
     // Không cho phép server khởi động nếu không có kết nối cơ sở dữ liệu
@@ -34,7 +34,7 @@ async function connectDatabase() {
   });
 
   mongoose.connection.on('reconnected', () => {
-    console.log('[DB] 🔄 Đã tái kết nối thành công tới MongoDB Atlas');
+    console.log('[DB] 🔄 Đã tái kết nối thành công tới MongoDB');
   });
 
   mongoose.connection.on('error', (err) => {

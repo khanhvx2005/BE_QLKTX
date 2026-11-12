@@ -78,7 +78,10 @@ app.use('/api', roomRoutes);
 
 // M4: Đăng ký KTX Online & Hợp đồng lưu trú
 const contractRoutes = require('./modules/contracts/contract.routes');
+const publicRoutes = require('./modules/contracts/public.routes');
 app.use('/api/contracts', contractRoutes);
+// Không cần token: phòng còn trống cho người nộp đơn, tra cứu đơn (API.md §5)
+app.use('/api/public', publicRoutes);
 
 // M5: Chỉ số Điện Nước & Hóa đơn theo Phòng
 const feeRoutes = require('./modules/fees/fee.routes');
