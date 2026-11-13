@@ -1,256 +1,81 @@
 /**
- * Service xử lý nghiệp vụ cho Module Payments (Thanh toán & Hoàn cọc KTX HaUI).
- * 
- * ============================================================================
- * [LUỒNG NGHIỆP VỤ CỐT LÕI - DÀNH CHO TEAM 5]:
- * 1. Thu tiền mặt tại KTX (FR-52):
- *    - Cá nhân nộp tiền phòng/cọc hoặc đại diện phòng nộp tiền điện nước.
- *    - Cán bộ bấm xác nhận -> Gạch nợ hóa đơn sang 'paid' và lập phiếu thu.
- *    - Nếu là hóa đơn cọc -> Cập nhật contract.depositStatus = 'paid'.
- * 2. Thanh toán qua VietQR động (FR-53):
- *    - Sinh mã VietQR ngân hàng có sẵn số tiền và cú pháp chuẩn:
- *      + HĐ cá nhân: `HAUI <Mã HĐ> <MSSV>`
- *      + HĐ điện nước phòng: `HAUI <Mã HĐ> <Số Phòng>`
- * 3. Xác nhận chuyển khoản ngân hàng (FR-54):
- *    - Cán bộ đối soát và bấm xác nhận hoàn tất giao dịch.
- * ============================================================================
+ * Thu tiền và phiếu thu — API.md §8 (FR-52, FR-54). Luôn thu đủ `amount`, một hóa đơn một phiếu.
+ * Hóa đơn phòng: bắt buộc chọn người nộp là SV đang ở phòng đó (BR-03, D5). Hóa đơn cá nhân: người nộp là chủ hóa đơn.
  */
 
-const Payment = require('./payment.model');
 const Invoice = require('../fees/invoice.model');
-const Contract = require('../contracts/contract.model');
-const Room = require('../rooms/room.model');
-const Student = require('../students/student.model');
-const ApiError = require('../../core/errors/api-error');
-const { generateTransactionRef } = require('../../core/utils/code-generator');
-const cache = require('../../core/utils/cache');
-const logger = require('../../core/logger/logger');
+const Payment = require('./payment.model');
+const { fail, paginate, matches, isObjectId } = require('../../core/utils/http');
+const { createWithCode, yearPrefix } = require('../../core/utils/code-generator');
+const { localDate } = require('../../core/utils/dates');
+const { loadCtx, invoiceView, paymentView, residentsOf, byId } = require('../../shared/views');
 
-/**
- * 1. Thu tiền mặt tại văn phòng KTX HaUI (FR-52)
- */
-const payCash = async (data, actorId) => {
-  const { invoiceId, studentId, note } = data;
-
-  const invoice = await Invoice.findById(invoiceId);
-  if (!invoice) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn cần thanh toán');
-  }
-
-  if (invoice.status === 'paid') {
-    throw new ApiError(422, 'INVOICE_ALREADY_PAID', 'Hóa đơn này đã được thanh toán trước đó');
-  }
-
-  // Xác định người nộp tiền
-  let payerId = invoice.studentId;
-  if (invoice.type === 'utility') {
-    if (!studentId) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'Cần cung cấp mã sinh viên của bạn đại diện nộp tiền cho cả phòng');
+async function collect(method, body = {}, actor) {
+  const inv = isObjectId(body.invoiceId) ? await Invoice.findById(body.invoiceId).lean() : null;
+  if (!inv) fail(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn');
+  if (inv.status === 'paid') fail(409, 'INVOICE_ALREADY_PAID', `Hóa đơn ${inv.invoiceCode} đã được thanh toán`);
+  let payerStudentId = inv.studentId;
+  if (inv.scope === 'room') {
+    payerStudentId = body.payerStudentId;
+    const residents = await residentsOf(inv.roomId);
+    if (!residents.some(({ student }) => String(student._id) === String(payerStudentId))) {
+      fail(422, 'PAYER_NOT_IN_ROOM', 'Chọn người nộp là sinh viên đang ở phòng này', { errors: [{ field: 'payerStudentId', message: 'Chọn người nộp đang ở phòng này' }] });
     }
-    payerId = studentId;
-    invoice.studentId = payerId; // Lưu lại ID bạn đại diện đã nộp tiền
   }
-
-  const student = await Student.findById(payerId);
-  if (!student) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy thông tin sinh viên nộp tiền');
+  const transactionCode = method === 'vietqr' ? (String(body.transactionCode || '').trim().toUpperCase() || null) : null;
+  if (transactionCode && (await Payment.exists({ transactionCode }))) {
+    fail(409, 'DUPLICATE_TRANSACTION_CODE', `Mã giao dịch ${transactionCode} đã được ghi nhận`, { errors: [{ field: 'transactionCode', message: 'Mã giao dịch này đã được ghi nhận trước đó' }] });
   }
-
-  // 1. Cập nhật hóa đơn sang 'paid'
-  invoice.status = 'paid';
-  invoice.paidAt = new Date();
-  await invoice.save();
-
-  // 2. Nếu là hóa đơn tiền cọc: cập nhật trạng thái cọc trên hợp đồng
-  if (invoice.type === 'deposit' && invoice.contractId) {
-    await Contract.findByIdAndUpdate(invoice.contractId, {
-      depositStatus: 'paid',
-    });
+  const paidAt = new Date();
+  // Đánh dấu đã thu có điều kiện `status: 'unpaid'` trước: hai cán bộ bấm cùng lúc thì chỉ một người thu được
+  const updated = await Invoice.findOneAndUpdate(
+    { _id: inv._id, status: 'unpaid' }, { $set: { status: 'paid', paidAt, payerStudentId } }, { returnDocument: 'after' }
+  ).lean();
+  if (!updated) fail(409, 'INVOICE_ALREADY_PAID', `Hóa đơn ${inv.invoiceCode} đã được thanh toán`);
+  let payment;
+  try {
+    payment = await createWithCode(Payment, 'paymentCode', yearPrefix('PAY'), (paymentCode) => ({
+      paymentCode, invoiceId: inv._id, amount: inv.amount, method, transactionCode, note: String(body.note || '').trim(),
+      paidAt, payerStudentId, collectedBy: actor.id, collectedByName: actor.fullName,
+    }));
+  } catch (err) {
+    await Invoice.updateOne({ _id: inv._id }, { $set: { status: 'unpaid', paidAt: null, payerStudentId: null } });
+    throw err;
   }
-
-  // 3. Tạo phiếu thu tiền mặt trong collection payments
-  const payment = await Payment.create({
-    paymentCode: generateTransactionRef(),
-    invoiceId: invoice._id,
-    studentId: payerId,
-    amount: invoice.amount,
-    type: 'payment',
-    method: 'cash',
-    cashCollectedBy: actorId,
-    status: 'success',
-    note: note || `Thu tiền mặt tại KTX cho hóa đơn ${invoice.invoiceCode}`,
-    paidAt: new Date(),
-  });
-
-  // 4. Xóa cache Redis để cập nhật công nợ và Dashboard
-  await Promise.all([
-    cache.delByPattern('dashboard:*'),
-    cache.delByPattern('portal:*'),
-  ]);
-
-  logger.info(`💵 [Payment] Cán bộ đã thu tiền mặt ${invoice.amount.toLocaleString('vi-VN')} đ cho HĐ ${invoice.invoiceCode} từ SV ${student.studentCode}`);
-
+  const ctx = await loadCtx({ roomIds: [updated.roomId], studentIds: [updated.studentId, payerStudentId] });
   return {
-    payment,
-    invoice,
-    message: `Thu tiền mặt cho hóa đơn ${invoice.invoiceCode} thành công!`,
+    data: { payment: paymentView(payment.toObject(), ctx, new Map([[String(updated._id), updated]])), invoice: invoiceView(updated, ctx) },
+    message: 'Đã xác nhận thu tiền',
+    status: 201,
   };
-};
+}
 
-/**
- * 2. Sinh mã VietQR động chuẩn Ngân hàng (FR-53)
- */
-const generateVietQR = async (invoiceId) => {
-  const invoice = await Invoice.findById(invoiceId)
-    .populate('studentId', 'studentCode fullName')
-    .populate({
-      path: 'roomId',
-      select: 'roomNumber buildingId',
-      populate: { path: 'buildingId', select: 'code name' },
-    });
+/** Phiếu thu → view (dùng chung cho cán bộ và cổng SV) */
+async function paymentViews(list) {
+  const invoices = byId(await Invoice.find({ _id: { $in: list.map((p) => p.invoiceId) } }).lean());
+  const ctx = await loadCtx({ roomIds: [...invoices.values()].map((i) => i.roomId), studentIds: list.map((p) => p.payerStudentId) });
+  return list.map((p) => paymentView(p, ctx, invoices));
+}
 
-  if (!invoice) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn cần thanh toán');
-  }
-
-  // Tạo cú pháp chuyển khoản chuẩn ngân hàng
-  let transferSyntax = '';
-  if (invoice.type === 'utility' && invoice.roomId) {
-    // Hóa đơn điện nước phòng: HAUI <Mã HĐ> P<Số phòng>
-    transferSyntax = `HAUI ${invoice.invoiceCode} P${invoice.roomId.roomNumber}`;
-  } else {
-    // Hóa đơn tiền phòng / cọc cá nhân: HAUI <Mã HĐ> <MSSV>
-    const mssv = invoice.studentId?.studentCode || 'HAUI';
-    transferSyntax = `HAUI ${invoice.invoiceCode} ${mssv}`;
-  }
-
-  // Cấu hình tài khoản KTX HaUI (Mặc định MB Bank)
-  const bankBin = '970422'; // Mã BIN ngân hàng MB Bank
-  const accountNo = '0356789999';
-  const accountName = 'KTX DAI HOC CONG NGHIEP HA NOI';
-
-  // URL tạo ảnh VietQR tự động từ VietQR API chuẩn Napas
-  const qrImageUrl = `https://img.vietqr.io/image/${bankBin}-${accountNo}-compact2.png?amount=${invoice.amount}&addInfo=${encodeURIComponent(transferSyntax)}&accountName=${encodeURIComponent(accountName)}`;
-
-  return {
-    invoiceId: invoice._id,
-    invoiceCode: invoice.invoiceCode,
-    type: invoice.type,
-    amount: invoice.amount,
-    status: invoice.status,
-    vietqr: {
-      bankBin,
-      bankName: 'MB Bank (Ngân hàng Quân Đội)',
-      accountNo,
-      accountName,
-      amount: invoice.amount,
-      syntax: transferSyntax,
-      qrImageUrl,
-    },
-  };
-};
-
-/**
- * 3. Xác nhận chuyển khoản ngân hàng qua VietQR (FR-54)
- */
-const confirmBankTransfer = async (data, actorId) => {
-  const { invoiceId, studentId, transactionCode, note } = data;
-
-  const invoice = await Invoice.findById(invoiceId);
-  if (!invoice) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn');
-  }
-
-  if (invoice.status === 'paid') {
-    throw new ApiError(422, 'INVOICE_ALREADY_PAID', 'Hóa đơn này đã được thanh toán trước đó');
-  }
-
-  let payerId = invoice.studentId;
-  if (invoice.type === 'utility') {
-    if (!studentId) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'Cần cung cấp mã sinh viên của bạn đại diện thanh toán');
-    }
-    payerId = studentId;
-    invoice.studentId = payerId;
-  }
-
-  invoice.status = 'paid';
-  invoice.paidAt = new Date();
-  await invoice.save();
-
-  if (invoice.type === 'deposit' && invoice.contractId) {
-    await Contract.findByIdAndUpdate(invoice.contractId, {
-      depositStatus: 'paid',
-    });
-  }
-
-  const payment = await Payment.create({
-    paymentCode: generateTransactionRef(),
-    invoiceId: invoice._id,
-    studentId: payerId,
-    amount: invoice.amount,
-    type: 'payment',
-    method: 'vietqr',
-    cashCollectedBy: actorId,
-    transactionCode: transactionCode.trim(),
-    status: 'success',
-    note: note || `Đối soát VietQR chuyển khoản thành công (Mã GD: ${transactionCode})`,
-    paidAt: new Date(),
-  });
-
-  await Promise.all([
-    cache.delByPattern('dashboard:*'),
-    cache.delByPattern('portal:*'),
-  ]);
-
-  logger.info(`📱 [VietQR] Cán bộ đã đối soát giao dịch VietQR ${invoice.amount.toLocaleString('vi-VN')} đ cho HĐ ${invoice.invoiceCode}`);
-
-  return {
-    payment,
-    invoice,
-    message: `Xác nhận chuyển khoản VietQR cho hóa đơn ${invoice.invoiceCode} thành công!`,
-  };
-};
-
-/**
- * 4. Lấy danh sách lịch sử giao dịch thanh toán và hoàn cọc
- */
-const getPayments = async (query = {}) => {
-  const page = parseInt(query.page, 10) || 1;
-  const limit = parseInt(query.limit, 10) || 20;
-  const skip = (page - 1) * limit;
-
+/** GET /payments ?method=&type=&from=&to=&search=&invoiceId=&page=&limit= — mới nhất trước, summary của cả tập đã lọc */
+async function list(q = {}) {
   const filter = {};
-  if (query.studentId) filter.studentId = query.studentId;
-  if (query.invoiceId) filter.invoiceId = query.invoiceId;
-  if (query.type) filter.type = query.type;
-  if (query.method) filter.method = query.method;
-
-  const [total, payments] = await Promise.all([
-    Payment.countDocuments(filter),
-    Payment.find(filter)
-      .populate('studentId', 'studentCode fullName phone className')
-      .populate('invoiceId', 'invoiceCode type amount')
-      .populate('cashCollectedBy', 'fullName email')
-      .sort({ paidAt: -1 })
-      .skip(skip)
-      .limit(limit),
-  ]);
-
-  return {
-    data: payments,
-    pagination: {
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    },
-  };
-};
+  if (q.method) filter.method = q.method;
+  if (isObjectId(q.invoiceId)) filter.invoiceId = q.invoiceId;
+  let rows = await paymentViews(await Payment.find(filter).sort({ paidAt: -1 }).lean());
+  if (q.type) rows = rows.filter((p) => p.invoiceType === q.type);
+  // Lọc theo NGÀY Việt Nam của thời điểm thu (from/to là YYYY-MM-DD)
+  if (q.from) rows = rows.filter((p) => localDate(p.paidAt) >= q.from);
+  if (q.to) rows = rows.filter((p) => localDate(p.paidAt) <= q.to);
+  rows = rows.filter((p) => matches(q.search, [p.paymentCode, p.invoiceCode, p.transactionCode, p.payer?.fullName, p.payer?.studentCode]));
+  const sumOf = (l) => l.reduce((t, p) => t + p.amount, 0);
+  const summary = { totalAmount: sumOf(rows), cashAmount: sumOf(rows.filter((p) => p.method === 'cash')), vietqrAmount: sumOf(rows.filter((p) => p.method === 'vietqr')) };
+  return { data: paginate(rows, q, { summary }) };
+}
 
 module.exports = {
-  payCash,
-  generateVietQR,
-  confirmBankTransfer,
-  getPayments,
+  collectCash: (body, actor) => collect('cash', body, actor),
+  confirmVietqr: (body, actor) => collect('vietqr', body, actor),
+  list,
+  paymentViews,
 };

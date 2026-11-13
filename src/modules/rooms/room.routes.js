@@ -1,44 +1,23 @@
 /**
- * Router định tuyến cho Module Rooms (Tòa nhà & Phòng KTX HaUI).
- * Tuân thủ theo EDIT_DOCS_DAC_TA_YEU_CAU.md §3.3 và EDIT_DOCS_DATA_SCHEMA.md §3.4.
+ * /api/buildings, /api/rooms — API.md §4. Admin và Staff.
+ * Danh sách phòng trống cho người nộp đơn nằm ở /api/public (public.routes.js), không ở đây.
  */
 
 const express = require('express');
-const router = express.Router();
-
-const roomController = require('./room.controller');
-const {
-  createBuilding,
-  updateBuilding,
-  createRoom,
-  updateRoom,
-} = require('./room.validation');
-const validate = require('../../core/middlewares/validate');
 const { authenticate, authorize } = require('../../core/middlewares/auth');
+const { respond } = require('../../core/utils/http');
+const service = require('./room.service');
 
-// ==========================================
-// 1. Tuyến đường công khai (Public Routes)
-// Sinh viên chưa có tài khoản có thể tra cứu phòng trống để nộp đơn (FR-23)
-// ==========================================
-router.get('/rooms/available', roomController.getAvailableRooms);
-router.get('/buildings/public', roomController.getBuildings);
+const router = express.Router();
+const staff = [authenticate, authorize('admin', 'staff')];
 
-// ==========================================
-// 2. Tuyến đường yêu cầu xác thực JWT (Protected)
-// Chỉ áp dụng authenticate cho /buildings và /rooms
-// ==========================================
-router.use('/buildings', authenticate);
-router.use('/rooms', authenticate);
+router.get('/buildings', ...staff, respond((req) => service.listBuildings(req.query)));
+router.post('/buildings', ...staff, respond((req) => service.createBuilding(req.body)));
+router.put('/buildings/:id', ...staff, respond((req) => service.updateBuilding(req.params.id, req.body)));
 
-// Tòa nhà (Buildings)
-router.get('/buildings', authorize('admin', 'staff', 'student'), roomController.getBuildings);
-router.post('/buildings', authorize('admin', 'staff'), validate(createBuilding), roomController.createBuilding);
-router.put('/buildings/:id', authorize('admin', 'staff'), validate(updateBuilding), roomController.updateBuilding);
-
-// Phòng KTX (Rooms)
-router.get('/rooms', authorize('admin', 'staff'), roomController.getRooms);
-router.get('/rooms/:id', authorize('admin', 'staff'), roomController.getRoomById);
-router.post('/rooms', authorize('admin', 'staff'), validate(createRoom), roomController.createRoom);
-router.put('/rooms/:id', authorize('admin', 'staff'), validate(updateRoom), roomController.updateRoom);
+router.get('/rooms', ...staff, respond((req) => service.listRooms(req.query)));
+router.get('/rooms/:id', ...staff, respond((req) => service.getRoom(req.params.id)));
+router.post('/rooms', ...staff, respond((req) => service.createRoom(req.body)));
+router.put('/rooms/:id', ...staff, respond((req) => service.updateRoom(req.params.id, req.body)));
 
 module.exports = router;

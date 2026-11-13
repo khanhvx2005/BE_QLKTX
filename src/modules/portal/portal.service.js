@@ -1,178 +1,135 @@
 /**
- * Service xử lý nghiệp vụ cho Cổng dịch vụ Sinh viên KTX HaUI (Student Portal).
- * Tuân thủ theo EDIT_DOCS_DAC_TA_YEU_CAU.md §3.7 (FR-60 đến FR-63).
- * 
- * ============================================================================
- * [TỐI ƯU HIỆU NĂNG - DÀNH CHO TEAM 5]:
- * - Thông tin phòng ở và bạn cùng phòng (FR-60) được Cache bằng Redis:
- *   Key: `portal:my-room:<studentId>`, TTL: 300s.
- * - Danh sách bạn cùng phòng chỉ hiển thị Họ tên và MSSV để đảm bảo tính riêng tư.
- * ============================================================================
+ * Cổng sinh viên — API.md §9. Danh tính LUÔN lấy từ JWT (req.user.studentId), không từ query/body.
+ *
+ * Sinh viên xem được: hóa đơn cá nhân của mình + hóa đơn của phòng ĐANG ở.
+ * ⚠️ Chuyển phòng / trả phòng thì không còn thấy hóa đơn phòng cũ — đúng ý đồ, hóa đơn phòng thuộc về người đang ở.
  */
 
 const Student = require('../students/student.model');
 const Contract = require('../contracts/contract.model');
-const Room = require('../rooms/room.model');
 const Invoice = require('../fees/invoice.model');
 const Payment = require('../payments/payment.model');
-const ApiError = require('../../core/errors/api-error');
-const cache = require('../../core/utils/cache');
+const UtilityReading = require('../fees/utility-reading.model');
+const config = require('../../core/config');
+const { fail, paginate, isObjectId } = require('../../core/utils/http');
+const { loadCtx, contractView, debtsOf } = require('../../shared/views');
+const fees = require('../fees/fee.service');
+const payments = require('../payments/payment.service');
 
-/**
- * 1. Hồ sơ & Phòng ở của tôi (FR-60)
- * Trả về: Thông tin cá nhân, Tòa nhà, Số phòng, Số giường và Danh sách bạn cùng phòng
- */
-const getMyRoom = async (studentId) => {
-  const cacheKey = `portal:my-room:${studentId}`;
+async function me(req) {
+  const st = req.user.studentId ? await Student.findById(req.user.studentId).lean() : null;
+  if (!st) fail(403, 'FORBIDDEN', 'Tài khoản chưa gắn với hồ sơ sinh viên');
+  return st;
+}
 
-  return cache.wrap(
-    cacheKey,
-    async () => {
-      const student = await Student.findById(studentId);
-      if (!student) {
-        throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy hồ sơ sinh viên');
-      }
+/** Hợp đồng còn giữ giường (status lưu active — gồm cả quá hạn chưa thanh lý) */
+const holdingContract = (studentId) => Contract.findOne({ studentId, status: 'active' }).lean();
 
-      // Tìm hợp đồng đang active của sinh viên
-      const contract = await Contract.findOne({
-        studentId,
-        status: 'active',
-      }).populate({
-        path: 'roomId',
-        populate: { path: 'buildingId', select: 'code name description' },
-      });
+/** Điều kiện Mongo: hóa đơn sinh viên được xem */
+async function visibleFilter(st) {
+  const c = await holdingContract(st._id);
+  return { $or: [{ scope: 'personal', studentId: st._id }, ...(c ? [{ scope: 'room', roomId: c.roomId }] : [])] };
+}
 
-      if (!contract || !contract.roomId) {
-        return {
-          hasRoom: false,
-          student: {
-            studentCode: student.studentCode,
-            fullName: student.fullName,
-            gender: student.gender,
-            phone: student.phone,
-            email: student.email,
-            faculty: student.faculty,
-            className: student.className,
-          },
-          message: 'Bạn hiện chưa có phòng ở KTX đang hoạt động',
-        };
-      }
+async function assertVisible(st, inv) {
+  const c = await holdingContract(st._id);
+  const ok = inv.scope === 'personal' ? String(inv.studentId) === String(st._id) : c && String(inv.roomId) === String(c.roomId);
+  if (!ok) fail(403, 'FORBIDDEN', 'Bạn không có quyền truy cập dữ liệu này');
+}
 
-      const room = contract.roomId;
-      const building = room.buildingId;
+async function profile(req) {
+  return { data: Student.hydrate(await me(req)).toJSON() };
+}
 
-      // Lấy danh sách bạn cùng phòng (chỉ lấy Họ tên và MSSV để bảo mật riêng tư)
-      const roommateStudentIds = room.beds
-        .filter((b) => b.status === 'occupied' && b.studentId && b.studentId.toString() !== studentId.toString())
-        .map((b) => b.studentId);
-
-      const roommates = await Student.find({
-        _id: { $in: roommateStudentIds },
-      }).select('studentCode fullName gender className faculty');
-
-      return {
-        hasRoom: true,
-        student: {
-          studentCode: student.studentCode,
-          fullName: student.fullName,
-          gender: student.gender,
-          phone: student.phone,
-          email: student.email,
-          faculty: student.faculty,
-          className: student.className,
-        },
-        residence: {
-          buildingCode: building.code,
-          buildingName: building.name,
-          roomNumber: room.roomNumber,
-          floor: room.floor,
-          bedNumber: contract.bedNumber,
-          capacity: room.capacity,
-          term: contract.term,
-          startDate: contract.startDate,
-          endDate: contract.endDate,
-        },
-        roommates,
-      };
+async function myResidence(req) {
+  const st = await me(req);
+  const c = await holdingContract(st._id);
+  if (!c) return { data: { hasResidence: false, contract: null, roommates: [], debtSummary: { totalDebt: 0, unpaidInvoiceCount: 0 } } };
+  const mates = await Contract.find({ roomId: c.roomId, status: 'active', studentId: { $ne: st._id } }).lean();
+  const ctx = await loadCtx({ roomIds: [c.roomId], studentIds: [st._id, ...mates.map((m) => m.studentId)] });
+  const debts = await debtsOf([st._id]);
+  return {
+    data: {
+      hasResidence: true,
+      contract: contractView(c, ctx, debts),
+      // FR-60: bạn cùng phòng chỉ lộ họ tên + MSSV
+      roommates: mates.map((m) => ctx.students.get(String(m.studentId))).filter(Boolean)
+        .map((s) => ({ studentCode: s.studentCode, fullName: s.fullName }))
+        .sort((a, b) => a.studentCode.localeCompare(b.studentCode)),
+      debtSummary: {
+        totalDebt: debts.get(String(st._id)) ?? 0,
+        unpaidInvoiceCount: await Invoice.countDocuments({ studentId: st._id, scope: 'personal', status: 'unpaid' }),
+      },
     },
-    300 // Cache trong 5 phút
-  );
-};
-
-/**
- * 2. Hợp đồng của tôi (FR-61)
- */
-const getMyContract = async (studentId) => {
-  const contract = await Contract.findOne({
-    studentId,
-    status: { $in: ['active', 'pending'] },
-  })
-    .populate({
-      path: 'roomId',
-      populate: { path: 'buildingId', select: 'code name' },
-    })
-    .sort({ createdAt: -1 });
-
-  if (!contract) {
-    return { hasContract: false, message: 'Bạn chưa có hợp đồng KTX nào' };
-  }
-
-  return {
-    hasContract: true,
-    contract,
   };
-};
+}
 
-/**
- * 3. Hóa đơn cá nhân & Hóa đơn Điện nước phòng (FR-62)
- * Trả về:
- * - Hóa đơn cá nhân (Tiền phòng kỳ, Tiền cọc)
- * - Hóa đơn Điện nước của phòng (kèm số tiền chia bình quân mỗi bạn)
- */
-const getMyInvoices = async (studentId) => {
-  // 1. Hóa đơn cá nhân
-  const personalInvoices = await Invoice.find({
-    studentId,
-    type: { $in: ['room_semester', 'deposit'] },
-  }).sort({ createdAt: -1 });
+/** Mọi hợp đồng và đơn của chính sinh viên, mới nhất trước */
+async function myContracts(req) {
+  const st = await me(req);
+  const list = await Contract.find({ studentId: st._id }).sort({ createdAt: -1 }).lean();
+  const ctx = await loadCtx({ roomIds: list.map((c) => c.roomId), studentIds: [st._id] });
+  const debts = await debtsOf([st._id]);
+  return { data: list.map((c) => contractView(c, ctx, debts)) };
+}
 
-  // 2. Tìm phòng hiện tại của sinh viên
-  const activeContract = await Contract.findOne({
-    studentId,
-    status: 'active',
-  });
+/** GET /portal/my-invoices ?scope=personal|room&status=&page=&limit= (FR-62) — chưa nộp lên đầu, rồi mới nhất */
+async function myInvoices(req) {
+  const st = await me(req);
+  const q = req.query;
+  const filter = await visibleFilter(st);
+  if (q.scope) filter.scope = q.scope;
+  if (q.status) filter.status = q.status;
+  const rows = (await fees.invoiceViews(await Invoice.find(filter).lean()))
+    .sort((x, y) => (x.status === y.status ? 0 : x.status === 'unpaid' ? -1 : 1) || new Date(y.createdAt) - new Date(x.createdAt));
+  return { data: paginate(rows, { limit: 100, ...q }) };
+}
 
-  let roomUtilityInvoices = [];
-  if (activeContract && activeContract.roomId) {
-    roomUtilityInvoices = await Invoice.find({
-      roomId: activeContract.roomId,
-      type: 'utility',
-    })
-      .populate('studentId', 'studentCode fullName') // Người đại diện đã nộp (nếu có)
-      .populate('utilityReadingId')
-      .sort({ createdAt: -1 });
-  }
+async function myInvoice(req) {
+  const st = await me(req);
+  const inv = isObjectId(req.params.id) ? await Invoice.findById(req.params.id).lean() : null;
+  if (!inv) fail(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn');
+  await assertVisible(st, inv);
+  return fees.getInvoice(req.params.id);
+}
 
+/** GET /portal/my-invoices/:id/vietqr (FR-53). Nội dung chuyển khoản bỏ dấu `-` (app ngân hàng hay lược mất) */
+async function myInvoiceVietqr(req) {
+  const st = await me(req);
+  const inv = isObjectId(req.params.id) ? await Invoice.findById(req.params.id).lean() : null;
+  if (!inv) fail(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn');
+  await assertVisible(st, inv);
+  if (inv.status === 'paid') fail(409, 'INVOICE_ALREADY_PAID', `Hóa đơn ${inv.invoiceCode} đã được thanh toán`);
+  const code = inv.invoiceCode.replace(/-/g, '');
+  const ctx = await loadCtx({ roomIds: [inv.roomId] });
+  const room = ctx.rooms.get(String(inv.roomId));
   return {
-    personalInvoices,
-    roomUtilityInvoices,
+    data: {
+      ...config.vietqr,
+      amount: inv.amount,
+      transferContent: inv.scope === 'room' ? `HAUI ${code} P${room?.roomNumber ?? ''}` : `HAUI ${code} ${st.studentCode}`,
+    },
   };
-};
+}
 
-/**
- * 4. Lịch sử thanh toán & Hoàn cọc (FR-63)
- */
-const getMyPayments = async (studentId) => {
-  const payments = await Payment.find({ studentId })
-    .populate('invoiceId', 'invoiceCode type amount description')
-    .sort({ paidAt: -1 });
+/** GET /portal/my-payments — phiếu thu hóa đơn của mình và của phòng mình (FR-63), mới nhất trước */
+async function myPayments(req) {
+  const st = await me(req);
+  const visible = await Invoice.find(await visibleFilter(st)).select('_id').lean();
+  const list = await Payment.find({ invoiceId: { $in: visible.map((i) => i._id) } }).sort({ paidAt: -1 }).lean();
+  return { data: paginate(await payments.paymentViews(list), { limit: 100, ...req.query }) };
+}
 
-  return payments;
-};
+/** GET /portal/my-room/utility-history ?limit=12 — chỉ tháng ĐÃ chốt của phòng đang ở (chưa chốt thì số còn đổi) */
+async function myRoomUtilityHistory(req) {
+  const st = await me(req);
+  const c = await holdingContract(st._id);
+  if (!c) return { data: [] };
+  const list = await UtilityReading.find({ roomId: c.roomId, isBilled: true }).sort({ monthYear: -1 })
+    .limit(Math.min(Number(req.query.limit) || 12, 24)).lean();
+  return { data: list.map(fees.readingView) };
+}
 
 module.exports = {
-  getMyRoom,
-  getMyContract,
-  getMyInvoices,
-  getMyPayments,
+  profile, myResidence, myContracts, myInvoices, myInvoice, myInvoiceVietqr, myPayments, myRoomUtilityHistory,
 };

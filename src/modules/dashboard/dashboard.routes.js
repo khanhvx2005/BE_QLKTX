@@ -1,23 +1,17 @@
 /**
- * Router định tuyến cho Module Dashboard (Báo cáo & Thống kê KTX HaUI).
- * Tuân thủ theo EDIT_DOCS_DAC_TA_YEU_CAU.md §3.8.
+ * /api/dashboard — API.md §10. Doanh thu chỉ Admin (Staff → 403 FORBIDDEN).
  */
 
 const express = require('express');
-const router = express.Router();
-
-const dashboardController = require('./dashboard.controller');
 const { authenticate, authorize } = require('../../core/middlewares/auth');
+const { respond } = require('../../core/utils/http');
+const service = require('./dashboard.service');
 
+const router = express.Router();
 router.use(authenticate);
 
-// 1. Thống kê KPI tổng quan (FR-70 - Cán bộ KTX & Admin)
-router.get('/kpi', authorize('admin', 'staff'), dashboardController.getSummaryKPI);
-
-// 2. Báo cáo lấp đầy theo từng tòa nhà (FR-71 - Cán bộ KTX & Admin)
-router.get('/occupancy', authorize('admin', 'staff'), dashboardController.getBuildingOccupancy);
-
-// 3. Báo cáo Doanh thu tài chính chi tiết (FR-72 - Chỉ Quản trị viên Admin)
-router.get('/revenue', authorize('admin'), dashboardController.getRevenueReport);
+router.get('/summary', authorize('admin', 'staff'), respond(() => service.summary()));
+router.get('/occupancy', authorize('admin', 'staff'), respond(() => service.occupancy()));
+router.get('/revenue', authorize('admin'), respond((req) => service.revenue(req.query)));
 
 module.exports = router;

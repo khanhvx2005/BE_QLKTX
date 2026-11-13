@@ -1,269 +1,132 @@
 /**
- * Service xử lý nghiệp vụ Quản lý tài khoản (/api/users).
- * Tuân thủ theo EDIT_DOCS_DAC_TA_YEU_CAU.md §3.1 (FR-06 & FR-07).
+ * Tài khoản — API.md §2. Màn quản lý tài khoản chỉ Admin; đặt lại mật khẩu thì Staff làm được cho SINH VIÊN.
+ * Chỉ tạo tài khoản admin/staff ở đây; tài khoản sinh viên chỉ sinh ra khi duyệt đơn (FR-02).
  */
 
+const crypto = require('crypto');
 const User = require('./user.model');
 const Student = require('../students/student.model');
-const ApiError = require('../../core/errors/api-error');
-const { generateTemporaryPassword } = require('./auth.service');
+const { fail, fieldErrors, paginate, matches } = require('../../core/utils/http');
 
-const roleWeight = {
-  admin: 1,
-  staff: 2,
-  student: 3,
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ROLE_ORDER = { admin: 0, staff: 1, student: 2 };
+
+/** Mật khẩu tạm 10 ký tự, có chữ và số, bỏ ký tự dễ nhầm (0/O, 1/l/I) */
+const genTempPassword = () => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const s = Array.from({ length: 10 }, () => chars[crypto.randomInt(0, chars.length)]).join('');
+  return /\d/.test(s) && /[A-Za-z]/.test(s) ? s : genTempPassword();
 };
 
-/**
- * 1. Lấy danh sách tài khoản kèm thống kê summary (FR-07 - Chỉ dành cho Admin)
- */
-const getUsers = async (query = {}) => {
-  const page = parseInt(query.page, 10) || 1;
-  const limit = parseInt(query.limit, 10) || 20;
-  const skip = (page - 1) * limit;
+const userView = (u, student = null) => ({
+  id: String(u._id),
+  email: u.email,
+  fullName: u.fullName,
+  role: u.role,
+  isActive: u.isActive,
+  mustChangePassword: Boolean(u.mustChangePassword),
+  lastLoginAt: u.lastLoginAt,
+  createdAt: u.createdAt,
+  student: student ? { id: String(student._id), studentCode: student.studentCode, fullName: student.fullName, gender: student.gender } : null,
+});
 
-  // Tính toán summary trên toàn bộ users
-  const allUsers = await User.find({}).select('role isActive');
+async function viewOf(user) {
+  const st = user.studentId ? await Student.findById(user.studentId).lean() : null;
+  return userView(user, st);
+}
+
+async function findUser(id) {
+  const u = await User.findById(id);
+  if (!u) fail(404, 'NOT_FOUND', 'Không tìm thấy tài khoản');
+  return u;
+}
+
+const activeAdminCount = () => User.countDocuments({ role: 'admin', isActive: true });
+
+async function assertEmailFree(email, exceptId = null) {
+  const taken = await User.exists({ email, ...(exceptId ? { _id: { $ne: exceptId } } : {}) });
+  if (taken) fail(409, 'DUPLICATE_ENTRY', 'Email này đã được dùng cho tài khoản khác', { errors: [{ field: 'email', message: 'Email này đã được dùng cho tài khoản khác' }] });
+}
+
+async function list(q = {}) {
+  const all = await User.find().lean();
+  const students = new Map((await Student.find({ _id: { $in: all.map((u) => u.studentId).filter(Boolean) } }).lean()).map((s) => [String(s._id), s]));
+  let rows = all.map((u) => userView(u, students.get(String(u.studentId))));
+  if (q.role) rows = rows.filter((u) => u.role === q.role);
+  if (q.isActive !== undefined && q.isActive !== '') rows = rows.filter((u) => String(u.isActive) === String(q.isActive));
+  rows = rows.filter((u) => matches(q.search, [u.email, u.fullName, u.student?.studentCode]));
+  rows.sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || a.fullName.localeCompare(b.fullName, 'vi'));
   const summary = {
-    all: allUsers.length,
-    admin: 0,
-    staff: 0,
-    student: 0,
-    locked: 0,
+    all: all.length,
+    admin: all.filter((u) => u.role === 'admin').length,
+    staff: all.filter((u) => u.role === 'staff').length,
+    student: all.filter((u) => u.role === 'student').length,
+    locked: all.filter((u) => !u.isActive).length,
   };
+  return { data: paginate(rows, q, { summary }) };
+}
 
-  allUsers.forEach((u) => {
-    if (u.isActive === false) summary.locked += 1;
-    if (summary[u.role] !== undefined) summary[u.role] += 1;
-  });
+async function create(body = {}) {
+  const email = String(body.email || '').trim().toLowerCase();
+  const fullName = String(body.fullName || '').trim();
+  const errors = [];
+  if (!EMAIL_RE.test(email)) errors.push({ field: 'email', message: 'Email không đúng định dạng' });
+  if (!fullName) errors.push({ field: 'fullName', message: 'Nhập họ tên' });
+  if (!['admin', 'staff'].includes(body.role)) errors.push({ field: 'role', message: 'Chọn vai trò quản trị viên hoặc cán bộ' });
+  if (errors.length) fieldErrors(errors);
+  await assertEmailFree(email);
 
-  const filter = {};
-  if (query.role) filter.role = query.role;
-  if (query.isActive !== undefined) {
-    filter.isActive = query.isActive === true || query.isActive === 'true';
-  }
-
-  let users = await User.find(filter)
-    .populate('studentId', 'studentCode fullName')
-    .sort({ createdAt: -1 });
-
-  // Tìm kiếm theo email, fullName, studentCode
-  if (query.search) {
-    const s = query.search.trim().toLowerCase();
-    users = users.filter((u) => {
-      const email = u.email?.toLowerCase() || '';
-      const name = u.fullName?.toLowerCase() || '';
-      const stuCode = u.studentId?.studentCode?.toLowerCase() || '';
-      return email.includes(s) || name.includes(s) || stuCode.includes(s);
-    });
-  }
-
-  // Sắp xếp admin -> staff -> student, sau đó theo tên
-  users.sort((a, b) => {
-    const wA = roleWeight[a.role] || 99;
-    const wB = roleWeight[b.role] || 99;
-    if (wA !== wB) return wA - wB;
-    return (a.fullName || '').localeCompare(b.fullName || '');
-  });
-
-  const total = users.length;
-  const paginated = users.slice(skip, skip + limit);
-
-  const items = paginated.map((u) => ({
-    id: u._id.toString(),
-    email: u.email,
-    fullName: u.fullName,
-    role: u.role,
-    isActive: u.isActive,
-    mustChangePassword: Boolean(u.mustChangePassword),
-    lastLoginAt: u.lastLoginAt,
-    createdAt: u.createdAt,
-    student: u.studentId ? {
-      id: u.studentId._id.toString(),
-      studentCode: u.studentId.studentCode,
-      fullName: u.studentId.fullName,
-    } : null,
-  }));
-
-  return {
-    items,
-    total,
-    page,
-    limit,
-    summary,
-  };
-};
-
-/**
- * 2. Tạo tài khoản mới trực tiếp (Chỉ dành cho Admin)
- */
-const createUser = async (data) => {
-  const emailLower = data.email.trim().toLowerCase();
-
-  const existing = await User.findOne({ email: emailLower });
-  if (existing) {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'Email đã được sử dụng');
-  }
-
-  let fullName = data.fullName;
-  let studentDoc = null;
-
-  if (data.role === 'student' && data.studentId) {
-    studentDoc = await Student.findById(data.studentId);
-    if (!studentDoc) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'Sinh viên không tồn tại');
-    }
-
-    if (studentDoc.userId) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'Sinh viên này đã có tài khoản');
-    }
-    fullName = studentDoc.fullName;
-  }
-
-  const temporaryPassword = generateTemporaryPassword(8);
-  const passwordHash = await User.hashPassword(temporaryPassword);
-
+  const temporaryPassword = genTempPassword();
   const user = await User.create({
-    email: emailLower,
-    passwordHash,
-    fullName,
-    role: data.role,
-    studentId: studentDoc ? studentDoc._id : null,
-    isActive: true,
-    mustChangePassword: true,
+    email, fullName, role: body.role, passwordHash: await User.hashPassword(temporaryPassword), mustChangePassword: true,
   });
+  return { data: { user: userView(user), temporaryPassword }, message: 'Đã tạo tài khoản', status: 201 };
+}
 
-  if (studentDoc) {
-    studentDoc.userId = user._id;
-    await studentDoc.save();
+async function update(id, body = {}, actor) {
+  const u = await findUser(id);
+  const email = body.email !== undefined ? String(body.email).trim().toLowerCase() : u.email;
+  const role = body.role ?? u.role;
+  const errors = [];
+  if (!EMAIL_RE.test(email)) errors.push({ field: 'email', message: 'Email không đúng định dạng' });
+  if (u.role !== 'student' && body.fullName !== undefined && !String(body.fullName).trim()) errors.push({ field: 'fullName', message: 'Nhập họ tên' });
+  if (!Object.keys(ROLE_ORDER).includes(role)) errors.push({ field: 'role', message: 'Vai trò không hợp lệ' });
+  if (role !== u.role && (role === 'student' || u.role === 'student')) errors.push({ field: 'role', message: 'Không đổi được vai trò giữa sinh viên và cán bộ' });
+  if (errors.length) fieldErrors(errors);
+  if (role !== u.role && String(u._id) === actor.id) fail(422, 'CANNOT_MODIFY_SELF', 'Không thể tự đổi vai trò của chính mình');
+  if (u.role === 'admin' && role !== 'admin' && u.isActive && (await activeAdminCount()) === 1) {
+    fail(422, 'LAST_ACTIVE_ADMIN', 'Không thể đổi vai trò của quản trị viên cuối cùng đang hoạt động');
   }
+  await assertEmailFree(email, u._id);
+  u.email = email;
+  u.role = role;
+  // Họ tên tài khoản sinh viên đi theo hồ sơ sinh viên, không sửa ở đây
+  if (u.role !== 'student' && body.fullName !== undefined) u.fullName = String(body.fullName).trim();
+  await u.save();
+  return { data: await viewOf(u), message: 'Cập nhật tài khoản thành công' };
+}
 
-  return {
-    user: {
-      id: user._id.toString(),
-      email: user.email,
-      fullName: user.fullName,
-      role: user.role,
-      isActive: user.isActive,
-      mustChangePassword: true,
-    },
-    temporaryPassword,
-  };
-};
-
-/**
- * 3. Cập nhật thông tin tài khoản (Chỉ dành cho Admin)
- */
-const updateUser = async (id, data, actorUserId) => {
-  const user = await User.findById(id);
-  if (!user) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy tài khoản');
+async function setStatus(id, { isActive } = {}, actor) {
+  if (typeof isActive !== 'boolean') fieldErrors([{ field: 'isActive', message: 'Trạng thái không hợp lệ' }]);
+  const u = await findUser(id);
+  if (!isActive && String(u._id) === actor.id) fail(422, 'CANNOT_MODIFY_SELF', 'Không thể tự khóa tài khoản của chính mình');
+  if (!isActive && u.role === 'admin' && u.isActive && (await activeAdminCount()) === 1) {
+    fail(422, 'LAST_ACTIVE_ADMIN', 'Không thể khóa quản trị viên cuối cùng đang hoạt động');
   }
+  u.isActive = isActive;
+  await u.save();
+  return { data: await viewOf(u), message: isActive ? 'Đã mở khóa tài khoản' : 'Đã khóa tài khoản' };
+}
 
-  if (data.email && data.email.toLowerCase() !== user.email.toLowerCase()) {
-    const existing = await User.findOne({ email: data.email.toLowerCase() });
-    if (existing) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'Email đã được sử dụng bởi tài khoản khác');
-    }
-    user.email = data.email.toLowerCase();
-  }
+async function resetPassword(id, actor) {
+  const u = await findUser(id);
+  if (actor.role === 'staff' && u.role !== 'student') fail(403, 'FORBIDDEN', 'Cán bộ chỉ đặt lại được mật khẩu tài khoản sinh viên');
+  if (String(u._id) === actor.id) fail(422, 'CANNOT_MODIFY_SELF', 'Dùng chức năng Đổi mật khẩu cho tài khoản của chính mình');
+  const temporaryPassword = genTempPassword();
+  u.passwordHash = await User.hashPassword(temporaryPassword);
+  u.mustChangePassword = true;
+  await u.save();
+  return { data: { temporaryPassword, mustChangePassword: true }, message: 'Đã đặt lại mật khẩu' };
+}
 
-  if (data.fullName !== undefined) user.fullName = data.fullName;
-  if (data.role !== undefined) {
-    // Không thể tự hạ quyền admin của chính mình nếu là admin cuối cùng
-    if (user.role === 'admin' && data.role !== 'admin') {
-      const activeAdmins = await User.countDocuments({ role: 'admin', isActive: true });
-      if (activeAdmins <= 1) {
-        throw new ApiError(422, 'LAST_ACTIVE_ADMIN', 'Không thể hạ quyền quản trị viên duy nhất của hệ thống');
-      }
-    }
-    user.role = data.role;
-  }
-
-  await user.save();
-
-  return {
-    id: user._id.toString(),
-    email: user.email,
-    fullName: user.fullName,
-    role: user.role,
-    isActive: user.isActive,
-  };
-};
-
-/**
- * 4. Khóa / Mở khóa tài khoản (FR-07 - Chỉ dành cho Admin)
- */
-const updateAccountStatus = async (id, isActive, actorUserId) => {
-  if (actorUserId && actorUserId.toString() === id.toString()) {
-    throw new ApiError(422, 'CANNOT_MODIFY_SELF', 'Không thể tự khóa tài khoản của chính mình');
-  }
-
-  const user = await User.findById(id);
-  if (!user) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy tài khoản');
-  }
-
-  // Chống khóa admin cuối cùng
-  if (user.role === 'admin' && !isActive) {
-    const activeAdmins = await User.countDocuments({ role: 'admin', isActive: true });
-    if (activeAdmins <= 1) {
-      throw new ApiError(
-        422,
-        'LAST_ACTIVE_ADMIN',
-        'Không thể khóa quản trị viên cuối cùng đang hoạt động của hệ thống'
-      );
-    }
-  }
-
-  user.isActive = Boolean(isActive);
-  await user.save();
-
-  return {
-    id: user._id.toString(),
-    email: user.email,
-    fullName: user.fullName,
-    role: user.role,
-    isActive: user.isActive,
-  };
-};
-
-/**
- * 5. Đặt lại mật khẩu tạm thời (FR-06 - Admin / Staff)
- */
-const resetPassword = async (id, actorUser) => {
-  if (actorUser.id.toString() === id.toString()) {
-    throw new ApiError(422, 'CANNOT_MODIFY_SELF', 'Không thể tự reset mật khẩu của chính mình tại mục này');
-  }
-
-  const user = await User.findById(id);
-  if (!user) {
-    throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy tài khoản');
-  }
-
-  // Staff không được reset mật khẩu của Admin
-  if (actorUser.role === 'staff' && user.role === 'admin') {
-    throw new ApiError(403, 'FORBIDDEN', 'Cán bộ không có quyền đặt lại mật khẩu cho Quản trị viên (Admin)');
-  }
-
-  // Sinh mật khẩu tạm mới
-  const temporaryPassword = generateTemporaryPassword(8);
-  user.passwordHash = await User.hashPassword(temporaryPassword);
-  user.mustChangePassword = true; // Bắt buộc đổi MK lần sau
-  await user.save();
-
-  return {
-    email: user.email,
-    fullName: user.fullName,
-    temporaryPassword,
-    message: 'Đặt lại mật khẩu tạm thành công. Vui lòng cung cấp mật khẩu này cho người dùng.',
-  };
-};
-
-module.exports = {
-  getUsers,
-  createUser,
-  updateUser,
-  updateAccountStatus,
-  resetPassword,
-};
+module.exports = { list, create, update, setStatus, resetPassword };
