@@ -25,6 +25,7 @@ const {
 } = require('../../shared/views');
 const { numericSort } = require('../rooms/room.service');
 const logger = require('../../core/logger/logger');
+const { sendAccountEmail } = require('../../core/email/email.service');
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const bedText = (b, room, n) => `giường ${pad2(n)} phòng ${b?.code ?? ''}-${room.roomNumber}`;
@@ -268,13 +269,29 @@ async function approve(id, body = {}, actor) {
       });
     }
     const created = await issuePersonalInvoices(updated, room, building);
-    // Chưa có dịch vụ gửi mail: báo `emailSent: false` để màn duyệt nhắc cán bộ tự báo SV (API.md §6)
-    logger.info(`[Duyệt đơn] ${updated.contractCode}: cần gửi tài khoản ${st.studentCode} tới ${email}`);
+
+    // Gửi email cấp tài khoản và thông báo kết quả duyệt đơn
+    let emailSent = false;
+    try {
+      emailSent = await sendAccountEmail({
+        to: email,
+        studentName: st.fullName,
+        studentCode: st.studentCode,
+        roomName: `${building?.name || building?.code || 'Tòa KTX'} - Phòng ${room.roomNumber}`,
+        bedNumber: bedNo,
+        termName: updated.term === '12_months' ? 'Cả năm học (12 tháng)' : 'Học kỳ (6 tháng)',
+      });
+    } catch (mailErr) {
+      logger.error('[Duyệt đơn] Lỗi khi gửi email:', mailErr);
+      emailSent = false;
+    }
+
+    logger.info(`[Duyệt đơn] ${updated.contractCode}: cấp tài khoản ${st.studentCode} tới ${email} (emailSent=${emailSent})`);
     return {
       data: {
         contract: await viewOne(updated),
         account: { studentCode: st.studentCode, email: account.email, isNew },
-        emailSent: false,
+        emailSent,
         invoices: created.map((i) => ({ id: String(i._id), invoiceCode: i.invoiceCode, type: i.type, amount: i.amount, dueDate: i.dueDate })),
       },
       message: 'Đã duyệt đơn',
