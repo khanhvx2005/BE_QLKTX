@@ -1,8 +1,8 @@
 {
-  "name": "be_quanlyktx",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "be_qlktx",
+  "version": "2.0.0",
+  "description": "Backend RESTful API — Hệ thống Quản lý Ký túc xá Đại học Công nghiệp Hà Nội (HaUI - DMS)",
+  "main": "src/server.js",
   "directories": {
     "doc": "docs"
   },
@@ -13,18 +13,14 @@
     "seed": "node src/scripts/seed.js",
     "test": "node src/scripts/test-haui-dms.js"
   },
-  "author": "",
   "license": "ISC",
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "ioredis": "^6.0.0",
-    "joi": "^18.2.9",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.10.0",
-    "node-cron": "^4.6.0",
     "nodemailer": "^10.6.0"
   },
   "devDependencies": {

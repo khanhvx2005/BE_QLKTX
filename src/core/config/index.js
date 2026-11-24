@@ -1,11 +1,10 @@
 /**
- * Quản lý cấu hình toàn hệ thống từ biến môi trường.
- * Đảm bảo single source of truth cho configuration.
+ * Quản lý cấu hình toàn hệ thống từ biến môi trường (.env).
+ * Single source of truth cho toàn bộ thông số cấu hình Backend.
  */
 
 const dotenv = require('dotenv');
 
-// Nạp cấu hình từ .env
 dotenv.config();
 
 const config = {
@@ -31,8 +30,8 @@ const config = {
   },
 
   /**
-   * Tài khoản nhận tiền cho mã VietQR (FR-53). Mặc định là SỐ MẪU — điền tài khoản thật vào .env khi triển khai.
-   * bankBin là mã BIN ngân hàng 6 số (VD 970436 Vietcombank).
+   * Tài khoản nhận tiền cho mã VietQR động (chuẩn NAPAS 247).
+   * Mặc định dùng số mẫu khi chạy thử — cấu hình tài khoản thật trong .env khi triển khai.
    */
   vietqr: {
     bankBin: process.env.VIETQR_BANK_BIN || '970436',
@@ -40,17 +39,18 @@ const config = {
     accountName: process.env.VIETQR_ACCOUNT_NAME || 'KY TUC XA HAUI',
   },
 
-  scheduler: {
-    enableCron: process.env.ENABLE_CRON === 'true',
-    timezone: process.env.TZ || 'Asia/Ho_Chi_Minh',
-  },
-
-  redis: {
-    uri: process.env.REDIS_URI || process.env.REDIS_URL || 'redis://127.0.0.1:6379',
-    host: process.env.REDIS_HOST || '127.0.0.1',
-    port: parseInt(process.env.REDIS_PORT, 10) || 6379,
-    password: process.env.REDIS_PASSWORD || undefined,
-    enabled: process.env.ENABLE_REDIS !== 'false',
+  /**
+   * Cấu hình SMTP (Nodemailer) gửi email cấp tài khoản & kết quả xét duyệt đơn KTX.
+   * Nếu bỏ trống SMTP_USER / SMTP_PASS, hệ thống tự động bỏ qua gửi mail thật và ghi log.
+   */
+  smtp: {
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT, 10) || 587,
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || '',
+    from: process.env.SMTP_FROM || process.env.SMTP_USER || '',
+    fromName: process.env.SMTP_FROM_NAME || 'Ký túc xá Đại học Công nghiệp Hà Nội (HaUI - DMS)',
+    frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   },
 };
 

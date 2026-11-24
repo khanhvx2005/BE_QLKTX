@@ -25,7 +25,7 @@ const {
 } = require('../../shared/views');
 const { numericSort } = require('../rooms/room.service');
 const logger = require('../../core/logger/logger');
-const { sendAccountEmail } = require('../../core/email/email.service');
+const { sendAccountEmail, sendRejectionEmail } = require('../../core/email/email.service');
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const bedText = (b, room, n) => `giường ${pad2(n)} phòng ${b?.code ?? ''}-${room.roomNumber}`;
@@ -319,6 +319,18 @@ async function reject(id, body = {}, actor) {
     { returnDocument: 'after' }
   ).lean();
   if (!updated) fail(409, 'CONTRACT_NOT_PENDING', 'Đơn đăng ký đã được xử lý');
+
+  const st = await Student.findById(updated.studentId).lean();
+  if (st?.email) {
+    sendRejectionEmail({
+      to: st.email,
+      studentName: st.fullName,
+      studentCode: st.studentCode,
+      contractCode: updated.contractCode,
+      reason,
+    }).catch((err) => logger.error('[Từ chối đơn] Lỗi khi gửi email:', err));
+  }
+
   return { data: await viewOne(updated), message: 'Đã từ chối đơn đăng ký' };
 }
 

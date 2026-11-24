@@ -1,10 +1,9 @@
 /**
- * Mongoose Schema cho collection Buildings.
- * Quản lý danh mục tòa nhà ký túc xá.
- * Tuân thủ theo DATA-SCHEMA.md §3.3.
+ * Tòa nhà KTX (K1, K2, K3, K4...) — DATA-SCHEMA.md §3.3, API.md §4.
  */
 
 const mongoose = require('mongoose');
+const toJSON = require('../../shared/to-json');
 
 const buildingSchema = new mongoose.Schema(
   {
@@ -22,12 +21,9 @@ const buildingSchema = new mongoose.Schema(
       trim: true,
       maxLength: [100, 'Tên tòa nhà tối đa 100 ký tự'],
     },
-    address: {
-      type: String,
-      trim: true,
-    },
     description: {
       type: String,
+      default: '',
       trim: true,
     },
     isActive: {
@@ -35,19 +31,7 @@ const buildingSchema = new mongoose.Schema(
       default: true,
     },
   },
-  {
-    timestamps: true,
-    toJSON: {
-      transform(doc, ret) {
-        ret.id = ret._id;
-        delete ret._id;
-        delete ret.__v;
-        return ret;
-      },
-    },
-  }
+  { timestamps: true, toJSON }
 );
 
-const Building = mongoose.model('Building', buildingSchema);
-
-module.exports = Building;
+module.exports = mongoose.model('Building', buildingSchema);
