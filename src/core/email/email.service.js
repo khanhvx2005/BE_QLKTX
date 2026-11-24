@@ -1,7 +1,9 @@
 /**
- * Dịch vụ gửi email thông báo hệ thống Ký túc xá HaUI (Nodemailer SMTP).
- * - Gửi thông báo phê duyệt đơn đăng ký KTX kèm tài khoản khởi tạo (FR-02, FR-32).
- * - Gửi thông báo từ chối đơn đăng ký kèm lý do chi tiết (FR-33).
+ * Dịch vụ gửi email thông báo tự động (Nodemailer SMTP) cho KTX HaUI v3.0:
+ * 1. Duyệt đơn & cấp tài khoản kèm hạn đóng phí 7 ngày (pending_payment)
+ * 2. Từ chối đơn kèm lý do
+ * 3. Xác nhận đã thanh toán & gửi mã QR Check-in nhận phòng (active)
+ * 4. Thông báo hóa đơn điện nước hàng tháng cho toàn bộ thành viên trong phòng
  */
 
 const nodemailer = require('nodemailer');
@@ -20,127 +22,150 @@ const escapeHtml = (value) =>
 
 function getTransporter() {
   if (transporter) return transporter;
-
   const { host, port, user, pass } = config.smtp;
-  if (!user || !pass) {
-    return null;
-  }
-
+  if (!user || !pass) return null;
   transporter = nodemailer.createTransport({
     host,
     port,
     secure: port === 465,
     auth: { user, pass },
   });
-
   return transporter;
 }
 
-/**
- * Gửi email cấp tài khoản và thông báo kết quả phê duyệt đơn KTX cho sinh viên
- */
-async function sendAccountEmail({ to, studentName, studentCode, roomName, bedNumber, termName }) {
+async function sendMailSafe({ to, subject, html, tag }) {
   const mailer = getTransporter();
   if (!mailer || !to) {
-    logger.warn(`[EMAIL] Chưa cấu hình SMTP_USER/SMTP_PASS trong .env — bỏ qua gửi email duyệt đơn tới ${to}`);
+    logger.warn(`[EMAIL:${tag}] Chưa cấu hình SMTP hoặc thiếu địa chỉ nhận — bỏ qua gửi tới ${to}`);
     return false;
   }
-
   try {
-    const { fromName, from, frontendUrl } = config.smtp;
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
-        <div style="background-color: #1e40af; color: #ffffff; padding: 20px; text-align: center;">
-          <h2 style="margin: 0; font-size: 20px;">TRƯỜNG ĐẠI HỌC CÔNG NGHIỆP HÀ NỘI</h2>
-          <p style="margin: 5px 0 0; font-size: 14px; opacity: 0.9;">BAN QUẢN LÝ KÝ TÚC XÁ</p>
-        </div>
-        <div style="padding: 24px; color: #1e293b; line-height: 1.6;">
-          <p>Xin chào <strong>${escapeHtml(studentName)}</strong>,</p>
-          <p>Đơn đăng ký nội trú Ký túc xá HaUI của bạn đã được <strong>PHÊ DUYỆT THÀNH CÔNG</strong>.</p>
-          <div style="background-color: #f8fafc; border-left: 4px solid #3b82f6; padding: 12px 16px; margin: 16px 0; border-radius: 0 4px 4px 0;">
-            <p style="margin: 4px 0;"><strong>Chỗ ở được phân bổ:</strong> ${escapeHtml(roomName)} - Giường số ${String(bedNumber).padStart(2, '0')}</p>
-            <p style="margin: 4px 0;"><strong>Gói thời hạn:</strong> ${escapeHtml(termName || 'Học kỳ')}</p>
-          </div>
-          <p>Hệ thống đã tự động kích hoạt tài khoản Cổng dịch vụ KTX cho bạn với thông tin đăng nhập:</p>
-          <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 14px 18px; margin: 16px 0;">
-            <p style="margin: 4px 0;"><strong>Tên đăng nhập (Email hoặc MSSV):</strong> <code style="color: #1e40af; font-size: 15px;">${escapeHtml(studentCode)}</code></p>
-            <p style="margin: 4px 0;"><strong>Mật khẩu ban đầu:</strong> <code style="color: #1e40af; font-size: 15px;">${escapeHtml(studentCode)}</code></p>
-          </div>
-          <p style="color: #dc2626; font-size: 13px;"><em>* Lưu ý bắt buộc: Bạn phải đổi mật khẩu mới ở lần đăng nhập đầu tiên để bảo vệ tài khoản.</em></p>
-          <p>Vui lòng đăng nhập vào cổng KTX để xem hợp đồng và thanh toán các hóa đơn tiếp nhận.</p>
-          <div style="text-align: center; margin: 24px 0;">
-            <a href="${escapeHtml(frontendUrl)}/login" style="background-color: #2563eb; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Đăng nhập Cổng KTX</a>
-          </div>
-        </div>
-        <div style="background-color: #f1f5f9; padding: 12px 20px; text-align: center; font-size: 12px; color: #64748b;">
-          Email tự động từ Hệ thống Quản lý Ký túc xá HaUI - DMS. Vui lòng không phản hồi email này.
-        </div>
-      </div>
-    `;
-
-    await mailer.sendMail({
-      from: `"${fromName}" <${from}>`,
-      to,
-      subject: `[HaUI - DMS] Thông báo duyệt đơn KTX & Cấp tài khoản sinh viên (${studentCode})`,
-      html,
-    });
-
-    logger.info(`[EMAIL] Đã gửi email thông báo duyệt đơn tới ${to}`);
+    const { fromName, from } = config.smtp;
+    await mailer.sendMail({ from: `"${fromName}" <${from}>`, to, subject, html });
+    logger.info(`[EMAIL:${tag}] Đã gửi email tới ${to}`);
     return true;
   } catch (err) {
-    logger.error(`[EMAIL] Gửi email duyệt đơn thất bại tới ${to}:`, err);
+    logger.error(`[EMAIL:${tag}] Gửi email thất bại tới ${to}:`, err);
     return false;
   }
 }
 
-/**
- * Gửi email thông báo từ chối đơn đăng ký KTX kèm lý do cho sinh viên
- */
-async function sendRejectionEmail({ to, studentName, studentCode, contractCode, reason }) {
-  const mailer = getTransporter();
-  if (!mailer || !to) {
-    logger.warn(`[EMAIL] Chưa cấu hình SMTP_USER/SMTP_PASS trong .env — bỏ qua gửi email từ chối tới ${to}`);
-    return false;
-  }
+async function sendAccountEmail({ to, studentName, studentCode, roomName, termName, paymentDeadline, isNewAccount = true }) {
+  const { frontendUrl } = config.smtp;
+  const accountBlock = isNewAccount
+    ? `<div style="background-color:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:14px 18px;margin:16px 0;">
+        <p style="margin:4px 0;"><strong>Tên đăng nhập (MSSV / Email):</strong> <code>${escapeHtml(studentCode)}</code></p>
+        <p style="margin:4px 0;"><strong>Mật khẩu khởi tạo:</strong> <code>${escapeHtml(studentCode)}</code></p>
+      </div>
+      <p style="color:#dc2626;font-size:13px;"><em>* Bắt buộc đổi mật khẩu mới ở lần đăng nhập đầu tiên.</em></p>`
+    : `<p>Vui lòng đăng nhập lại bằng tài khoản KTX hiện có của bạn (<strong>${escapeHtml(studentCode)}</strong>).</p>`;
 
-  try {
-    const { fromName, from } = config.smtp;
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
-        <div style="background-color: #991b1b; color: #ffffff; padding: 20px; text-align: center;">
-          <h2 style="margin: 0; font-size: 20px;">TRƯỜNG ĐẠI HỌC CÔNG NGHIỆP HÀ NỘI</h2>
-          <p style="margin: 5px 0 0; font-size: 14px; opacity: 0.9;">BAN QUẢN LÝ KÝ TÚC XÁ</p>
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:#1e40af;color:#fff;padding:20px;text-align:center;">
+        <h2 style="margin:0;font-size:18px;">TRƯỜNG ĐẠI HỌC CÔNG NGHIỆP HÀ NỘI</h2>
+        <p style="margin:4px 0 0;font-size:13px;">TRUNG TÂM HỖ TRỢ SINH VIÊN — KÝ TÚC XÁ HaUI</p>
+      </div>
+      <div style="padding:24px;color:#1e293b;line-height:1.6;">
+        <p>Xin chào <strong>${escapeHtml(studentName)}</strong>,</p>
+        <p>Đơn đăng ký KTX HaUI của bạn đã được <strong>PHÊ DUYỆT & GIỮ CHỖ TẠM THỜI</strong>.</p>
+        <div style="background-color:#f8fafc;border-left:4px solid #3b82f6;padding:12px 16px;margin:16px 0;">
+          <p style="margin:4px 0;"><strong>Phòng ở dự kiến:</strong> ${escapeHtml(roomName)}</p>
+          <p style="margin:4px 0;"><strong>Gói thời hạn:</strong> ${escapeHtml(termName)}</p>
+          <p style="margin:4px 0;"><strong>Hạn chót đóng tiền giữ chỗ:</strong> <strong style="color:#dc2626;">${escapeHtml(paymentDeadline || '7 ngày')}</strong></p>
         </div>
-        <div style="padding: 24px; color: #1e293b; line-height: 1.6;">
-          <p>Xin chào <strong>${escapeHtml(studentName)}</strong> (MSSV: <strong>${escapeHtml(studentCode)}</strong>),</p>
-          <p>Đơn đăng ký nội trú Ký túc xá mã <strong>${escapeHtml(contractCode)}</strong> của bạn chưa được phê duyệt.</p>
-          <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 12px 16px; margin: 16px 0; border-radius: 0 4px 4px 0;">
-            <p style="margin: 4px 0;"><strong>Lý do từ chối:</strong> ${escapeHtml(reason)}</p>
-          </div>
-          <p>Nếu cần bổ sung thông tin hoặc chọn lại phòng phù hợp, bạn có thể nộp lại đơn mới trên Cổng tiếp nhận KTX công khai hoặc liên hệ Ban Quản lý KTX để được hỗ trợ.</p>
-        </div>
-        <div style="background-color: #f1f5f9; padding: 12px 20px; text-align: center; font-size: 12px; color: #64748b;">
-          Email tự động từ Hệ thống Quản lý Ký túc xá HaUI - DMS. Vui lòng không phản hồi email này.
+        ${accountBlock}
+        <p>Vui lòng đăng nhập Cổng sinh viên để quét mã <strong>VietQR</strong> đóng tiền phòng và tiền cọc trước hạn. Nếu quá hạn chưa đóng phí, hệ thống sẽ hủy kết quả để nhường chỗ cho đợt bổ sung.</p>
+        <div style="text-align:center;margin:20px 0;">
+          <a href="${escapeHtml(frontendUrl)}/login" style="background-color:#2563eb;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;font-weight:bold;">Đăng nhập Cổng KTX</a>
         </div>
       </div>
-    `;
+    </div>`;
+  return sendMailSafe({
+    to,
+    subject: `[HaUI - DMS] Phê duyệt giữ chỗ KTX & Hướng dẫn đóng phí (${studentCode})`,
+    html,
+    tag: 'APPROVE',
+  });
+}
 
-    await mailer.sendMail({
-      from: `"${fromName}" <${from}>`,
-      to,
-      subject: `[HaUI - DMS] Thông báo kết quả xét duyệt đơn KTX (${contractCode})`,
-      html,
-    });
+async function sendRejectionEmail({ to, studentName, studentCode, contractCode, reason }) {
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:#991b1b;color:#fff;padding:20px;text-align:center;">
+        <h2 style="margin:0;font-size:18px;">TRUNG TÂM KÝ TÚC XÁ ĐH CÔNG NGHIỆP HÀ NỘI</h2>
+      </div>
+      <div style="padding:24px;color:#1e293b;line-height:1.6;">
+        <p>Xin chào <strong>${escapeHtml(studentName)}</strong> (MSSV: <strong>${escapeHtml(studentCode)}</strong>),</p>
+        <p>Đơn đăng ký KTX mã <strong>${escapeHtml(contractCode)}</strong> chưa được phê duyệt.</p>
+        <div style="background-color:#fef2f2;border-left:4px solid #dc2626;padding:12px 16px;margin:16px 0;">
+          <p style="margin:4px 0;"><strong>Lý do:</strong> ${escapeHtml(reason)}</p>
+        </div>
+        <p>Bạn có thể bổ sung thông tin và nộp lại đơn nếu đợt đăng ký vẫn đang mở.</p>
+      </div>
+    </div>`;
+  return sendMailSafe({
+    to,
+    subject: `[HaUI - DMS] Kết quả xét duyệt đơn KTX (${contractCode})`,
+    html,
+    tag: 'REJECT',
+  });
+}
 
-    logger.info(`[EMAIL] Đã gửi email thông báo từ chối đơn tới ${to}`);
-    return true;
-  } catch (err) {
-    logger.error(`[EMAIL] Gửi email từ chối đơn thất bại tới ${to}:`, err);
-    return false;
-  }
+async function sendCheckinReadyEmail({ to, studentName, studentCode, contractCode, roomName, checkinCode, officeLocation }) {
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:#15803d;color:#fff;padding:20px;text-align:center;">
+        <h2 style="margin:0;font-size:18px;">XÁC NHẬN THANH TOÁN & MÃ QR NHẬN PHÒNG</h2>
+      </div>
+      <div style="padding:24px;color:#1e293b;line-height:1.6;">
+        <p>Xin chào <strong>${escapeHtml(studentName)}</strong> (${escapeHtml(studentCode)}),</p>
+        <p>Hợp đồng <strong>${escapeHtml(contractCode)}</strong> đã hoàn tất nghĩa vụ tài chính và chính thức có hiệu lực.</p>
+        <div style="background-color:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:14px 18px;margin:16px 0;">
+          <p style="margin:4px 0;"><strong>Phòng ở:</strong> ${escapeHtml(roomName)}</p>
+          <p style="margin:4px 0;"><strong>Mã QR Check-in:</strong> <code style="font-size:16px;color:#15803d;">${escapeHtml(checkinCode)}</code></p>
+          <p style="margin:4px 0;"><strong>Địa điểm nhận phòng:</strong> ${escapeHtml(officeLocation || 'Văn phòng Trung tâm KTX')}</p>
+        </div>
+        <p>Vui lòng mở mã QR Check-in trong Cổng Sinh viên khi đến làm thủ tục nhận phòng (mang theo CCCD/Giấy báo nhập học & 02 ảnh 3x4).</p>
+      </div>
+    </div>`;
+  return sendMailSafe({
+    to,
+    subject: `[HaUI - DMS] Đã kích hoạt hợp đồng & Mã QR nhận phòng (${contractCode})`,
+    html,
+    tag: 'CHECKIN_READY',
+  });
+}
+
+async function sendUtilityBillEmail({ to, studentName, roomLabel, monthYear, totalAmount, perStudentAmount, dueDate, invoiceCode }) {
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:#0369a1;color:#fff;padding:18px;text-align:center;">
+        <h2 style="margin:0;font-size:18px;">THÔNG BÁO TIỀN ĐIỆN NƯỚC PHÒNG ${escapeHtml(roomLabel)}</h2>
+      </div>
+      <div style="padding:22px;color:#1e293b;line-height:1.6;">
+        <p>Xin chào <strong>${escapeHtml(studentName)}</strong>,</p>
+        <p>Ban Quản lý KTX HaUI đã chốt chỉ số điện nước kỳ <strong>${escapeHtml(monthYear)}</strong> cho phòng <strong>${escapeHtml(roomLabel)}</strong>:</p>
+        <ul>
+          <li>Mã hóa đơn phòng: <strong>${escapeHtml(invoiceCode)}</strong></li>
+          <li>Tổng tiền cả phòng: <strong>${Number(totalAmount).toLocaleString('vi-VN')} VNĐ</strong></li>
+          <li>Mức chia bình quân tham khảo: <strong>${Number(perStudentAmount).toLocaleString('vi-VN')} VNĐ/bạn</strong></li>
+          <li>Hạn thanh toán: <strong>${escapeHtml(dueDate)}</strong></li>
+        </ul>
+        <p>Một thành viên đại diện trong phòng vui lòng mở Cổng Sinh viên để quét mã <strong>VietQR</strong> gạch nợ tự động cho cả phòng.</p>
+      </div>
+    </div>`;
+  return sendMailSafe({
+    to,
+    subject: `[HaUI - DMS] Tiền điện nước ${monthYear} — Phòng ${roomLabel} (${invoiceCode})`,
+    html,
+    tag: 'UTILITY',
+  });
 }
 
 module.exports = {
   sendAccountEmail,
   sendRejectionEmail,
+  sendCheckinReadyEmail,
+  sendUtilityBillEmail,
 };

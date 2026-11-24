@@ -15,7 +15,7 @@ Thư mục này gom toàn bộ các tài sản phục vụ cuốn **Báo cáo Đ
 Qua đối chiếu trực tiếp cuốn PDF 45 trang với mã nguồn chuẩn v2.7:
 
 1. **Điền mục `Thiết kế cơ sở dữ liệu` (Trang 40–41 PDF đang để trống):**
-   - Toàn bộ sơ đồ ERD và 8 bảng đặc tả chi tiết (`users`, `students`, `buildings`, `rooms`, `contracts`, `utility_readings`, `invoices`, `payments`) đã được chuẩn hóa 100% khớp code tại **Mục 3.5** của [BAO_CAO_CHUONG_3.md](BAO_CAO_CHUONG_3.md) và [DATA-SCHEMA.md](../DATA-SCHEMA.md). Có thể đưa thẳng vào Word.
+   - Toàn bộ sơ đồ ERD và 8 bảng đặc tả chi tiết (`users`, `students`, `buildings`, `rooms`, `contracts`, `utility_readings`, `invoices`, `payments`) đã được chuẩn hóa 100% khớp code tại **Mục 3.5** của [BAO_CAO_CHUONG_3.md](BAO_CAO_CHUONG_3.md) và đối chiếu với [EDIT_DOCS_DATA_SCHEMA.md](../EDIT_DOCS_DATA_SCHEMA.md). Có thể đưa thẳng vào Word.
 2. **Sửa 2 chỗ dán nhầm hình trong bản PDF hiện tại:**
    - **Trang 19–21 (`1.6.3 Use Case phân rã phía Nhân viên (Staff)`):** Đang bị dán nhầm hình Use Case của *Sinh viên* (lặp lại 2 lần ở trang 20 và 21, thiếu hình của *Staff*).
    - **Trang 38 (`2.3.2 Biểu đồ trình tự Duyệt đơn đăng ký`):** Đang bị dán đúp cùng một ảnh 2 lần trên cùng một trang.

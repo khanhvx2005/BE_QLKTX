@@ -1,39 +1,28 @@
-# Quy Ước Dự Án: HỆ THỐNG QUẢN LÝ KÝ TÚC XÁ ĐH CÔNG NGHIỆP HÀ NỘI (HaUI - DMS)
+# Quy Ước Dự Án: HỆ THỐNG QUẢN LÝ KÝ TÚC XÁ ĐH CÔNG NGHIỆP HÀ NỘI (HaUI - DMS v3.0)
 
-> **Stack:** React + Vite + Ant Design · Node.js + Express 5 · MongoDB + Mongoose 9 · JWT · Bcryptjs · Nodemailer · VietQR (NAPAS 247)  
-> **Kiến trúc:** Client–Server tách rời · Backend Modular Monolith theo phân hệ nghiệp vụ (`Routes -> Services -> Models + Shared Views`)  
-> **Quy mô dữ liệu:** **8 Modules · 8 Collections cốt lõi · 3 Vai trò RBAC (`admin`, `staff`, `student`) + Guest**  
-> **Kho mã nguồn:** `BE_QLKTX` (Node.js + Express) · `FE_QuanLyKTX` (React + Vite)  
-> **Phiên bản chuẩn hóa:** v2.7 (Đồng bộ thực tế triển khai & Báo cáo Đồ án Chuyên ngành)
+> **Stack:** React + Vite + Ant Design · Node.js + Express 5 · MongoDB + Mongoose 9 · JWT · Bcryptjs · Nodemailer · VietQR Webhook (NAPAS 247)  
+> **Kiến trúc:** Modular Monolith (`Routes -> Services -> Models + Shared Views`), không Redis/BullMQ, không Socket.io  
+> **Quy mô dữ liệu:** **10 Modules · 11 Collections · 4 Vai trò RBAC (`admin`, `manager`, `staff`, `student`) + Guest**  
+> **Địa giới 3 Cơ sở HaUI 2026:** `cs1` (298 Cầu Diễn, Tây Tựu, HN: A14–A15) · `cs2` (TDP Thượng 2, Tây Tựu, HN: B12–B14) · `cs3` (Phù Vân, Ninh Bình: C15–C17)
 
 ---
 
 ## 1. Bản Đồ Tài Liệu Chuẩn (Single Source of Truth)
 
-Mọi thay đổi mã nguồn hoặc đối chiếu Frontend ↔ Backend **bắt buộc lấy theo 5 tài liệu chuẩn tại `docs/`**:
-
 | Tài liệu | Nội dung cốt lõi |
 |---|---|
-| [PRD.md](docs/PRD.md) | Bài toán thực tế KTX HaUI, mục tiêu, 4 tác nhân, phạm vi 8 phân hệ và ranh giới ngoài hệ thống |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Kiến trúc Modular Monolith (`routes -> services -> models`), quy tắc khóa nguyên tử `$elemMatch`, bù trừ lỗi, ngày tháng `UTC+7` |
-| [DATA-SCHEMA.md](docs/DATA-SCHEMA.md) | ERD & đặc tả chi tiết **8 Collections** (`users`, `students`, `buildings`, `rooms`, `contracts`, `utility_readings`, `invoices`, `payments`) |
-| [API.md](docs/API.md) | Hợp đồng RESTful API v2.7 đầy đủ (10 nhóm endpoint, query, body, cấu trúc trả về, mã lỗi) |
-| [DAC-TA-YEU-CAU.md](docs/DAC-TA-YEU-CAU.md) | Đặc tả yêu cầu phần mềm (SRS): Use Case, 28+ FR, NFR, 8 quy tắc nghiệp vụ (`BR-01`..`BR-08`), ma trận RBAC |
-
-> Tài liệu phục vụ viết Báo cáo Đồ án Chuyên ngành (bản thảo Chương 2, Chương 3, file `.docx` và script Python sinh sơ đồ) được lưu tách biệt tại `docs/report/`.
+| [PRD.md](docs/PRD.md) | Bối cảnh 3 cơ sở HaUI 2026–2027, bảng giá phòng chính thức, mục tiêu số hóa |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Kiến trúc Modular Monolith 10 phân hệ & quy tắc kỹ thuật cốt lõi |
+| [EDIT_DOCS_DATA_SCHEMA.md](docs/EDIT_DOCS_DATA_SCHEMA.md) | ERD & đặc tả chi tiết **11 Collections** + Khóa slot phòng nguyên tử (`$expr` + `$inc`) |
+| [EDIT_DOCS_DAC_TA_YEU_CAU.md](docs/EDIT_DOCS_DAC_TA_YEU_CAU.md) | Đặc tả SRS v3.0: 4 vai trò RBAC, Đợt đăng ký, phân luồng MSSV, Webhook VietQR, QR Check-in, Yêu cầu & Thông báo |
+| [API.md](docs/API.md) | Hợp đồng RESTful API v3.0 đầy đủ (10 nhóm endpoint cho FE ↔ BE) |
 
 ---
 
-## 2. Quy Ước Kỹ Thuật Bất Biến (Không Tự Ý Phá Vỡ Hợp Đồng FE–BE)
+## 2. Quy Ước Kỹ Thuật Bất Biến
 
-| Hạng mục | Quy ước bắt buộc | Chi tiết tham chiếu |
-|---|---|---|
-| **Vai trò (`ROLES`)** | Chỉ có **3 vai trò** đăng nhập: `'admin'`, `'staff'`, `'student'` (không có `manager` hay `viewer`) | `src/shared/constants/enums.js` |
-| **Envelope API** | `{ code, message, data }` (`code: 'OK'` khi thành công; mã lỗi tiếng Anh in hoa khi thất bại) | `docs/API.md` §1.1 |
-| **Phân trang** | `data: { items, total, page, limit }` (`limit` tối đa `100`, có thể kèm `summary`) | `src/core/utils/http.js` |
-| **Định danh JSON** | Trả `id` (`string`), ẩn `_id`, `__v`, `passwordHash`; chuẩn hóa DTO qua `src/shared/views.js` | `src/shared/to-json.js` |
-| **Ngày tháng (`UTC+7`)** | Ngày không giờ lưu chuỗi `'YYYY-MM-DD'`; tháng chốt điện nước lưu `'YYYY-MM'` (tính theo giờ VN) | `src/core/utils/dates.js` |
-| **Tiền tệ** | Số nguyên VND (`Integer >= 0`), không dùng số thực dấu phẩy động | `docs/DATA-SCHEMA.md` |
-| **Giường nhúng & Khóa nguyên tử** | Giường nhúng trong `Room.beds[]`; khóa khi duyệt bằng `Room.findOneAndUpdate` với `$elemMatch: { bedNumber, status: 'available' }` | `docs/ARCHITECTURE.md` §3.1 |
-| **Trạng thái hết hạn hợp đồng** | DB lưu `pending | active | terminated | rejected`; trạng thái `expired` suy ra lúc đọc (`active` và `endDate < today()`), vẫn giữ giường tới khi `terminate` | `src/shared/views.js` |
-| **Hóa đơn điện nước & Tiền cọc** | Điện nước chốt **01 hóa đơn `scope: 'room'`/phòng/tháng**; tiền cọc tách khỏi doanh thu và chỉ xác nhận hoàn đủ 1 lần (`isDepositRefunded`) sau thanh lý | `BR-03`, `BR-08` |
+- **Phân quyền 4 vai trò (`ROLES`):** `'admin'` (chỉ quản trị hệ thống & user — KHÔNG duyệt đơn hay xem doanh thu), `'manager'` (mở đợt, cấu hình tòa/phòng, duyệt chuyển phòng, **xem Báo cáo Doanh thu**), `'staff'` (vận hành hàng ngày), `'student'`.
+- **Phân luồng Tân SV vs Năm 2+:** Bóc tự động từ 4 chữ số đầu MSSV 10 chữ số (`YYYY60xxxx`) so với `RegistrationPeriod.academicYearStart`.
+- **Vòng đời Hợp đồng chống bỏ cọc:** `pending` → `pending_payment` (hạn 7 ngày, quá hạn hủy `cancelled` nhả chỗ ngay) → `active` (tự động nâng khi gạch nợ đủ tiền phòng & cọc, sinh mã **QR Check-in**) → `terminated` (hoàn cọc có khấu trừ hỏng đồ).
+- **Quản lý sức chứa đến cấp Phòng (không lưu vị trí giường):** Khóa/nhả chỗ nguyên tử bằng `Room.findOneAndUpdate({ _id, status: 'active', $expr: { $lt: ['$occupiedCount', '$capacity'] } }, { $inc: { occupiedCount: 1 } })`.
+- **Envelope & Chuẩn dữ liệu:** `{ code, message, data }`, phân trang `{ items, total, page, limit }`, ngày nghiệp vụ `'YYYY-MM-DD'` theo `UTC+7`, tiền tệ số nguyên VNĐ.

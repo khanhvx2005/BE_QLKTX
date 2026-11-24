@@ -1,10 +1,6 @@
 /**
- * Dạng dữ liệu TRẢ RA cho FE — một nơi duy nhất, khớp `docs/API.md` (repo FE) §1.5, §6, §8.
- * Service lấy tài liệu bằng `.lean()` rồi gọi các hàm ở đây; KHÔNG trả document populate thô
- * (FE đọc `contract.student.fullName`, `invoice.room.buildingCode`, không đọc `studentId.fullName`).
- *
- * Ngữ cảnh `ctx` gom sẵn các bảng tra (Map theo id chuỗi) để không truy vấn lặp trong vòng lặp:
- *   { rooms, buildings, students, contracts, invoices, readings }
+ * Bộ chuẩn hóa dữ liệu TRẢ RA cho Frontend (HaUI - DMS v3.0).
+ * Gom bảng tra theo lô (`loadCtx`) chống N+1 query và giữ DTO thống nhất giữa tất cả phân hệ.
  */
 
 const mongoose = require('mongoose');
@@ -13,13 +9,13 @@ const Building = require('../modules/rooms/building.model');
 const Student = require('../modules/students/student.model');
 const Contract = require('../modules/contracts/contract.model');
 const Invoice = require('../modules/fees/invoice.model');
+const { CAMPUS_INFO } = require('./constants/enums');
 const { localDate } = require('../core/utils/dates');
 
 const idOf = (v) => (v == null ? null : String(v._id ?? v));
 const byId = (list) => new Map(list.map((x) => [String(x._id), x]));
 const uniq = (list) => [...new Set(list.filter(Boolean).map(String))];
 
-/** Tải các bảng tra theo id cần dùng. Phòng luôn kéo theo tòa. */
 async function loadCtx({ roomIds = [], studentIds = [] } = {}) {
   const rooms = await Room.find({ _id: { $in: uniq(roomIds) } }).lean();
   const buildings = await Building.find({ _id: { $in: uniq(rooms.map((r) => r.buildingId)) } }).lean();
@@ -27,67 +23,95 @@ async function loadCtx({ roomIds = [], studentIds = [] } = {}) {
   return { rooms: byId(rooms), buildings: byId(buildings), students: byId(students) };
 }
 
-// ---------------------------------------------------------------- tham chiếu
-const studentRef = (st) => (st ? { id: idOf(st), studentCode: st.studentCode, fullName: st.fullName, gender: st.gender } : null);
+const studentRef = (st) =>
+  st
+    ? {
+        id: idOf(st),
+        studentCode: st.studentCode,
+        fullName: st.fullName,
+        gender: st.gender,
+        faculty: st.faculty ?? '',
+        priorityType: st.priorityType ?? 'normal',
+        hasHealthCondition: Boolean(st.hasHealthCondition),
+      }
+    : null;
+
 const payerRef = (st) => (st ? { id: idOf(st), studentCode: st.studentCode, fullName: st.fullName } : null);
 
 const roomRef = (room, ctx) => {
   if (!room) return null;
   const b = ctx.buildings.get(String(room.buildingId));
+  const cInfo = b?.campus ? CAMPUS_INFO[b.campus] : null;
   return {
-    id: idOf(room), buildingId: idOf(room.buildingId), buildingCode: b?.code ?? null, buildingName: b?.name ?? null,
-    roomNumber: room.roomNumber, floor: room.floor, gender: room.gender, capacity: room.capacity,
+    id: idOf(room),
+    campus: b?.campus ?? null,
+    campusName: cInfo?.name ?? null,
+    buildingId: idOf(room.buildingId),
+    buildingCode: b?.code ?? null,
+    buildingName: b?.name ?? null,
+    roomNumber: room.roomNumber,
+    floor: room.floor,
+    gender: room.gender,
+    roomTier: room.roomTier || 'standard',
+    capacity: room.capacity,
+    hasAirConditioner: Boolean(room.hasAirConditioner),
   };
 };
 
-/** Nhãn phòng ngắn "K1-302" (khớp roomLabelOf của FE) */
 const roomLabel = (ref) => (ref ? `${ref.buildingCode}-${ref.roomNumber}` : '');
 
-// ---------------------------------------------------------------- hợp đồng
-/** API.md §6: `expired` = active và đã qua endDate — suy ra lúc đọc */
+/** `expired` = active và đã qua endDate — suy ra lúc đọc */
 const contractStatusOf = (c) => (c.status === 'active' && c.endDate && c.endDate < localDate() ? 'expired' : c.status);
 
-/**
- * Contract của API.md §6. `debts` (Map studentId → nợ cá nhân) tùy chọn — có thì kèm `totalDebt`.
- */
 const contractView = (c, ctx, debts = null) => {
   const room = ctx.rooms.get(String(c.roomId));
   const st = ctx.students.get(String(c.studentId));
   const rr = roomRef(room, ctx);
+  const todayStr = localDate();
   return {
     id: idOf(c),
     contractCode: c.contractCode,
+    periodId: idOf(c.periodId),
     status: contractStatusOf(c),
     student: studentRef(st),
     studentId: idOf(c.studentId),
     studentCode: st?.studentCode ?? null,
     studentName: st?.fullName ?? null,
     room: rr,
+    campus: rr?.campus ?? null,
+    campusName: rr?.campusName ?? null,
     roomId: idOf(c.roomId),
     roomNumber: room?.roomNumber ?? null,
     buildingId: rr?.buildingId ?? null,
     buildingCode: rr?.buildingCode ?? null,
     buildingName: rr?.buildingName ?? null,
-    bedNumber: c.bedNumber,
     term: c.term,
     pricePerMonth: c.pricePerMonth,
     totalRoomFee: c.totalRoomFee,
     depositAmount: c.depositAmount,
-    startDate: c.startDate,
-    endDate: c.endDate,
+    paymentDeadline: c.paymentDeadline ?? null,
+    isPaymentOverdue: Boolean(c.status === 'pending_payment' && c.paymentDeadline && c.paymentDeadline < todayStr),
+    startDate: c.startDate ?? null,
+    endDate: c.endDate ?? null,
+    checkinCode: c.checkinCode ?? null,
+    checkedInAt: c.checkedInAt ?? null,
+    checkedInByName: c.checkedInByName ?? null,
     createdAt: c.createdAt,
-    reviewedAt: c.reviewedAt,
-    approvedByName: c.reviewedByName,
-    rejectionReason: c.rejectionReason,
-    terminatedAt: c.terminatedAt,
-    isDepositRefunded: !!c.isDepositRefunded,
-    depositRefundedAt: c.depositRefundedAt,
-    depositRefundedByName: c.depositRefundedByName,
+    reviewedAt: c.reviewedAt ?? null,
+    approvedByName: c.reviewedByName ?? null,
+    rejectionReason: c.rejectionReason ?? null,
+    cancelReason: c.cancelReason ?? null,
+    terminatedAt: c.terminatedAt ?? null,
+    isDepositRefunded: Boolean(c.isDepositRefunded),
+    depositDeductionAmount: c.depositDeductionAmount ?? 0,
+    depositRefundAmount: c.depositRefundAmount ?? 0,
+    depositRefundReason: c.depositRefundReason ?? null,
+    depositRefundedAt: c.depositRefundedAt ?? null,
+    depositRefundedByName: c.depositRefundedByName ?? null,
     ...(debts ? { totalDebt: debts.get(String(c.studentId)) ?? 0 } : {}),
   };
 };
 
-// ---------------------------------------------------------------- hóa đơn, phiếu thu
 const invoiceView = (inv, ctx) => ({
   id: idOf(inv),
   invoiceCode: inv.invoiceCode,
@@ -98,49 +122,52 @@ const invoiceView = (inv, ctx) => ({
   createdAt: inv.createdAt,
   dueDate: inv.dueDate,
   status: inv.status,
-  paidAt: inv.paidAt,
+  paidAt: inv.paidAt ?? null,
   student: inv.scope === 'personal' ? studentRef(ctx.students.get(String(inv.studentId))) : null,
   room: roomRef(ctx.rooms.get(String(inv.roomId)), ctx),
   contractId: idOf(inv.contractId),
   utilityReadingId: idOf(inv.utilityReadingId),
-  monthYear: inv.monthYear,
+  monthYear: inv.monthYear ?? null,
   payer: inv.payerStudentId ? payerRef(ctx.students.get(String(inv.payerStudentId))) : null,
 });
 
-/** `invoices` là Map id → hóa đơn (lean) của các phiếu cần hiện */
 const paymentView = (p, ctx, invoices) => {
-  const inv = invoices.get(String(p.invoiceId));
+  const inv = p.invoiceId ? invoices.get(String(p.invoiceId)) : null;
   return {
     id: idOf(p),
     paymentCode: p.paymentCode,
+    paymentType: p.paymentType || 'payment',
     invoiceId: idOf(p.invoiceId),
+    contractId: idOf(p.contractId),
     invoiceCode: inv?.invoiceCode ?? null,
     invoiceType: inv?.type ?? null,
     amount: p.amount,
     method: p.method,
-    transactionCode: p.transactionCode,
-    note: p.note,
+    transactionCode: p.transactionCode ?? null,
+    note: p.note ?? '',
     paidAt: p.paidAt,
-    collectedByName: p.collectedByName,
+    collectedByName: p.collectedByName ?? null,
     payer: payerRef(ctx.students.get(String(p.payerStudentId))),
     room: roomRef(ctx.rooms.get(String(inv?.roomId)), ctx),
   };
 };
 
-// ---------------------------------------------------------------- công nợ, người ở
-/** Nợ cá nhân = hóa đơn personal chưa trả. Điện nước thuộc cả phòng, không cộng vào nợ riêng ai */
 async function debtsOf(studentIds) {
+  const ids = uniq(studentIds);
+  if (!ids.length) return new Map();
   const rows = await Invoice.aggregate([
-    { $match: { studentId: { $in: uniq(studentIds).map((id) => new mongoose.Types.ObjectId(id)) }, status: 'unpaid', scope: 'personal' } },
+    {
+      $match: {
+        studentId: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) },
+        status: 'unpaid',
+        scope: 'personal',
+      },
+    },
     { $group: { _id: '$studentId', total: { $sum: '$amount' } } },
   ]);
   return new Map(rows.map((r) => [String(r._id), r.total]));
 }
 
-/**
- * Người đang ở phòng = hợp đồng còn giữ giường (status lưu `active`, gồm cả quá hạn chưa thanh lý), xếp theo MSSV.
- * Trả [{ contract, student }].
- */
 async function residentsOf(roomId) {
   const list = await Contract.find({ roomId, status: 'active' }).lean();
   const students = byId(await Student.find({ _id: { $in: list.map((c) => c.studentId) } }).lean());
@@ -151,8 +178,18 @@ async function residentsOf(roomId) {
 }
 
 module.exports = {
-  idOf, byId, uniq, loadCtx,
-  studentRef, payerRef, roomRef, roomLabel,
-  contractStatusOf, contractView, invoiceView, paymentView,
-  debtsOf, residentsOf,
+  idOf,
+  byId,
+  uniq,
+  loadCtx,
+  studentRef,
+  payerRef,
+  roomRef,
+  roomLabel,
+  contractStatusOf,
+  contractView,
+  invoiceView,
+  paymentView,
+  debtsOf,
+  residentsOf,
 };

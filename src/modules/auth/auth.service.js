@@ -5,6 +5,7 @@
 
 const User = require('./user.model');
 const Student = require('../students/student.model');
+const notificationService = require('../notifications/notification.service');
 const { generateToken } = require('../../core/utils/jwt');
 const { fail, fieldErrors } = require('../../core/utils/http');
 
@@ -52,8 +53,17 @@ async function login({ identifier, password } = {}) {
 async function me(userId) {
   const user = await User.findById(userId);
   if (!user) fail(401, 'UNAUTHORIZED', 'Phiên đăng nhập không hợp lệ');
-  const student = user.studentId ? await Student.findById(user.studentId).lean() : null;
-  return { data: { user: userPayload(user), student: student ? { ...student, id: String(student._id), _id: undefined, __v: undefined } : null } };
+  const [student, unreadNotifications] = await Promise.all([
+    user.studentId ? Student.findById(user.studentId).lean() : null,
+    user.role === 'student' ? notificationService.countUnreadForUser(user._id) : 0,
+  ]);
+  return {
+    data: {
+      user: userPayload(user),
+      student: student ? { ...student, id: String(student._id), _id: undefined, __v: undefined } : null,
+      unreadNotifications,
+    },
+  };
 }
 
 /** Body chuẩn `{ oldPassword, newPassword }` — nhận thêm `currentPassword` cho client cũ */

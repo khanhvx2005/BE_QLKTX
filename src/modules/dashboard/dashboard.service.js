@@ -1,9 +1,9 @@
 /**
- * Dashboard — API.md §10 (FR-70→72).
- *   summary: KPI. total = occupied + available + maintenance; chỉ tòa đang hoạt động; nợ KHÔNG tính tiền cọc.
- *   occupancy: theo tòa đang hoạt động.
- *   revenue: chỉ Admin; gom theo tháng (giờ Việt Nam) của lúc thu; không tính tiền cọc (sẽ hoàn khi trả phòng).
- * Giường trong phòng đang bảo trì mà còn trống thì tính là bảo trì (không xếp được, FR-25).
+ * Dashboard & Báo cáo Thống kê 3 Cơ sở HaUI (API.md §10, FR-70→71).
+ *   - Quản lý sức chứa cấp Phòng (`capacity` & `occupiedCount`):
+ *     `total = occupied + available + maintenance` (chỗ trống trong phòng bảo trì tính vào `maintenance`).
+ *   - Doanh thu (`/revenue`): CHỈ `manager`, gom theo tháng Việt Nam (`UTC+7`),
+ *     loại trừ hoàn toàn tiền cọc (`deposit`), hóa đơn `cancelled` và phiếu chi hoàn cọc (`paymentType === 'refund'`).
  */
 
 const Building = require('../rooms/building.model');
@@ -11,74 +11,175 @@ const Room = require('../rooms/room.model');
 const Contract = require('../contracts/contract.model');
 const Invoice = require('../fees/invoice.model');
 const Payment = require('../payments/payment.model');
-const { localMonth } = require('../../core/utils/dates');
+const Request = require('../requests/request.model');
+const { CAMPUSES, CAMPUS_INFO } = require('../../shared/constants/enums');
+const { localMonth, today } = require('../../core/utils/dates');
 const { byId } = require('../../shared/views');
 
-const statOf = (bed, room) => {
-  if (bed.status === 'occupied') return 'occupied';
-  return room.status === 'maintenance' ? 'maintenance' : bed.status;
+const countSlots = (rooms) => {
+  let occupied = 0;
+  let available = 0;
+  let maintenance = 0;
+  for (const r of rooms) {
+    const cap = Number(r.capacity) || 0;
+    const occ = Math.min(Number(r.occupiedCount) || 0, cap);
+    const rem = Math.max(0, cap - occ);
+    occupied += occ;
+    if (r.status === 'maintenance') maintenance += rem;
+    else available += rem;
+  }
+  const total = occupied + available + maintenance;
+  const occupancyRate = total > 0 ? Math.round((occupied / total) * 1000) / 10 : 0;
+  return { total, occupied, available, maintenance, occupancyRate };
 };
 
-const countBeds = (rooms) => {
-  const out = { occupied: 0, available: 0, maintenance: 0 };
-  rooms.forEach((r) => (r.beds || []).forEach((b) => { out[statOf(b, r)] += 1; }));
-  return out;
-};
-
-async function activeRooms() {
-  const buildings = await Building.find({ isActive: true }).sort({ code: 1 }).lean();
+async function activeRooms(campus) {
+  const filter = { isActive: true };
+  if (campus && CAMPUSES.includes(campus)) filter.campus = campus;
+  const buildings = await Building.find(filter).sort({ campus: 1, code: 1 }).lean();
   const rooms = await Room.find({ buildingId: { $in: buildings.map((b) => b._id) } }).lean();
   return { buildings, rooms };
 }
 
-async function summary() {
-  const { rooms } = await activeRooms();
-  const counts = countBeds(rooms);
-  const debt = async (type) => (await Invoice.aggregate([
-    { $match: { type, status: 'unpaid' } }, { $group: { _id: null, t: { $sum: '$amount' } } },
-  ]))[0]?.t ?? 0;
-  const roomDebt = await debt('room_semester');
-  const utilityDebt = await debt('utility');
+/** GET /dashboard/summary?campus=cs1|cs2|cs3 */
+async function summary(q = {}) {
+  const campus = CAMPUSES.includes(q.campus) ? q.campus : null;
+  const { rooms } = await activeRooms(campus);
+  const roomIds = rooms.map((r) => r._id);
+  const slotStats = countSlots(rooms);
+
+  const contractScope = campus ? { roomId: { $in: roomIds } } : {};
+  const invoiceScope = campus ? { roomId: { $in: roomIds } } : {};
+  const requestScope = campus ? { roomId: { $in: roomIds } } : {};
+
+  const debtOf = async (type) =>
+    (
+      await Invoice.aggregate([
+        { $match: { ...invoiceScope, type, status: 'unpaid' } },
+        { $group: { _id: null, t: { $sum: '$amount' } } },
+      ])
+    )[0]?.t ?? 0;
+
+  const [
+    roomDebt,
+    utilityDebt,
+    activeStudents,
+    pendingApplications,
+    pendingPaymentContracts,
+    overduePaymentContracts,
+    pendingRequests,
+  ] = await Promise.all([
+    debtOf('room_semester'),
+    debtOf('utility'),
+    Contract.countDocuments({ ...contractScope, status: 'active' }),
+    Contract.countDocuments({ ...contractScope, status: 'pending' }),
+    Contract.countDocuments({ ...contractScope, status: 'pending_payment' }),
+    Contract.countDocuments({ ...contractScope, status: 'pending_payment', paymentDeadline: { $lt: today() } }),
+    Request.countDocuments({ ...requestScope, status: { $in: ['pending', 'in_progress'] } }),
+  ]);
+
   return {
     data: {
-      occupancy: { total: counts.occupied + counts.available + counts.maintenance, ...counts },
-      // Đang nội trú = hợp đồng còn giữ giường (gồm cả quá hạn chưa thanh lý)
-      activeStudents: await Contract.countDocuments({ status: 'active' }),
-      pendingApplications: await Contract.countDocuments({ status: 'pending' }),
-      finance: { totalDebt: roomDebt + utilityDebt, roomDebt, utilityDebt },
+      campus: campus || 'all',
+      occupancy: {
+        ...slotStats,
+        totalRooms: rooms.length,
+        activeRooms: rooms.filter((r) => r.status === 'active').length,
+        maintenanceRooms: rooms.filter((r) => r.status === 'maintenance').length,
+      },
+      activeStudents,
+      pendingApplications,
+      pendingPaymentContracts,
+      overduePaymentContracts,
+      pendingRequests,
+      finance: {
+        totalDebt: roomDebt + utilityDebt,
+        roomDebt,
+        utilityDebt,
+      },
     },
   };
 }
 
-async function occupancy() {
-  const { buildings, rooms } = await activeRooms();
+/** GET /dashboard/occupancy?campus=cs1|cs2|cs3 — chi tiết từng tòa và gom nhóm 3 cơ sở */
+async function occupancy(q = {}) {
+  const campusFilter = CAMPUSES.includes(q.campus) ? q.campus : null;
+  const { buildings, rooms } = await activeRooms(campusFilter);
+
+  const buildingRows = buildings.map((b) => {
+    const own = rooms.filter((r) => String(r.buildingId) === String(b._id));
+    const stats = countSlots(own);
+    return {
+      buildingId: String(b._id),
+      campus: b.campus,
+      campusName: CAMPUS_INFO[b.campus]?.name ?? b.campus,
+      buildingCode: b.code,
+      buildingName: b.name,
+      totalRooms: own.length,
+      totalCapacity: stats.total,
+      ...stats,
+    };
+  });
+
+  const targetCampuses = campusFilter ? [campusFilter] : CAMPUSES;
+  const byCampus = targetCampuses.map((c) => {
+    const bList = buildings.filter((b) => b.campus === c);
+    const bIds = new Set(bList.map((b) => String(b._id)));
+    const rList = rooms.filter((r) => bIds.has(String(r.buildingId)));
+    const stats = countSlots(rList);
+    return {
+      campus: c,
+      campusName: CAMPUS_INFO[c]?.name ?? c,
+      campusAddress: CAMPUS_INFO[c]?.address ?? '',
+      totalBuildings: bList.length,
+      totalRooms: rList.length,
+      totalCapacity: stats.total,
+      ...stats,
+    };
+  });
+
   return {
-    data: buildings.map((b) => {
-      const own = rooms.filter((r) => String(r.buildingId) === String(b._id));
-      return {
-        buildingId: String(b._id), buildingCode: b.code, buildingName: b.name,
-        totalRooms: own.length, totalBeds: own.reduce((t, r) => t + (r.beds || []).length, 0), ...countBeds(own),
-      };
-    }),
+    data: {
+      byCampus,
+      buildings: buildingRows,
+    },
   };
 }
 
-/** GET /dashboard/revenue ?year= — mỗi tháng có thu tiền một dòng, cũ trước */
+/** GET /dashboard/revenue?year=2026&campus= — CHỈ Manager! Tách tiền cọc & phiếu chi hoàn cọc */
 async function revenue(q = {}) {
   const year = String(q.year || localMonth().slice(0, 4));
-  const list = await Payment.find().lean();
-  const invoices = byId(await Invoice.find({ _id: { $in: list.map((p) => p.invoiceId) } }).select('type').lean());
+  const campusFilter = CAMPUSES.includes(q.campus) ? q.campus : null;
+
+  const list = await Payment.find({ paymentType: { $ne: 'refund' } }).lean();
+  const invoiceIds = list.map((p) => p.invoiceId).filter(Boolean);
+  const invoices = byId(
+    invoiceIds.length
+      ? await Invoice.find({ _id: { $in: invoiceIds } }).select('type status roomId').lean()
+      : []
+  );
+
+  let allowedRoomIds = null;
+  if (campusFilter) {
+    const { rooms } = await activeRooms(campusFilter);
+    allowedRoomIds = new Set(rooms.map((r) => String(r._id)));
+  }
+
   const byMonth = {};
-  list.forEach((p) => {
-    const inv = invoices.get(String(p.invoiceId));
+  for (const p of list) {
+    const inv = p.invoiceId ? invoices.get(String(p.invoiceId)) : null;
     const month = localMonth(p.paidAt);
-    if (!inv || inv.type === 'deposit' || !month.startsWith(year)) return;
+    if (!inv || inv.type === 'deposit' || inv.status === 'cancelled' || !month.startsWith(year)) continue;
+    if (allowedRoomIds && !allowedRoomIds.has(String(inv.roomId))) continue;
     const row = byMonth[month] ?? (byMonth[month] = { month, roomRevenue: 0, utilityRevenue: 0, total: 0 });
     if (inv.type === 'room_semester') row.roomRevenue += p.amount;
     else row.utilityRevenue += p.amount;
     row.total += p.amount;
-  });
-  return { data: Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month)) };
+  }
+
+  return {
+    data: Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month)),
+  };
 }
 
 module.exports = { summary, occupancy, revenue };

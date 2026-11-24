@@ -1,5 +1,5 @@
 /**
- * /api/students — API.md §3. Admin và Staff.
+ * /api/students — API.md §3. Manager và Staff (Admin hệ thống không can thiệp hồ sơ nội trú).
  */
 
 const express = require('express');
@@ -8,7 +8,7 @@ const { respond } = require('../../core/utils/http');
 const service = require('./student.service');
 
 const router = express.Router();
-router.use(authenticate, authorize('admin', 'staff'));
+router.use(authenticate, authorize('manager', 'staff'));
 
 router.get('/', respond((req) => service.list(req.query)));
 router.post('/import', respond((req) => service.importMany(req.body)));

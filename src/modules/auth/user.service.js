@@ -1,6 +1,6 @@
 /**
- * Tài khoản — API.md §2. Màn quản lý tài khoản chỉ Admin; đặt lại mật khẩu thì Staff làm được cho SINH VIÊN.
- * Chỉ tạo tài khoản admin/staff ở đây; tài khoản sinh viên chỉ sinh ra khi duyệt đơn (FR-02).
+ * Quản lý tài khoản hệ thống — 4 vai trò chuẩn HaUI (`admin`, `manager`, `staff`, `student`).
+ * Tài khoản sinh viên chỉ sinh tự động khi duyệt đơn KTX (FR-02).
  */
 
 const crypto = require('crypto');
@@ -9,9 +9,9 @@ const Student = require('../students/student.model');
 const { fail, fieldErrors, paginate, matches } = require('../../core/utils/http');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const ROLE_ORDER = { admin: 0, staff: 1, student: 2 };
+const ROLE_ORDER = { admin: 0, manager: 1, staff: 2, student: 3 };
+const STAFF_ROLES = ['admin', 'manager', 'staff'];
 
-/** Mật khẩu tạm 10 ký tự, có chữ và số, bỏ ký tự dễ nhầm (0/O, 1/l/I) */
 const genTempPassword = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
   const s = Array.from({ length: 10 }, () => chars[crypto.randomInt(0, chars.length)]).join('');
@@ -45,12 +45,18 @@ const activeAdminCount = () => User.countDocuments({ role: 'admin', isActive: tr
 
 async function assertEmailFree(email, exceptId = null) {
   const taken = await User.exists({ email, ...(exceptId ? { _id: { $ne: exceptId } } : {}) });
-  if (taken) fail(409, 'DUPLICATE_ENTRY', 'Email này đã được dùng cho tài khoản khác', { errors: [{ field: 'email', message: 'Email này đã được dùng cho tài khoản khác' }] });
+  if (taken) {
+    fail(409, 'DUPLICATE_ENTRY', 'Email này đã được dùng cho tài khoản khác', {
+      errors: [{ field: 'email', message: 'Email này đã được dùng cho tài khoản khác' }],
+    });
+  }
 }
 
 async function list(q = {}) {
   const all = await User.find().lean();
-  const students = new Map((await Student.find({ _id: { $in: all.map((u) => u.studentId).filter(Boolean) } }).lean()).map((s) => [String(s._id), s]));
+  const students = new Map(
+    (await Student.find({ _id: { $in: all.map((u) => u.studentId).filter(Boolean) } }).lean()).map((s) => [String(s._id), s])
+  );
   let rows = all.map((u) => userView(u, students.get(String(u.studentId))));
   if (q.role) rows = rows.filter((u) => u.role === q.role);
   if (q.isActive !== undefined && q.isActive !== '') rows = rows.filter((u) => String(u.isActive) === String(q.isActive));
@@ -59,6 +65,7 @@ async function list(q = {}) {
   const summary = {
     all: all.length,
     admin: all.filter((u) => u.role === 'admin').length,
+    manager: all.filter((u) => u.role === 'manager').length,
     staff: all.filter((u) => u.role === 'staff').length,
     student: all.filter((u) => u.role === 'student').length,
     locked: all.filter((u) => !u.isActive).length,
@@ -72,13 +79,19 @@ async function create(body = {}) {
   const errors = [];
   if (!EMAIL_RE.test(email)) errors.push({ field: 'email', message: 'Email không đúng định dạng' });
   if (!fullName) errors.push({ field: 'fullName', message: 'Nhập họ tên' });
-  if (!['admin', 'staff'].includes(body.role)) errors.push({ field: 'role', message: 'Chọn vai trò quản trị viên hoặc cán bộ' });
+  if (!STAFF_ROLES.includes(body.role)) {
+    errors.push({ field: 'role', message: 'Chọn vai trò quản trị viên (admin), quản lý KTX (manager) hoặc cán bộ (staff)' });
+  }
   if (errors.length) fieldErrors(errors);
   await assertEmailFree(email);
 
   const temporaryPassword = genTempPassword();
   const user = await User.create({
-    email, fullName, role: body.role, passwordHash: await User.hashPassword(temporaryPassword), mustChangePassword: true,
+    email,
+    fullName,
+    role: body.role,
+    passwordHash: await User.hashPassword(temporaryPassword),
+    mustChangePassword: true,
   });
   return { data: { user: userView(user), temporaryPassword }, message: 'Đã tạo tài khoản', status: 201 };
 }
@@ -89,9 +102,13 @@ async function update(id, body = {}, actor) {
   const role = body.role ?? u.role;
   const errors = [];
   if (!EMAIL_RE.test(email)) errors.push({ field: 'email', message: 'Email không đúng định dạng' });
-  if (u.role !== 'student' && body.fullName !== undefined && !String(body.fullName).trim()) errors.push({ field: 'fullName', message: 'Nhập họ tên' });
+  if (u.role !== 'student' && body.fullName !== undefined && !String(body.fullName).trim()) {
+    errors.push({ field: 'fullName', message: 'Nhập họ tên' });
+  }
   if (!Object.keys(ROLE_ORDER).includes(role)) errors.push({ field: 'role', message: 'Vai trò không hợp lệ' });
-  if (role !== u.role && (role === 'student' || u.role === 'student')) errors.push({ field: 'role', message: 'Không đổi được vai trò giữa sinh viên và cán bộ' });
+  if (role !== u.role && (role === 'student' || u.role === 'student')) {
+    errors.push({ field: 'role', message: 'Không đổi được vai trò giữa sinh viên và cán bộ/quản trị' });
+  }
   if (errors.length) fieldErrors(errors);
   if (role !== u.role && String(u._id) === actor.id) fail(422, 'CANNOT_MODIFY_SELF', 'Không thể tự đổi vai trò của chính mình');
   if (u.role === 'admin' && role !== 'admin' && u.isActive && (await activeAdminCount()) === 1) {
@@ -100,7 +117,6 @@ async function update(id, body = {}, actor) {
   await assertEmailFree(email, u._id);
   u.email = email;
   u.role = role;
-  // Họ tên tài khoản sinh viên đi theo hồ sơ sinh viên, không sửa ở đây
   if (u.role !== 'student' && body.fullName !== undefined) u.fullName = String(body.fullName).trim();
   await u.save();
   return { data: await viewOf(u), message: 'Cập nhật tài khoản thành công' };
@@ -120,7 +136,9 @@ async function setStatus(id, { isActive } = {}, actor) {
 
 async function resetPassword(id, actor) {
   const u = await findUser(id);
-  if (actor.role === 'staff' && u.role !== 'student') fail(403, 'FORBIDDEN', 'Cán bộ chỉ đặt lại được mật khẩu tài khoản sinh viên');
+  if (actor.role !== 'admin' && u.role !== 'student') {
+    fail(403, 'FORBIDDEN', 'Quản lý và cán bộ KTX chỉ được đặt lại mật khẩu cho tài khoản sinh viên');
+  }
   if (String(u._id) === actor.id) fail(422, 'CANNOT_MODIFY_SELF', 'Dùng chức năng Đổi mật khẩu cho tài khoản của chính mình');
   const temporaryPassword = genTempPassword();
   u.passwordHash = await User.hashPassword(temporaryPassword);

@@ -1,74 +1,24 @@
-# RESTful API Specification — HaUI - DMS (v2.7)
+# RESTful API Specification — HaUI - DMS (v3.0)
 
 - **Base URL:** `http://localhost:5000/api`
-- **Định dạng dữ liệu:** `application/json; charset=utf-8`
-- **Xác thực:** Header `Authorization: Bearer <token>` (JWT hạn `7d`)
+- **Envelope chuẩn:** `{ code: "OK" | "<ERROR_CODE>", message: string, data: any }`
+- **Phân trang chuẩn:** `data: { items, total, page, limit, summary? }` (`limit <= 100`)
+- **Xác thực:** `Authorization: Bearer <jwt_7d>` (4 vai trò: `admin`, `manager`, `staff`, `student`)
 
 ---
 
-## 1. Quy Ước Chung (Conventions)
+## 1. Trang Chủ Công Khai & Tiếp Nhận Đơn (`/api/public`, không cần token)
 
-### 1.1. Envelope Phản Hồi Chuẩn
-Mọi phản hồi thành công hoặc thất bại đều trả về cùng cấu trúc 3 trường:
-```json
-{
-  "code": "OK",
-  "message": "Thành công",
-  "data": {}
-}
-```
-Khi lỗi kiểm tra đầu vào (`400 VALIDATION_ERROR`), `data.errors` chứa danh sách lỗi theo từng trường để Frontend hiển thị dưới ô nhập:
-```json
-{
-  "code": "VALIDATION_ERROR",
-  "message": "Dữ liệu không hợp lệ",
-  "data": {
-    "errors": [
-      { "field": "citizenId", "message": "Số CCCD gồm đúng 12 chữ số" }
-    ]
-  }
-}
-```
-
-### 1.2. Phân Trang Chuẩn (`paginate`)
-Mọi endpoint danh sách có phân trang đều nhận `?page=1&limit=20` (`limit` tối đa `100`) và trả về:
-```json
-{
-  "code": "OK",
-  "message": "Thành công",
-  "data": {
-    "items": [],
-    "total": 90,
-    "page": 1,
-    "limit": 20
-  }
-}
-```
-*(Một số danh sách quản trị đính kèm thêm đối tượng `summary` ngay bên trong `data`).*
-
-### 1.3. Kiểu Dữ Liệu & Hằng Số Enum (`enums.js`)
-- **Định danh:** Mọi `_id` của MongoDB được trả ra dưới tên trường `id` (`string`).
-- **Ngày tháng (UTC+7):** Ngày không giờ là chuỗi `'YYYY-MM-DD'`; tháng chốt điện nước là `'YYYY-MM'`; dấu thời gian hệ thống (`createdAt`, `paidAt`, `reviewedAt`) là chuỗi ISO-8601.
-- **Tiền tệ:** Số nguyên VND (`number >= 0`).
-- **Bảng Enum chuẩn:**
-  - `ROLES`: `'admin' | 'staff' | 'student'`
-  - `GENDER`: `'male' | 'female'`
-  - `STUDENT_STATUS`: `'active' | 'inactive'`
-  - `ROOM_STATUS`: `'active' | 'maintenance'`
-  - `ROOM_CAPACITY`: `4 | 6 | 8`
-  - `BED_STATUS`: `'available' | 'occupied' | 'maintenance'`
-  - `CONTRACT_TERMS`: `'6_months' | '12_months'`
-  - `CONTRACT_STATUS_VIEW`: `'pending' | 'active' | 'expired' | 'terminated' | 'rejected'` *(trong DB không lưu `'expired'`, tự suy ra khi `active` quá `endDate`)*
-  - `INVOICE_TYPE`: `'room_semester' | 'deposit' | 'utility'`
-  - `INVOICE_SCOPE`: `'personal' | 'room'`
-  - `INVOICE_STATUS`: `'unpaid' | 'paid'`
-  - `PAYMENT_METHOD`: `'cash' | 'vietqr'`
-
-### 1.4. Cưỡng Bức Đổi Mật Khẩu Lần Đầu (`mustChangePassword`)
-Khi tài khoản có `mustChangePassword: true`, mọi request có gắn token sẽ bị chặn với `403 MUST_CHANGE_PASSWORD`, **ngoại trừ 3 endpoint**:
-- `GET /api/auth/me`
-- `POST /api/auth/logout`
-- `PATCH /api/auth/change-password`
+| Method | Endpoint | Mô tả |
+|---|---|---|
+| `GET` | `/api/health` | Kiểm tra tình trạng server |
+| `GET` | `/api/public/campuses` | Thông tin 3 cơ sở (địa chỉ 2026), danh sách tòa nhà & **Bảng giá phòng chính thức 2026–2027** |
+| `GET` | `/api/public/announcements` | Tin tức & Thông báo mở đợt công khai trên trang chủ KTX (`?campus=&limit=`) |
+| `GET` | `/api/public/periods/open` | Danh sách các Đợt đăng ký đang mở (`?studentCode=&faculty=` → tự phân luồng `freshman` vs `returning` từ 4 số đầu MSSV và gắn cờ `eligible` + lý do) |
+| `GET` | `/api/public/rooms/available` | Phòng còn chỗ trống lọc theo `?periodId=&campus=&buildingId=&gender=&roomTier=&capacity=&maxFloor=` (sắp xếp tầng thấp → phòng nhỏ) |
+| `POST` | `/api/contracts/register-online` | Nộp đơn trực tuyến trong Đợt đang mở `{ periodId, ...studentFields, roomId?, preferredRoomTier?, preferredCapacity?, term }`. Nếu MSSV đã tồn tại, bắt buộc khớp `citizenId`. |
+| `GET` | `/api/public/applications/status` | Tra cứu tiến độ đơn `?studentCode=&email=` |
+| `POST` | `/api/public/applications/cancel` | Sinh viên tự hủy đơn khi đang `pending` `{ studentCode, email, citizenId, reason? }` |
 
 ---
 
@@ -76,129 +26,133 @@ Khi tài khoản có `mustChangePassword: true`, mọi request có gắn token s
 
 | Method | Endpoint | Quyền | Mô tả |
 |---|---|---|---|
-| `GET` | `/api/health` | Công khai | Kiểm tra trạng thái hoạt động của máy chủ |
-| `POST` | `/api/auth/login` | Công khai | Đăng nhập bằng Email hoặc MSSV |
-| `POST` | `/api/auth/logout` | Đã đăng nhập | Đăng xuất phiên hiện tại |
-| `GET` | `/api/auth/me` | Đã đăng nhập | Lấy thông tin tài khoản hiện tại (kèm hồ sơ `student` nếu là SV) |
-| `PATCH` | `/api/auth/change-password` | Đã đăng nhập | Đổi mật khẩu cá nhân & tắt cờ `mustChangePassword` |
-| `GET` | `/api/users` | `admin` | Danh sách tài khoản (`?role=&isActive=&search=&page=&limit=`) kèm `summary` |
-| `POST` | `/api/users` | `admin` | Tạo tài khoản `admin` hoặc `staff` (trả `temporaryPassword` 10 ký tự) |
-| `PUT` | `/api/users/:id` | `admin` | Cập nhật email, họ tên, vai trò (`admin` ↔ `staff`, chặn tự đổi mình hoặc admin cuối) |
-| `PATCH` | `/api/users/:id/status` | `admin` | Khóa / mở khóa tài khoản `{ isActive: boolean }` |
-| `POST` | `/api/users/:id/reset-password` | `admin`, `staff` | Đặt lại mật khẩu tạm (`staff` chỉ được reset cho `student`) |
-
-- **`POST /api/auth/login`**
-  - Body: `{ identifier: string, password: string }`
-  - Response `data`: `{ token, expiresIn: 604800, user: { id, email, fullName, role, studentId, studentCode, mustChangePassword } }`
-  - Lỗi: `401 INVALID_CREDENTIALS`, `403 ACCOUNT_LOCKED`.
-- **`PATCH /api/auth/change-password`**
-  - Body: `{ oldPassword: string, newPassword: string }` *(yêu cầu `>= 8` ký tự, có cả chữ và số, không trùng `studentCode`)*.
-  - Lỗi: `400 INVALID_CURRENT_PASSWORD`, `400 PASSWORD_SAME_AS_DEFAULT`, `400 VALIDATION_ERROR`.
+| `POST` | `/api/auth/login` | Công khai | Đăng nhập bằng Email hoặc MSSV (`{ identifier, password }`) |
+| `POST` | `/api/auth/logout` | Đã đăng nhập | Đăng xuất |
+| `GET` | `/api/auth/me` | Đã đăng nhập | Thông tin tài khoản (kèm `student` & `unreadNotifications` nếu là SV) |
+| `PATCH` | `/api/auth/change-password` | Đã đăng nhập | Đổi mật khẩu & tắt cờ `mustChangePassword` |
+| `GET` | `/api/users` | `admin` | Danh sách tài khoản (`?role=&isActive=&search=&page=&limit=`) |
+| `POST` | `/api/users` | `admin` | Tạo tài khoản `admin`, `manager` hoặc `staff` |
+| `PUT` | `/api/users/:id` | `admin` | Cập nhật email, họ tên, vai trò (`admin \| manager \| staff`) |
+| `PATCH` | `/api/users/:id/status` | `admin` | Khóa / mở khóa tài khoản |
+| `POST` | `/api/users/:id/reset-password` | `admin`, `manager`, `staff` | Đặt lại mật khẩu tạm (`manager`/`staff` chỉ được reset cho `student`) |
 
 ---
 
 ## 3. Quản Lý Hồ Sơ Sinh Viên (`/api/students`)
-*Yêu cầu quyền: `admin`, `staff`.*
+*Quyền: `manager`, `staff`.*
 
 | Method | Endpoint | Mô tả |
 |---|---|---|
-| `GET` | `/api/students` | Danh sách SV (`?search=&gender=&faculty=&status=&hasAccount=&page=&limit=`). Mỗi phần tử kèm `userId`, `hasAccount`, `totalDebt`, `residence: { buildingCode, roomNumber, bedNumber }` |
-| `GET` | `/api/students/:id` | Chi tiết SV kèm `currentContract`, `contracts[]`, `unpaidInvoices[]` |
-| `POST` | `/api/students` | Thêm mới 1 hồ sơ SV (chưa tạo tài khoản đăng nhập) |
-| `POST` | `/api/students/import` | Nhập hàng loạt từ dữ liệu Excel `{ rows: [{ row, ...studentFields }] }` (tối đa 1.000 dòng; trả `{ successCount, errorCount, errors }`) |
-| `PUT` | `/api/students/:id` | Cập nhật hồ sơ SV (tự đồng bộ `studentCode`, `fullName` sang `User`; chặn đổi giới tính khi đang có đơn/hợp đồng) |
-| `PATCH` | `/api/students/:id/deactivate` | Chuyển `status: 'inactive'` (chặn nếu còn đơn/hợp đồng `STUDENT_HAS_ACTIVE_CONTRACT` hoặc còn nợ `STUDENT_HAS_DEBT`) |
-
-- **Các trường bắt buộc của Hồ sơ Sinh viên (`student.rules.js`):**
-  `studentCode` (10 chữ số), `fullName`, `gender` (`'male'|'female'`), `dob` (`'YYYY-MM-DD'`), `phone` (`0xxxxxxxxx`), `email`, `citizenId` (12 chữ số), `address`, `faculty`, `className`, `emergencyContact: { name, phone, relationship }`.
+| `GET` | `/api/students` | Danh sách SV (`?search=&gender=&faculty=&priorityType=&enrollmentYear=&status=&hasAccount=`) |
+| `GET` | `/api/students/:id` | Chi tiết SV kèm hợp đồng, công nợ, diện ưu tiên, tình trạng sức khỏe |
+| `POST` | `/api/students` | Thêm 1 hồ sơ SV (tự trích `enrollmentYear` từ MSSV) |
+| `POST` | `/api/students/import` | Nhập hàng loạt từ Excel `{ rows: [...] }` (tối đa 1.000 dòng) |
+| `PUT` | `/api/students/:id` | Cập nhật hồ sơ SV (đồng bộ `User.studentCode` & `fullName`) |
+| `PATCH` | `/api/students/:id/deactivate` | Vô hiệu hóa hồ sơ (chặn nếu còn đơn/hợp đồng hoặc nợ) |
 
 ---
 
-## 4. Tòa Nhà & Phòng KTX (`/api/buildings`, `/api/rooms`)
-*Yêu cầu quyền: `admin`, `staff`.*
-
-| Method | Endpoint | Mô tả |
-|---|---|---|
-| `GET` | `/api/buildings` | Danh sách tòa nhà (`?includeInactive=true`) kèm `stats: { totalRooms, totalBeds, occupiedBeds, availableBeds, maintenanceBeds }` |
-| `POST` | `/api/buildings` | Tạo tòa nhà `{ code, name, description? }` |
-| `PUT` | `/api/buildings/:id` | Cập nhật `{ name?, description?, isActive? }` (chặn tắt hoạt động nếu còn người ở `422 BUILDING_HAS_OCCUPANTS`) |
-| `GET` | `/api/rooms` | Danh sách phòng (`?buildingId=&floor=&gender=&capacity=&status=&availability=has_slot\|full&search=&page=&limit=`), sắp xếp tầng thấp → số phòng nhỏ |
-| `GET` | `/api/rooms/:id` | Chi tiết phòng kèm mảng `beds: [{ bedNumber, bedCode, status, hasPendingApplication, occupant }]` |
-| `POST` | `/api/rooms` | Tạo phòng `{ buildingId, roomNumber, floor, gender, capacity, pricePerMonth, depositAmount }` — tự sinh mảng giường `1..capacity` |
-| `PUT` | `/api/rooms/:id` | Cập nhật phòng (chặn đổi `gender`/`capacity` khi có người ở `422 ROOM_HAS_OCCUPANTS` hoặc vướng đơn chờ `422 ROOM_HAS_PENDING_APPLICATIONS`) |
-
----
-
-## 5. Cổng Tiếp Nhận Công Khai (`/api/public` & Đăng Ký Online)
-*Không yêu cầu token xác thực.*
-
-| Method | Endpoint | Mô tả |
-|---|---|---|
-| `GET` | `/api/public/rooms/available` | Tra cứu phòng còn giường trống theo giới tính `?gender=male\|female&buildingId=` (sắp xếp ngăn xếp tầng thấp → số phòng nhỏ, ẩn danh tính người đang ở, đánh dấu `hasPendingApplication`) |
-| `POST` | `/api/contracts/register-online` | Nộp đơn đăng ký KTX trực tuyến `{ ...studentFields, roomId, bedNumber, term: '6_months' \| '12_months' }` → tạo/cập nhật `Student` và tạo `Contract` (`status: 'pending'`, chưa khóa giường) |
-| `GET` | `/api/public/applications/status` | Tra cứu kết quả đơn đăng ký `?studentCode=&email=` |
-
----
-
-## 6. Quản Lý Đơn Đăng Ký & Hợp Đồng (`/api/contracts`)
-*Yêu cầu quyền: `admin`, `staff` (riêng `POST /register-online` công khai ở mục 5).*
-
-| Method | Endpoint | Mô tả |
-|---|---|---|
-| `GET` | `/api/contracts` | Danh sách đơn & hợp đồng (`?status=pending,active...&buildingId=&roomId=&term=&isDepositRefunded=&search=&page=&limit=`) kèm `summary: { pending, active, expired, terminated, rejected, awaitingDepositRefund }` |
-| `GET` | `/api/contracts/:id` | Chi tiết hợp đồng kèm `student` đầy đủ, `depositStatus`, `invoices[]` và dòng thời gian `history[]` |
-| `PATCH` | `/api/contracts/:id/approve` | Phê duyệt đơn `{ roomId?, bedNumber? }`: khóa giường nguyên tử `$elemMatch`, chuyển `active`, tạo tài khoản `User` (`TK=MK=MSSV`, `mustChangePassword=true`), phát hành 2 hóa đơn (`deposit`, `room_semester`), gửi email thông báo |
-| `PATCH` | `/api/contracts/:id/reject` | Từ chối đơn `{ reason: string }`: chuyển `rejected`, lưu lý do và gửi email thông báo cho SV |
-| `PATCH` | `/api/contracts/:id/terminate` | Thanh lý hợp đồng & trả giường về `available` (chặn `422 OUTSTANDING_INVOICES` nếu còn hóa đơn cá nhân hoặc điện nước phòng chưa thanh toán) |
-| `PATCH` | `/api/contracts/:id/deposit-refund` | Xác nhận đã hoàn trả đủ tiền cọc tại văn phòng sau thanh lý (`isDepositRefunded = true`, 1 lần duy nhất) |
-
----
-
-## 7. Chỉ Số Điện Nước Bảng Lưới (`/api/utility-readings`)
-*Yêu cầu quyền: `admin`, `staff`.*
-
-| Method | Endpoint | Mô tả |
-|---|---|---|
-| `GET` | `/api/utility-readings/sheet` | Lấy bảng lưới nhập liệu theo tòa & tháng `?buildingId=&monthYear=YYYY-MM` (kèm `defaultUnitPrices`, chỉ số kỳ trước `previous` và số người đang ở `occupied`) |
-| `POST` | `/api/utility-readings/bulk` | Lưu nháp hàng loạt `{ buildingId, monthYear, electricityUnitPrice, waterUnitPrice, rows: [{ roomId, electricityOldIndex, electricityNewIndex, waterOldIndex, waterNewIndex }] }` |
-| `POST` | `/api/utility-readings/publish` | Chốt & phát hành hóa đơn điện nước cho toàn tòa `{ buildingId, monthYear }`: mỗi phòng có người ở sinh đúng **01 hóa đơn `scope: 'room'`**, khóa `isBilled = true` |
-| `GET` | `/api/utility-readings/history` | Lịch sử chỉ số của 1 phòng `?roomId=&limit=12` |
-
----
-
-## 8. Hóa Đơn & Thanh Toán (`/api/invoices`, `/api/payments`)
-*Yêu cầu quyền: `admin`, `staff`.*
-
-| Method | Endpoint | Mô tả |
-|---|---|---|
-| `GET` | `/api/invoices` | Danh sách hóa đơn (`?status=&type=&scope=&buildingId=&search=&page=&limit=`) kèm `summary: { totalAmount, paidAmount, unpaidAmount, unpaidCount }` |
-| `GET` | `/api/invoices/:id` | Chi tiết hóa đơn kèm `payments[]`; nếu `type === 'utility'` kèm thêm `reading` và danh sách `members[]` đang ở phòng |
-| `GET` | `/api/payments` | Danh sách biên lai phiếu thu (`?method=&type=&from=YYYY-MM-DD&to=YYYY-MM-DD&search=&invoiceId=&page=&limit=`) kèm `summary: { totalAmount, cashAmount, vietqrAmount }` |
-| `POST` | `/api/payments/cash` | Thu tiền mặt tại quầy `{ invoiceId, payerStudentId?, note? }` *(hóa đơn `scope: 'room'` bắt buộc truyền `payerStudentId` thuộc phòng đó)* |
-| `POST` | `/api/payments/vietqr/confirm` | Đối soát & xác nhận chuyển khoản VietQR `{ invoiceId, payerStudentId?, transactionCode?, note? }` *(chặn trùng `transactionCode` với `409 DUPLICATE_TRANSACTION_CODE`)* |
-
----
-
-## 9. Cổng Dịch Vụ Sinh Viên (`/api/portal`)
-*Yêu cầu quyền: `student` (danh tính luôn lấy từ `req.user.studentId`).*
-
-| Method | Endpoint | Mô tả |
-|---|---|---|
-| `GET` | `/api/portal/profile` | Hồ sơ cá nhân của sinh viên đang đăng nhập |
-| `GET` | `/api/portal/my-residence` | Thông tin chỗ ở hiện tại (`hasResidence`, `contract`, `roommates: [{ studentCode, fullName }]`, `debtSummary`) |
-| `GET` | `/api/portal/my-contracts` | Toàn bộ lịch sử đơn đăng ký & hợp đồng của sinh viên |
-| `GET` | `/api/portal/my-invoices` | Danh sách hóa đơn cá nhân + hóa đơn điện nước của phòng đang ở (`?scope=personal\|room&status=&page=&limit=`) |
-| `GET` | `/api/portal/my-invoices/:id` | Chi tiết 1 hóa đơn (kiểm tra quyền sở hữu / cùng phòng) |
-| `GET` | `/api/portal/my-invoices/:id/vietqr` | Sinh thông số mã VietQR động chuẩn NAPAS `{ bankBin, accountNumber, accountName, amount, transferContent }` |
-| `GET` | `/api/portal/my-payments` | Lịch sử các phiếu thu liên quan tới hóa đơn cá nhân & phòng đang ở |
-| `GET` | `/api/portal/my-room/utility-history` | Lịch sử chỉ số điện nước các tháng đã chốt của phòng đang ở (`?limit=12`) |
-
----
-
-## 10. Dashboard & Thống Kê (`/api/dashboard`)
+## 4. Cơ Sở Vật Chất 3 Cơ Sở (`/api/buildings`, `/api/rooms`)
 
 | Method | Endpoint | Quyền | Mô tả |
 |---|---|---|---|
-| `GET` | `/api/dashboard/summary` | `admin`, `staff` | Tổng quan KPI: `occupancy: { total, occupied, available, maintenance }`, `activeStudents`, `pendingApplications`, `finance: { totalDebt, roomDebt, utilityDebt }` *(không tính tiền cọc vào công nợ doanh thu)* |
-| `GET` | `/api/dashboard/occupancy` | `admin`, `staff` | Tỷ lệ lấp đầy chi tiết theo từng tòa nhà đang hoạt động |
-| `GET` | `/api/dashboard/revenue` | `admin` | Doanh thu thực thu theo từng tháng trong năm `?year=YYYY` (`[{ month, roomRevenue, utilityRevenue, total }]`, loại trừ tiền cọc) |
+| `GET` | `/api/buildings` | `manager`, `staff` | Danh sách tòa nhà (`?campus=cs1\|cs2\|cs3&includeInactive=true`) kèm thống kê phòng & chỗ ở (`totalCapacity`, `occupiedSlots`, `availableSlots`) |
+| `POST` | `/api/buildings` | `manager` | Tạo tòa nhà `{ campus, code, name, totalFloors?, description? }` |
+| `PUT` | `/api/buildings/:id` | `manager` | Cập nhật tòa (chặn tắt nếu còn người ở hoặc đơn `pending`/`pending_payment`) |
+| `GET` | `/api/rooms` | `manager`, `staff` | Danh sách phòng (`?campus=&buildingId=&floor=&gender=&roomTier=&capacity=&status=&availability=&search=`) kèm `occupiedCount`, `availableSlots`, `pendingCount` |
+| `GET` | `/api/rooms/:id` | `manager`, `staff` | Chi tiết phòng kèm danh sách `occupants[]` (các SV đang `active`/`pending_payment` trong phòng) và số đơn `pending` |
+| `POST` | `/api/rooms` | `manager` | Tạo phòng `{ buildingId, roomNumber, floor, gender, roomTier, capacity, hasAirConditioner?, hasWaterHeater?, amenities?, pricePerMonth, depositAmount }` |
+| `PUT` | `/api/rooms/:id` | `manager` | Cập nhật phòng (chặn đổi giới tính khi có người ở/đơn chờ; chặn hạ `capacity` dưới `occupiedCount`) |
+
+---
+
+## 5. Quản Lý Đợt Đăng Ký (`/api/periods`)
+
+| Method | Endpoint | Quyền | Mô tả |
+|---|---|---|---|
+| `GET` | `/api/periods` | `manager`, `staff` | Danh sách đợt đăng ký (`?campus=&status=&academicYearStart=`) kèm số đơn theo trạng thái |
+| `GET` | `/api/periods/:id` | `manager`, `staff` | Chi tiết 1 đợt đăng ký |
+| `POST` | `/api/periods` | `manager` | Tạo đợt đăng ký mới `{ code, name, academicYearStart, campus, targetCohort, allowedFaculties?, excludedFaculties?, allowedTerms, startDate, endDate, paymentDeadlineDays?, status?, description? }` |
+| `PUT` | `/api/periods/:id` | `manager` | Cập nhật cấu hình đợt |
+| `PATCH` | `/api/periods/:id/status` | `manager` | Đóng/mở nhanh đợt `{ status: 'upcoming' \| 'open' \| 'closed' }` |
+
+---
+
+## 6. Xét Duyệt, Chờ Đóng Phí, QR Check-in & Hoàn Cọc (`/api/contracts`)
+*Quyền: `manager`, `staff`.*
+
+| Method | Endpoint | Mô tả |
+|---|---|---|
+| `GET` | `/api/contracts` | Danh sách đơn & hợp đồng (`?status=&periodId=&campus=&buildingId=&roomId=&term=&isDepositRefunded=&overduePayment=true&search=`) kèm `summary` |
+| `GET` | `/api/contracts/:id` | Chi tiết hợp đồng kèm hồ sơ SV, hóa đơn, trạng thái Check-in QR, thông tin khấu trừ cọc & dòng thời gian `history[]` |
+| `PATCH` | `/api/contracts/:id/approve` | Duyệt 1 đơn `{ roomId? }` → Khóa 1 chỗ nguyên tử trong phòng (`occupiedCount < capacity`), chuyển `pending_payment` (hạn 7 ngày), cấp TK + Email + Thông báo + hóa đơn đầu kỳ |
+| `POST` | `/api/contracts/auto-approve` | **Tự động duyệt & xếp phòng nhân văn theo lô** `{ periodId?, limit? }`: sắp xếp ưu tiên (`policy_family > poor_household > remote_area > normal`), ưu tiên phòng tầng thấp (`floor <= 2`) cho SV có vấn đề thể chất |
+| `PATCH` | `/api/contracts/:id/reject` | Từ chối đơn `pending` `{ reason }` + gửi Email thông báo |
+| `PATCH` | `/api/contracts/:id/cancel` | Hủy hợp đồng `pending_payment` `{ reason? }` (chưa thanh toán) → hủy hóa đơn nháp sang `cancelled` + nhả 1 chỗ phòng ngay |
+| `POST` | `/api/contracts/cancel-overdue` | Hủy hàng loạt toàn bộ hợp đồng `pending_payment` đã quá `paymentDeadline` chưa đóng phí → thu hồi chỗ phòng cho đợt bổ sung |
+| `POST` | `/api/contracts/checkin-qr` | **Quét mã QR Check-in nhận phòng** `{ checkinCode }` → xác thực hợp đồng `active` & ghi nhận `checkedInAt` |
+| `PATCH` | `/api/contracts/:id/terminate` | Thanh lý hợp đồng `active`/`expired` khi sạch nợ 100% → nhả 1 chỗ phòng |
+| `PATCH` | `/api/contracts/:id/deposit-refund` | Quyết toán hoàn cọc `{ deductionAmount?: number, reason?: string }` → hoàn `depositAmount - deductionAmount`, lưu phiếu chi `Payment` loại `refund` |
+
+---
+
+## 7. Điện Nước, Hóa Đơn & Webhook VietQR Tự Động (`/api/utility-readings`, `/api/invoices`, `/api/payments`)
+
+| Method | Endpoint | Quyền | Mô tả |
+|---|---|---|---|
+| `GET` | `/api/utility-readings/sheet` | `manager`, `staff` | Bảng lưới điện nước theo tòa & tháng `?buildingId=&monthYear=` |
+| `POST` | `/api/utility-readings/bulk` | `manager`, `staff` | Lưu hàng loạt (kiểm tra `oldIndex === previous.newIndex` trừ khi `allowMeterReset: true`) |
+| `POST` | `/api/utility-readings/publish` | `manager`, `staff` | Phát hành 01 hóa đơn phòng (`scope: 'room'`) + **bắn Thông báo In-app & Email** tới tất cả SV trong phòng |
+| `GET` | `/api/utility-readings/history` | `manager`, `staff` | Lịch sử điện nước 1 phòng `?roomId=&limit=12` |
+| `GET` | `/api/invoices` | `manager`, `staff` | Danh sách hóa đơn (`?status=&type=&scope=&campus=&buildingId=&search=`) kèm `summary` |
+| `GET` | `/api/invoices/:id` | `manager`, `staff` | Chi tiết hóa đơn kèm phiếu thu, chỉ số điện nước & danh sách thành viên phòng |
+| `GET` | `/api/payments` | `manager`, `staff` | Danh sách phiếu thu & phiếu chi hoàn cọc (`?paymentType=&method=&type=&from=&to=&search=`) |
+| `POST` | `/api/payments/cash` | `manager`, `staff` | Thu tiền mặt tại quầy `{ invoiceId, payerStudentId?, note? }` *(tự nâng `pending_payment -> active` nếu đủ phí đầu kỳ)* |
+| `POST` | `/api/payments/vietqr/confirm` | `manager`, `staff` | Đối soát thủ công dự phòng `{ invoiceId, payerStudentId?, transactionCode?, note? }` |
+| `POST` | `/api/payments/webhook/vietqr` | **Webhook Secret** | **Tự động gạch nợ VietQR chuẩn SePay/Casso** `{ content, transferAmount, referenceCode, payerStudentId? }` (header `x-webhook-secret`) — chống trùng idempotent, tự kích hoạt hợp đồng & sinh QR Check-in |
+| `POST` | `/api/payments/webhook/simulate` | `manager`, `staff` | **Giả lập ngân hàng báo có** `{ invoiceId, payerStudentId? }` phục vụ demo/kiểm thử |
+
+---
+
+## 8. Phiếu Yêu Cầu SV (`/api/requests`) & Bảng Tin (`/api/notifications`)
+
+| Method | Endpoint | Quyền | Mô tả |
+|---|---|---|---|
+| `GET` | `/api/requests` | `manager`, `staff` | Danh sách phiếu yêu cầu (`?type=repair\|transfer\|checkout&status=&campus=&search=`) kèm `summary` |
+| `PATCH` | `/api/requests/:id/status` | `manager`, `staff` | Cập nhật trạng thái phiếu `{ status, handlerNote?, targetRoomId? }`. *Riêng duyệt chuyển phòng (`transfer` → `approved`/`completed`) chỉ `manager` và tự khóa chỗ phòng mới + nhả chỗ phòng cũ nguyên tử!* |
+| `GET` | `/api/notifications/announcements` | `manager`, `staff` | Danh sách bảng tin KTX đã đăng |
+| `POST` | `/api/notifications/announcements` | `manager`, `staff` | Đăng bảng tin mới `{ title, content, campus?: 'all'\|'cs1'\|'cs2'\|'cs3' }` |
+| `DELETE` | `/api/notifications/announcements/:id` | `manager` | Xóa bảng tin |
+
+---
+
+## 9. Cổng Dịch Vụ Sinh Viên (`/api/portal`, Quyền: `student`)
+
+| Method | Endpoint | Mô tả |
+|---|---|---|
+| `GET` | `/api/portal/profile` | Hồ sơ cá nhân SV |
+| `GET` | `/api/portal/my-residence` | Chỗ ở hiện tại (gồm cả `pending_payment` & `active`), bạn cùng phòng, công nợ & `unreadNotifications` |
+| `GET` | `/api/portal/my-contracts` | Lịch sử đơn & hợp đồng của tôi |
+| `POST` | `/api/portal/applications` | **Đăng ký / Gia hạn KTX nội bộ** (dành cho SV năm 2+ đã có tài khoản — không cần gõ lại hồ sơ!) `{ periodId, roomId?, preferredRoomTier?, preferredCapacity?, term }` |
+| `GET` | `/api/portal/my-contracts/:id/checkin-qr` | Lấy **Mã QR Check-in** bàn giao phòng (khi hợp đồng đã `active`) |
+| `GET` | `/api/portal/my-invoices` | Hóa đơn cá nhân + hóa đơn điện nước phòng đang ở |
+| `GET` | `/api/portal/my-invoices/:id` | Chi tiết hóa đơn |
+| `GET` | `/api/portal/my-invoices/:id/vietqr` | Sinh mã VietQR động chuẩn NAPAS `{ bankBin, accountNumber, accountName, amount, transferContent, qrImageUrl }` |
+| `GET` | `/api/portal/my-payments` | Lịch sử thanh toán & phiếu hoàn cọc của tôi |
+| `GET` | `/api/portal/my-room/utility-history` | Lịch sử điện nước các tháng đã chốt của phòng |
+| `GET` | `/api/portal/requests` | Danh sách phiếu Báo hỏng / Chuyển phòng / Trả phòng đã gửi |
+| `POST` | `/api/portal/requests` | Gửi phiếu mới `{ type: 'repair'\|'transfer'\|'checkout', title, description, repairCategory?, targetRoomId?, attachmentUrl? }` |
+| `PATCH` | `/api/portal/requests/:id/cancel` | SV tự hủy phiếu khi đang `pending` |
+| `GET` | `/api/portal/notifications` | Chuông thông báo cá nhân + Bảng tin KTX (kèm `unreadCount`) |
+| `PATCH` | `/api/portal/notifications/:id/read` | Đánh dấu 1 thông báo đã đọc |
+| `PATCH` | `/api/portal/notifications/read-all` | Đánh dấu tất cả thông báo cá nhân đã đọc |
+
+---
+
+## 10. Dashboard & Báo Cáo 3 Cơ Sở (`/api/dashboard`)
+
+| Method | Endpoint | Quyền | Mô tả |
+|---|---|---|---|
+| `GET` | `/api/dashboard/summary` | `manager`, `staff` | KPI tổng quan (hỗ trợ `?campus=cs1\|cs2\|cs3`): lấp đầy, SV đang ở, đơn chờ duyệt, đơn chờ đóng phí, phiếu yêu cầu chờ xử lý, công nợ |
+| `GET` | `/api/dashboard/occupancy` | `manager`, `staff` | Tỷ lệ lấp đầy chi tiết theo từng Tòa nhà & gom nhóm theo **3 Cơ sở** |
+| `GET` | `/api/dashboard/revenue` | **`manager`** *(chỉ Manager!)* | Doanh thu thực thu theo tháng trong năm (`?year=2026&campus=`), tách tiền phòng & điện nước, loại trừ tiền cọc và phiếu chi hoàn cọc |

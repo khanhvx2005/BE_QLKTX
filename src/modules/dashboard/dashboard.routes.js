@@ -1,5 +1,7 @@
 /**
- * /api/dashboard — API.md §10. Doanh thu chỉ Admin (Staff → 403 FORBIDDEN).
+ * /api/dashboard — API.md §10.
+ *   - KPI & Tỷ lệ lấp đầy 3 cơ sở: `manager` và `staff`.
+ *   - Báo cáo Doanh thu tài chính (`/revenue`): CHỈ `manager` (`admin` & `staff` -> 403 FORBIDDEN).
  */
 
 const express = require('express');
@@ -10,8 +12,8 @@ const service = require('./dashboard.service');
 const router = express.Router();
 router.use(authenticate);
 
-router.get('/summary', authorize('admin', 'staff'), respond(() => service.summary()));
-router.get('/occupancy', authorize('admin', 'staff'), respond(() => service.occupancy()));
-router.get('/revenue', authorize('admin'), respond((req) => service.revenue(req.query)));
+router.get('/summary', authorize('manager', 'staff'), respond((req) => service.summary(req.query)));
+router.get('/occupancy', authorize('manager', 'staff'), respond((req) => service.occupancy(req.query)));
+router.get('/revenue', authorize('manager'), respond((req) => service.revenue(req.query)));
 
 module.exports = router;

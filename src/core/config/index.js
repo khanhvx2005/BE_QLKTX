@@ -1,6 +1,5 @@
 /**
  * Quản lý cấu hình toàn hệ thống từ biến môi trường (.env).
- * Single source of truth cho toàn bộ thông số cấu hình Backend.
  */
 
 const dotenv = require('dotenv');
@@ -29,27 +28,22 @@ const config = {
       : ['http://localhost:5173'],
   },
 
-  /**
-   * Tài khoản nhận tiền cho mã VietQR động (chuẩn NAPAS 247).
-   * Mặc định dùng số mẫu khi chạy thử — cấu hình tài khoản thật trong .env khi triển khai.
-   */
+  /** Tài khoản nhận tiền VietQR động chuẩn NAPAS 247 & bí mật Webhook SePay/Casso */
   vietqr: {
     bankBin: process.env.VIETQR_BANK_BIN || '970436',
     accountNumber: process.env.VIETQR_ACCOUNT_NUMBER || '0011001234567',
     accountName: process.env.VIETQR_ACCOUNT_NAME || 'KY TUC XA HAUI',
+    webhookSecret: process.env.VIETQR_WEBHOOK_SECRET || 'haui_dms_vietqr_webhook_secret_2026',
   },
 
-  /**
-   * Cấu hình SMTP (Nodemailer) gửi email cấp tài khoản & kết quả xét duyệt đơn KTX.
-   * Nếu bỏ trống SMTP_USER / SMTP_PASS, hệ thống tự động bỏ qua gửi mail thật và ghi log.
-   */
+  /** Cấu hình SMTP (Nodemailer) */
   smtp: {
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port: parseInt(process.env.SMTP_PORT, 10) || 587,
     user: process.env.SMTP_USER || '',
     pass: process.env.SMTP_PASS || '',
     from: process.env.SMTP_FROM || process.env.SMTP_USER || '',
-    fromName: process.env.SMTP_FROM_NAME || 'Ký túc xá Đại học Công nghiệp Hà Nội (HaUI - DMS)',
+    fromName: process.env.SMTP_FROM_NAME || 'Trung tâm Ký túc xá ĐH Công nghiệp Hà Nội (HaUI - DMS)',
     frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   },
 };

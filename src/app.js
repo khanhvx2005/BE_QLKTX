@@ -1,18 +1,18 @@
 /**
- * Khởi tạo ứng dụng Express và cấu hình các middleware toàn cục.
- * Tuân thủ theo EDIT_DOCS_DAC_TA_YEU_CAU.md (Hệ thống HaUI - DMS v2.0 tinh gọn).
- * 
- * ============================================================================
- * [CẤU TRÚC ĐỊNH TUYẾN 8 MODULES CHUẨN]:
- * 1. M1: /api/auth & /api/users - Xác thực và Quản lý tài khoản
- * 2. M2: /api/students - Quản lý Hồ sơ Sinh viên HaUI
- * 3. M3: /api - Quản lý Tòa nhà & Phòng KTX
- * 4. M4: /api/contracts - Đăng ký KTX Online & Hợp đồng lưu trú
- * 5. M5: /api - Chỉ số Điện Nước & Hóa đơn theo Phòng
- * 6. M6: /api/payments - Thanh toán (Tiền mặt & VietQR) & Hoàn cọc
- * 7. M7: /api/portal - Cổng dịch vụ Sinh viên KTX
- * 8. M8: /api/dashboard - Dashboard & Báo cáo Thống kê
- * ============================================================================
+ * Khởi tạo ứng dụng Express và đăng ký 10 phân hệ nghiệp vụ HaUI - DMS v3.0.
+ * Tuân thủ EDIT_DOCS_DAC_TA_YEU_CAU.md · EDIT_DOCS_DATA_SCHEMA.md · API.md.
+ *
+ * [10 PHÂN HỆ NGHIỆP VỤ — 11 COLLECTIONS — 4 VAI TRÒ RBAC]:
+ *  1. auth          : /api/auth, /api/users (Admin quản trị user; Manager/Staff reset MK SV)
+ *  2. students      : /api/students (Hồ sơ SV HaUI, trích xuất khóa từ MSSV, Import Excel)
+ *  3. rooms         : /api/buildings, /api/rooms (3 Cơ sở địa giới 2026, bảng giá 2026-2027, quản lý cấp Phòng)
+ *  4. periods       : /api/periods (Đợt đăng ký theo học kỳ & phân luồng Tân SV / Năm 2+)
+ *  5. contracts     : /api/public, /api/contracts (Trang chủ công khai, nộp/hủy đơn, duyệt tự động, pending_payment, QR Check-in, hoàn cọc)
+ *  6. fees          : /api/utility-readings, /api/invoices (Điện nước bảng lưới nối tiếp chỉ số, chốt HĐ Phòng + TB/Email)
+ *  7. payments      : /api/payments (Tiền mặt, Webhook VietQR tự động + Simulator, phiếu chi hoàn cọc)
+ *  8. requests      : /api/requests (Báo hỏng sửa chữa, Chuyển phòng nguyên tử, Đăng ký trả phòng)
+ *  9. notifications : /api/notifications (Bảng tin KTX công khai & Chuông thông báo)
+ * 10. portal & dashboard : /api/portal (Cổng SV tự phục vụ), /api/dashboard (Thống kê 3 cơ sở & Doanh thu riêng Manager)
  */
 
 const express = require('express');
@@ -25,7 +25,7 @@ const ApiResponse = require('./core/utils/response');
 
 const app = express();
 
-// 1. Cấu hình CORS
+// 1. CORS
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -39,78 +39,69 @@ app.use(
   })
 );
 
-// 2. Parse dữ liệu đầu vào JSON & URL-encoded
-app.use(express.json({ limit: '10mb' })); // Cho phép tải dữ liệu danh sách import Excel lớn
+// 2. Parse JSON & URL-encoded
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 3. Middleware ghi log request HTTP
+// 3. Request Logger
 app.use(requestLogger);
 
-// 4. Endpoint kiểm tra trạng thái dịch vụ (Health Check)
+// 4. Health Check
 app.get('/api/health', (req, res) => {
   return ApiResponse.success(
     res,
     {
       status: 'healthy',
       system: 'HaUI - DMS (Dormitory Management System)',
+      version: '3.0.0',
       env: config.env,
       timestamp: new Date().toISOString(),
     },
-    'Hệ thống Quản lý Ký túc xá HaUI - DMS đang hoạt động ổn định'
+    'Hệ thống Quản lý Ký túc xá ĐH Công nghiệp Hà Nội (HaUI - DMS v3.0) đang hoạt động ổn định'
   );
 });
 
-// 5. Đăng ký các router của 8 module cốt lõi
+// 5. Đăng ký 10 phân hệ nghiệp vụ
 
 // M1: Xác thực & Quản lý Tài khoản
-const authRoutes = require('./modules/auth/auth.routes');
-const userRoutes = require('./modules/auth/user.routes');
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
+app.use('/api/auth', require('./modules/auth/auth.routes'));
+app.use('/api/users', require('./modules/auth/user.routes'));
 
 // M2: Quản lý Hồ sơ Sinh viên HaUI
-const studentRoutes = require('./modules/students/student.routes');
-app.use('/api/students', studentRoutes);
+app.use('/api/students', require('./modules/students/student.routes'));
 
-// M3: Cơ sở Vật chất: Tòa nhà & Phòng KTX
-const roomRoutes = require('./modules/rooms/room.routes');
-app.use('/api', roomRoutes);
+// M3: Cơ sở Vật chất 3 Cơ sở: Tòa nhà & Phòng
+app.use('/api', require('./modules/rooms/room.routes'));
 
-// M4: Đăng ký KTX Online & Hợp đồng lưu trú
-const contractRoutes = require('./modules/contracts/contract.routes');
-const publicRoutes = require('./modules/contracts/public.routes');
-app.use('/api/contracts', contractRoutes);
-// Không cần token: phòng còn trống cho người nộp đơn, tra cứu đơn (API.md §5)
-app.use('/api/public', publicRoutes);
+// M4: Quản lý Đợt Đăng ký KTX
+app.use('/api/periods', require('./modules/periods/period.routes'));
 
-// M5: Chỉ số Điện Nước & Hóa đơn theo Phòng
-const feeRoutes = require('./modules/fees/fee.routes');
-app.use('/api', feeRoutes);
+// M5: Trang chủ Công khai & Hợp đồng lưu trú
+app.use('/api/contracts', require('./modules/contracts/contract.routes'));
+app.use('/api/public', require('./modules/contracts/public.routes'));
 
-// M6: Thanh toán (Tiền mặt & VietQR) & Hoàn cọc
-const paymentRoutes = require('./modules/payments/payment.routes');
-app.use('/api/payments', paymentRoutes);
+// M6: Điện Nước & Hóa đơn
+app.use('/api', require('./modules/fees/fee.routes'));
 
-// M7: Cổng Dịch vụ Sinh viên (Portal)
-const portalRoutes = require('./modules/portal/portal.routes');
-app.use('/api/portal', portalRoutes);
+// M7: Thanh toán (Cash, Webhook VietQR tự động & Simulator, Hoàn cọc)
+app.use('/api/payments', require('./modules/payments/payment.routes'));
 
-// M8: Dashboard & Báo cáo Thống kê
-const dashboardRoutes = require('./modules/dashboard/dashboard.routes');
-app.use('/api/dashboard', dashboardRoutes);
+// M8: Phiếu Yêu cầu Trực tuyến của Sinh viên (Báo hỏng / Chuyển phòng / Trả phòng)
+app.use('/api/requests', require('./modules/requests/request.routes'));
 
-// 6. Xử lý đường dẫn không tồn tại (404 Not Found)
+// M9: Bảng tin KTX & Thông báo
+app.use('/api/notifications', require('./modules/notifications/notification.routes'));
+
+// M10: Cổng Dịch vụ Sinh viên & Dashboard 3 Cơ sở
+app.use('/api/portal', require('./modules/portal/portal.routes'));
+app.use('/api/dashboard', require('./modules/dashboard/dashboard.routes'));
+
+// 6. 404 Not Found
 app.use((req, res, next) => {
-  next(
-    new ApiError(
-      404,
-      'NOT_FOUND',
-      `Không tìm thấy endpoint: ${req.method} ${req.originalUrl}`
-    )
-  );
+  next(new ApiError(404, 'NOT_FOUND', `Không tìm thấy endpoint: ${req.method} ${req.originalUrl}`));
 });
 
-// 7. Middleware bắt và chuẩn hóa lỗi tập trung toàn hệ thống
+// 7. Error Handler tập trung
 app.use(errorHandler);
 
 module.exports = app;

@@ -1,5 +1,5 @@
 /**
- * Sinh viên — API.md §3. Thêm hồ sơ KHÔNG tạo tài khoản (tài khoản sinh ra khi duyệt đơn, FR-02).
+ * Hồ sơ sinh viên — API.md §3. Thêm hồ sơ KHÔNG tự tạo tài khoản (tài khoản sinh ra khi duyệt đơn).
  */
 
 const Student = require('./student.model');
@@ -10,19 +10,21 @@ const { pickStudent, studentErrors } = require('./student.rules');
 const { fail, fieldErrors, paginate, matches } = require('../../core/utils/http');
 const { loadCtx, contractView, invoiceView, debtsOf, idOf } = require('../../shared/views');
 
-const dupCode = () => fail(409, 'DUPLICATE_ENTRY', 'Mã số sinh viên đã tồn tại', { errors: [{ field: 'studentCode', message: 'Mã số sinh viên đã tồn tại' }] });
+const dupCode = () =>
+  fail(409, 'DUPLICATE_ENTRY', 'Mã số sinh viên đã tồn tại', {
+    errors: [{ field: 'studentCode', message: 'Mã số sinh viên đã tồn tại' }],
+  });
 
-/** List item: hồ sơ + tài khoản + nợ cá nhân + chỗ ở hiện tại `{ buildingCode, roomNumber, bedNumber }` */
 async function listItems(students) {
   const ids = students.map((s) => s._id);
-  const [users, active, debts] = await Promise.all([
+  const [users, holding, debts] = await Promise.all([
     User.find({ studentId: { $in: ids } }).select('studentId').lean(),
-    Contract.find({ studentId: { $in: ids }, status: 'active' }).lean(),
+    Contract.find({ studentId: { $in: ids }, status: { $in: ['pending_payment', 'active'] } }).lean(),
     debtsOf(ids),
   ]);
-  const ctx = await loadCtx({ roomIds: active.map((c) => c.roomId) });
+  const ctx = await loadCtx({ roomIds: holding.map((c) => c.roomId) });
   const userOf = new Map(users.map((u) => [String(u.studentId), String(u._id)]));
-  const contractOf = new Map(active.map((c) => [String(c.studentId), c]));
+  const contractOf = new Map(holding.map((c) => [String(c.studentId), c]));
   return students.map((s) => {
     const c = contractOf.get(String(s._id));
     const room = c && ctx.rooms.get(String(c.roomId));
@@ -32,7 +34,9 @@ async function listItems(students) {
       userId: userOf.get(String(s._id)) ?? null,
       hasAccount: userOf.has(String(s._id)),
       totalDebt: debts.get(String(s._id)) ?? 0,
-      residence: room ? { buildingCode: b?.code ?? null, roomNumber: room.roomNumber, bedNumber: c.bedNumber } : null,
+      residence: room
+        ? { campus: b?.campus ?? null, buildingCode: b?.code ?? null, roomNumber: room.roomNumber, contractStatus: c.status }
+        : null,
     };
   });
 }
@@ -44,27 +48,32 @@ async function findStudent(id) {
   return s;
 }
 
-/** GET /students ?search=&gender=&faculty=&status=&hasAccount=&page=&limit= (FR-10) */
 async function list(q = {}) {
   const filter = { status: q.status || 'active' };
   if (q.gender) filter.gender = q.gender;
   if (q.faculty) filter.faculty = q.faculty;
-  let rows = (await Student.find(filter).sort({ studentCode: 1 }).lean())
-    .filter((s) => matches(q.search, [s.fullName, s.studentCode, s.phone]));
+  if (q.priorityType) filter.priorityType = q.priorityType;
+  if (q.enrollmentYear) filter.enrollmentYear = Number(q.enrollmentYear);
+  const rows = (await Student.find(filter).sort({ studentCode: 1 }).lean()).filter((s) =>
+    matches(q.search, [s.fullName, s.studentCode, s.phone, s.citizenId])
+  );
   let items = await listItems(rows);
-  if (q.hasAccount !== undefined && q.hasAccount !== '') items = items.filter((s) => String(s.hasAccount) === String(q.hasAccount));
-  rows = null;
+  if (q.hasAccount !== undefined && q.hasAccount !== '') {
+    items = items.filter((s) => String(s.hasAccount) === String(q.hasAccount));
+  }
   return { data: paginate(items, q) };
 }
 
-/** GET /students/:id — kèm hợp đồng hiện tại, lịch sử hợp đồng, hóa đơn chưa trả (FR-11) */
 async function getById(id) {
   const s = await findStudent(id);
   const contracts = await Contract.find({ studentId: s._id }).sort({ createdAt: -1 }).lean();
   const unpaid = await Invoice.find({ studentId: s._id, status: 'unpaid', scope: 'personal' }).sort({ createdAt: -1 }).lean();
-  const ctx = await loadCtx({ roomIds: [...contracts.map((c) => c.roomId), ...unpaid.map((i) => i.roomId)], studentIds: [s._id] });
+  const ctx = await loadCtx({
+    roomIds: [...contracts.map((c) => c.roomId), ...unpaid.map((i) => i.roomId)],
+    studentIds: [s._id],
+  });
   const debts = await debtsOf([s._id]);
-  const current = contracts.find((c) => c.status === 'active');
+  const current = contracts.find((c) => ['active', 'pending_payment'].includes(c.status));
   return {
     data: {
       ...(await listItem(s)),
@@ -84,7 +93,6 @@ async function create(body = {}) {
   return { data: await listItem(s.toObject()), message: 'Thêm sinh viên thành công', status: 201 };
 }
 
-/** PUT /students/:id — đổi được MSSV nhưng không trùng (FR-13); tài khoản đi theo MSSV / họ tên */
 async function update(id, body = {}) {
   const s = await findStudent(id);
   const patch = pickStudent(body);
@@ -92,22 +100,19 @@ async function update(id, body = {}) {
   const errors = studentErrors(next);
   if (errors.length) fieldErrors(errors);
   if (next.studentCode !== s.studentCode && (await Student.exists({ studentCode: next.studentCode, _id: { $ne: s._id } }))) dupCode();
-  // BR-01: giường đang giữ thuộc phòng theo giới tính cũ — đổi giới tính lúc này là đưa SV nữ vào phòng nam
-  if (next.gender !== s.gender && (await Contract.exists({ studentId: s._id, status: { $in: ['pending', 'active'] } }))) {
-    fail(422, 'GENDER_CHANGE_NOT_ALLOWED', 'Sinh viên đang có đơn chờ duyệt hoặc đang ở, không đổi được giới tính', {
-      errors: [{ field: 'gender', message: 'Đang có đơn chờ duyệt hoặc đang ở — từ chối đơn hoặc thanh lý trước khi đổi giới tính' }],
+  if (
+    next.gender !== s.gender &&
+    (await Contract.exists({ studentId: s._id, status: { $in: ['pending', 'pending_payment', 'active'] } }))
+  ) {
+    fail(422, 'GENDER_CHANGE_NOT_ALLOWED', 'Sinh viên đang có đơn chờ duyệt, chờ đóng phí hoặc đang ở, không đổi được giới tính', {
+      errors: [{ field: 'gender', message: 'Không đổi được giới tính khi còn đơn hoặc hợp đồng hiệu lực' }],
     });
   }
   await Student.updateOne({ _id: s._id }, { $set: patch });
-  // Đăng nhập bằng MSSV (FR-01) → tài khoản phải mang MSSV mới
   await User.updateOne({ studentId: s._id }, { $set: { studentCode: next.studentCode, fullName: next.fullName } });
   return { data: await listItem(await Student.findById(s._id).lean()), message: 'Cập nhật thành công' };
 }
 
-/**
- * POST /students/import — { rows: [{ row, ...Student }] }, tối đa 1000 dòng (FR-12b).
- * FE đọc Excel rồi gửi JSON. Dòng hợp lệ vẫn lưu khi dòng khác lỗi; mỗi dòng báo lỗi đầu tiên kèm số dòng Excel.
- */
 async function importMany({ rows } = {}) {
   if (!Array.isArray(rows) || !rows.length) fail(400, 'VALIDATION_ERROR', 'File không có dòng dữ liệu nào');
   if (rows.length > 1000) fail(400, 'VALIDATION_ERROR', 'Mỗi lần nhập tối đa 1000 dòng');
@@ -118,8 +123,14 @@ async function importMany({ rows } = {}) {
     const data = pickStudent(r);
     const err = (field, message) => errors.push({ row: r.row, studentCode: data.studentCode ?? null, field, message });
     const fieldErrs = studentErrors(data);
-    if (fieldErrs.length) { err(fieldErrs[0].field, fieldErrs[0].message); continue; }
-    if (seen.has(data.studentCode)) { err('studentCode', 'Mã số sinh viên đã tồn tại'); continue; }
+    if (fieldErrs.length) {
+      err(fieldErrs[0].field, fieldErrs[0].message);
+      continue;
+    }
+    if (seen.has(data.studentCode)) {
+      err('studentCode', 'Mã số sinh viên đã tồn tại');
+      continue;
+    }
     await Student.create({ ...data, status: 'active' });
     seen.add(data.studentCode);
     successCount += 1;
@@ -131,11 +142,10 @@ async function importMany({ rows } = {}) {
   };
 }
 
-/** PATCH /students/:id/deactivate — chặn khi còn đơn chờ / hợp đồng, hoặc còn nợ (FR-14) */
 async function deactivate(id) {
   const s = await findStudent(id);
-  if (await Contract.exists({ studentId: s._id, status: { $in: ['pending', 'active'] } })) {
-    fail(422, 'STUDENT_HAS_ACTIVE_CONTRACT', 'Sinh viên đang có hợp đồng hiệu lực hoặc đơn đăng ký chờ duyệt, không thể vô hiệu hóa');
+  if (await Contract.exists({ studentId: s._id, status: { $in: ['pending', 'pending_payment', 'active'] } })) {
+    fail(422, 'STUDENT_HAS_ACTIVE_CONTRACT', 'Sinh viên đang có hợp đồng hoặc đơn đăng ký đang xử lý, không thể vô hiệu hóa');
   }
   if (((await debtsOf([s._id])).get(idOf(s)) ?? 0) > 0) fail(422, 'STUDENT_HAS_DEBT', 'Sinh viên còn công nợ chưa thanh toán');
   await Student.updateOne({ _id: s._id }, { $set: { status: 'inactive' } });

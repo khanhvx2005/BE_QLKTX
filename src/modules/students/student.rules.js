@@ -1,28 +1,65 @@
 /**
- * Luật hồ sơ sinh viên — DÙNG CHUNG cho đơn đăng ký công khai, thêm/sửa sinh viên và nhập Excel,
- * để hồ sơ tạo ra từ đường nào cũng sửa được bằng đường khác.
- *
- * Từ 12/11/2026: mọi trường đều bắt buộc (đơn KTX thực tế), thêm số CCCD và địa chỉ thường trú.
- * ⚠️ FE kiểm cùng luật (PublicApplyPage, StudentFormModal, studentExcel) và mock (mockApi.studentErrors) —
- *    đổi một chỗ phải đổi cả bốn, kèm `docs/API.md` §3.
+ * Luật hồ sơ sinh viên HaUI — dùng chung cho cổng công khai, thêm/sửa hồ sơ và nhập Excel.
  */
 
 const { isDateString, today } = require('../../core/utils/dates');
+const { PRIORITY_TYPES } = require('../../shared/constants/enums');
 
-const STUDENT_CODE_RE = /^\d{10}$/; // MSSV HaUI 10 chữ số
+const STUDENT_CODE_RE = /^\d{10}$/; // MSSV HaUI 10 chữ số (YYYY60xxxx)
 const PHONE_RE = /^0\d{9}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CITIZEN_ID_RE = /^\d{12}$/; // CCCD 12 chữ số
 
-const FIELDS = ['studentCode', 'fullName', 'gender', 'dob', 'phone', 'email', 'citizenId', 'address', 'faculty', 'className', 'emergencyContact'];
+const FIELDS = [
+  'studentCode',
+  'fullName',
+  'gender',
+  'dob',
+  'phone',
+  'email',
+  'citizenId',
+  'address',
+  'faculty',
+  'className',
+  'priorityType',
+  'hasHealthCondition',
+  'healthNote',
+  'emergencyContact',
+];
 
 const str = (v) => (typeof v === 'string' ? v.trim() : v);
 
-/** Chuẩn hóa body: cắt khoảng trắng, MSSV giữ nguyên chữ số, email thường */
+/** Bóc năm nhập học từ 4 chữ số đầu MSSV HaUI (VD: '2026601234' -> 2026) */
+const parseEnrollmentYear = (studentCode) => {
+  const code = String(studentCode || '').trim();
+  if (!STUDENT_CODE_RE.test(code)) return null;
+  const yr = Number(code.slice(0, 4));
+  return yr >= 2000 && yr <= 2100 ? yr : null;
+};
+
+/** Xác định sinh viên là Tân SV (freshman) hay khóa cũ (returning) theo năm học bắt đầu */
+const cohortFromStudentCode = (studentCode, academicYearStart) => {
+  const yr = parseEnrollmentYear(studentCode);
+  if (!yr || !academicYearStart) return null;
+  const studyYear = Number(academicYearStart) - yr + 1;
+  return {
+    enrollmentYear: yr,
+    studyYear,
+    cohort: studyYear <= 1 ? 'freshman' : 'returning',
+  };
+};
+
 const pickStudent = (body = {}) => {
   const out = {};
-  FIELDS.forEach((f) => { if (body[f] !== undefined) out[f] = str(body[f]); });
+  FIELDS.forEach((f) => {
+    if (body[f] !== undefined) out[f] = str(body[f]);
+  });
   if (out.email) out.email = String(out.email).toLowerCase();
+  if (out.hasHealthCondition !== undefined) out.hasHealthCondition = Boolean(out.hasHealthCondition);
+  if (out.studentCode) {
+    const yr = parseEnrollmentYear(out.studentCode);
+    if (yr) out.enrollmentYear = yr;
+  }
   if (out.emergencyContact && typeof out.emergencyContact === 'object') {
     out.emergencyContact = {
       name: str(out.emergencyContact.name) || '',
@@ -33,14 +70,14 @@ const pickStudent = (body = {}) => {
   return out;
 };
 
-/** Lỗi theo trường của một hồ sơ đầy đủ (sau khi gộp với bản cũ khi sửa) */
 const studentErrors = (s) => {
   const errors = [];
   const push = (field, message) => errors.push({ field, message });
-  if (!STUDENT_CODE_RE.test(String(s.studentCode || ''))) push('studentCode', 'Mã sinh viên gồm đúng 10 chữ số');
+  if (!STUDENT_CODE_RE.test(String(s.studentCode || ''))) push('studentCode', 'Mã sinh viên HaUI gồm đúng 10 chữ số (VD: 2026601234)');
+  else if (!parseEnrollmentYear(s.studentCode)) push('studentCode', '4 chữ số đầu của MSSV phải là năm nhập học hợp lệ');
   if (!String(s.fullName || '').trim()) push('fullName', 'Nhập họ và tên');
   if (!['male', 'female'].includes(s.gender)) push('gender', 'Chọn giới tính');
-  if (!isDateString(s.dob)) push('dob', 'Chọn ngày sinh');
+  if (!isDateString(s.dob)) push('dob', 'Chọn ngày sinh (YYYY-MM-DD)');
   else if (s.dob >= today()) push('dob', 'Ngày sinh không hợp lệ');
   if (!PHONE_RE.test(String(s.phone || ''))) push('phone', 'Số điện thoại gồm 10 số, bắt đầu bằng 0');
   if (!EMAIL_RE.test(String(s.email || ''))) push('email', 'Email không đúng định dạng');
@@ -48,6 +85,9 @@ const studentErrors = (s) => {
   if (!String(s.address || '').trim()) push('address', 'Nhập địa chỉ thường trú');
   if (!String(s.faculty || '').trim()) push('faculty', 'Nhập khoa / viện');
   if (!String(s.className || '').trim()) push('className', 'Nhập lớp');
+  if (s.priorityType !== undefined && !PRIORITY_TYPES.includes(s.priorityType)) {
+    push('priorityType', 'Diện ưu tiên không hợp lệ');
+  }
   const ec = s.emergencyContact || {};
   if (!String(ec.name || '').trim()) push('emergencyContact.name', 'Nhập họ tên người thân');
   if (!PHONE_RE.test(String(ec.phone || ''))) push('emergencyContact.phone', 'Số điện thoại người thân gồm 10 số, bắt đầu bằng 0');
@@ -55,4 +95,14 @@ const studentErrors = (s) => {
   return errors;
 };
 
-module.exports = { FIELDS, pickStudent, studentErrors, STUDENT_CODE_RE, PHONE_RE, EMAIL_RE, CITIZEN_ID_RE };
+module.exports = {
+  FIELDS,
+  pickStudent,
+  studentErrors,
+  parseEnrollmentYear,
+  cohortFromStudentCode,
+  STUDENT_CODE_RE,
+  PHONE_RE,
+  EMAIL_RE,
+  CITIZEN_ID_RE,
+};

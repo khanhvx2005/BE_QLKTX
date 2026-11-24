@@ -1,12 +1,19 @@
 /**
- * Tòa nhà KTX (K1, K2, K3, K4...) — DATA-SCHEMA.md §3.3, API.md §4.
+ * Tòa nhà KTX gắn 3 Cơ sở ĐH Công nghiệp Hà Nội (A14-A15, B12-B14, C15-C17).
+ * EDIT_DOCS_DATA_SCHEMA.md §3.3, API.md §4.
  */
 
 const mongoose = require('mongoose');
+const { CAMPUSES } = require('../../shared/constants/enums');
 const toJSON = require('../../shared/to-json');
 
 const buildingSchema = new mongoose.Schema(
   {
+    campus: {
+      type: String,
+      enum: CAMPUSES,
+      required: [true, 'Cơ sở trực thuộc là bắt buộc (cs1, cs2 hoặc cs3)'],
+    },
     code: {
       type: String,
       required: [true, 'Mã tòa nhà là bắt buộc'],
@@ -21,6 +28,11 @@ const buildingSchema = new mongoose.Schema(
       trim: true,
       maxLength: [100, 'Tên tòa nhà tối đa 100 ký tự'],
     },
+    totalFloors: {
+      type: Number,
+      default: 5,
+      min: 1,
+    },
     description: {
       type: String,
       default: '',
@@ -33,5 +45,7 @@ const buildingSchema = new mongoose.Schema(
   },
   { timestamps: true, toJSON }
 );
+
+buildingSchema.index({ campus: 1, code: 1 });
 
 module.exports = mongoose.model('Building', buildingSchema);
