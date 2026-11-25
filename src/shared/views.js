@@ -64,9 +64,11 @@ const roomLabel = (ref) => (ref ? `${ref.buildingCode}-${ref.roomNumber}` : '');
 const contractStatusOf = (c) => (c.status === 'active' && c.endDate && c.endDate < localDate() ? 'expired' : c.status);
 
 const contractView = (c, ctx, debts = null) => {
-  const room = ctx.rooms.get(String(c.roomId));
+  const room = c.roomId ? ctx.rooms.get(String(c.roomId)) : null;
   const st = ctx.students.get(String(c.studentId));
   const rr = roomRef(room, ctx);
+  const effectiveCampus = rr?.campus ?? (c.campus && c.campus !== 'all' ? c.campus : null);
+  const effectiveCampusName = rr?.campusName ?? (effectiveCampus ? CAMPUS_INFO[effectiveCampus]?.name ?? null : null);
   const todayStr = localDate();
   return {
     id: idOf(c),
@@ -78,8 +80,10 @@ const contractView = (c, ctx, debts = null) => {
     studentCode: st?.studentCode ?? null,
     studentName: st?.fullName ?? null,
     room: rr,
-    campus: rr?.campus ?? null,
-    campusName: rr?.campusName ?? null,
+    campus: effectiveCampus,
+    campusName: effectiveCampusName,
+    preferredRoomTier: c.preferredRoomTier ?? null,
+    preferredCapacity: c.preferredCapacity ?? null,
     roomId: idOf(c.roomId),
     roomNumber: room?.roomNumber ?? null,
     buildingId: rr?.buildingId ?? null,

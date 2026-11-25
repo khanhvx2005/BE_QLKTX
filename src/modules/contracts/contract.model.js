@@ -1,13 +1,16 @@
 /**
  * Đơn đăng ký & Hợp đồng lưu trú — EDIT_DOCS_DATA_SCHEMA.md §3.6.
  * Vòng đời v3.0:
- *   pending -> pending_payment (khóa giường, hạn 7 ngày) -> active (đóng đủ phí + sinh QR Check-in) -> terminated
+ *   pending (chưa gắn cứng phòng — chỉ lưu đợt, cơ sở, nguyện vọng loại phòng & kỳ hạn)
+ *     -> pending_payment (tự động xếp phòng tầng thấp -> cao đúng giới tính, khóa 1 chỗ, hạn 7 ngày)
+ *     -> active (đóng đủ phí + sinh QR Check-in)
+ *     -> terminated (thanh lý sạch nợ + hoàn cọc)
  *   pending -> rejected / cancelled (SV tự hủy)
- *   pending_payment -> cancelled (quá hạn đóng phí, hủy 2 HĐ nháp + nhả giường ngay)
+ *   pending_payment -> cancelled (quá hạn đóng phí, hủy 2 HĐ nháp + nhả chỗ ngay)
  */
 
 const mongoose = require('mongoose');
-const { CONTRACT_TERMS, CONTRACT_STATUS } = require('../../shared/constants/enums');
+const { CONTRACT_TERMS, CONTRACT_STATUS, CAMPUS_SCOPE, ROOM_TIERS } = require('../../shared/constants/enums');
 const toJSON = require('../../shared/to-json');
 
 const ref = (model) => ({ type: mongoose.Schema.Types.ObjectId, ref: model, default: null });
@@ -17,7 +20,13 @@ const contractSchema = new mongoose.Schema(
     contractCode: { type: String, required: true, unique: true, trim: true },
     periodId: ref('RegistrationPeriod'),
     studentId: { ...ref('Student'), required: true },
-    roomId: { ...ref('Room'), required: true },
+    /** Chỉ bắt buộc khi đã được duyệt xếp phòng (`pending_payment` / `active`); khi `pending` có thể để null để tự động xếp từ tầng thấp lên cao */
+    roomId: ref('Room'),
+    /** Cơ sở của đơn đăng ký (giữ lại ngay cả khi `roomId` chưa gán ở trạng thái `pending`) */
+    campus: { type: String, enum: [...CAMPUS_SCOPE, null], default: null },
+    /** Nguyện vọng loại phòng sinh viên chọn khi đăng ký (không chọn từng số phòng) */
+    preferredRoomTier: { type: String, enum: [...ROOM_TIERS, null], default: null },
+    preferredCapacity: { type: Number, default: null },
     term: { type: String, enum: CONTRACT_TERMS, required: true },
     status: { type: String, enum: CONTRACT_STATUS, default: 'pending' },
 

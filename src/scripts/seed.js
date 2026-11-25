@@ -83,9 +83,10 @@ async function seed() {
   );
 
   // ================================================================ 1. 7 Tòa nhà thực tế tại 3 Cơ sở HaUI (Địa giới 2026)
+  // Lưu ý nghiệp vụ: Chỉ phân biệt giới tính ở cấp từng phòng (phòng Nam & Nữ bố trí chung tòa, chung tầng linh hoạt).
   const buildingSpecs = [
-    { campus: 'cs1', code: 'A14', name: 'Nhà A14 (Cơ sở 1)', totalFloors: 5, description: 'Khu KTX nam Cơ sở 1 — Ngõ 296 Cầu Diễn, P. Tây Tựu, HN' },
-    { campus: 'cs1', code: 'A15', name: 'Nhà A15 (Cơ sở 1)', totalFloors: 5, description: 'Khu KTX nữ & SV quốc tế Cơ sở 1 — Ngõ 296 Cầu Diễn, P. Tây Tựu, HN' },
+    { campus: 'cs1', code: 'A14', name: 'Nhà A14 (Cơ sở 1)', totalFloors: 5, description: 'Khu KTX Cơ sở 1 — Ngõ 296 Cầu Diễn, P. Tây Tựu, HN' },
+    { campus: 'cs1', code: 'A15', name: 'Nhà A15 (Cơ sở 1)', totalFloors: 5, description: 'Khu KTX & SV quốc tế Cơ sở 1 — Ngõ 296 Cầu Diễn, P. Tây Tựu, HN' },
     { campus: 'cs2', code: 'B12', name: 'Nhà B12 (Cơ sở 2)', totalFloors: 5, description: '72 phòng, ~317 chỗ ở — TDP Thượng 2, P. Tây Tựu, HN' },
     { campus: 'cs2', code: 'B14', name: 'Nhà B14 (Cơ sở 2)', totalFloors: 5, description: '40 phòng, ~159 chỗ ở — TDP Thượng 2, P. Tây Tựu, HN' },
     { campus: 'cs3', code: 'C15', name: 'Nhà C15 (Cơ sở 3)', totalFloors: 5, description: '57 phòng, ~260 chỗ ở — P. Phù Vân, Tỉnh Ninh Bình' },
@@ -97,34 +98,37 @@ async function seed() {
     buildings[spec.code] = await Building.create({ ...spec, isActive: true });
   }
 
-  // ================================================================ 2. Phòng mẫu chuẩn bảng giá 2026-2027 (Quản lý cấp Phòng)
+  // ================================================================ 2. Phòng mẫu chuẩn bảng giá 2026-2027 (Giới tính động: phòng trống gender = null)
   const ROOM_LAYOUT = [
     { roomNumber: '101', floor: 1, roomTier: 'high_quality', capacity: 3 },
     { roomNumber: '102', floor: 1, roomTier: 'high_quality', capacity: 4 },
-    { roomNumber: '201', floor: 2, roomTier: 'standard', capacity: 4 },
+    { roomNumber: '201', floor: 2, roomTier: 'standard',     capacity: 4 },
     { roomNumber: '202', floor: 2, roomTier: 'high_quality', capacity: 6 },
-    { roomNumber: '301', floor: 3, roomTier: 'standard', capacity: 6 },
-    { roomNumber: '402', floor: 4, roomTier: 'basic', capacity: 6 },
+    { roomNumber: '203', floor: 2, roomTier: 'standard',     capacity: 4 },
+    { roomNumber: '301', floor: 3, roomTier: 'standard',     capacity: 6 },
+    { roomNumber: '302', floor: 3, roomTier: 'standard',     capacity: 6 },
+    { roomNumber: '401', floor: 4, roomTier: 'basic',        capacity: 6 },
+    { roomNumber: '402', floor: 4, roomTier: 'basic',        capacity: 6 },
   ];
-  const BUILDING_GENDER = { A14: 'male', A15: 'female', B12: 'male', B14: 'female', C15: 'male', C16: 'female', C17: 'male' };
 
   const rooms = [];
   for (const b of Object.values(buildings)) {
     for (const tpl of ROOM_LAYOUT) {
-      const gender = b.code === 'C17' && tpl.floor >= 3 ? 'female' : BUILDING_GENDER[b.code];
-      const pricePerMonth = ROOM_PRICES_2026[tpl.roomTier][tpl.capacity][b.campus];
+      // Riêng CS3: chỉ C15-101 là CLC 3 người (được xếp kín 3/3) để minh họa khóa loại phòng khi hết chỗ; C16-101 & C17-101 là CLC 4 người
+      const capacity = (b.code === 'C16' || b.code === 'C17') && tpl.roomNumber === '101' ? 4 : tpl.capacity;
+      const pricePerMonth = ROOM_PRICES_2026[tpl.roomTier][capacity][b.campus];
       const status = b.code === 'B12' && tpl.roomNumber === '402' ? 'maintenance' : 'active';
       rooms.push(
         await Room.create({
           buildingId: b._id,
           roomNumber: tpl.roomNumber,
           floor: tpl.floor,
-          gender,
+          gender: null,
           roomTier: tpl.roomTier,
-          capacity: tpl.capacity,
+          capacity,
           hasAirConditioner: tpl.roomTier === 'high_quality',
           hasWaterHeater: tpl.roomTier !== 'basic',
-          amenities: amenitiesOf(tpl.roomTier, tpl.capacity),
+          amenities: amenitiesOf(tpl.roomTier, capacity),
           pricePerMonth,
           depositAmount: 500000,
           status,
@@ -244,8 +248,6 @@ async function seed() {
     const studentCode = `${enrollYear}600${pad(i + 1, 3)}`;
     const faculty = isFreshman && i % 5 === 0 ? HN_FACULTIES[i % HN_FACULTIES.length] : ENG_FACULTIES[i % ENG_FACULTIES.length];
     const fullName = `${LAST[i % 10]} ${(male ? MIDDLE_M : MIDDLE_F)[i % 5]} ${(male ? FIRST_M : FIRST_F)[Math.floor(i / 2) % 10]}`;
-    const priorityType = i % 11 === 0 ? 'policy_family' : i % 9 === 0 ? 'poor_household' : i % 7 === 0 ? 'remote_area' : 'normal';
-    const hasHealthCondition = i === 38 || i === 42;
     students.push(
       await Student.create({
         studentCode,
@@ -259,9 +261,9 @@ async function seed() {
         faculty,
         className: `K${enrollYear - 2005}-0${(i % 3) + 1}`,
         enrollmentYear: enrollYear,
-        priorityType,
-        hasHealthCondition,
-        healthNote: hasHealthCondition ? 'Chấn thương đầu gối, đề nghị xếp phòng tầng 1-2' : '',
+        priorityType: 'normal',
+        hasHealthCondition: false,
+        healthNote: '',
         emergencyContact: {
           name: `${LAST[(i + 3) % 10]} Văn ${FIRST_M[(i + 1) % 10]}`,
           phone: `0987${pad(200000 + i * 71, 6)}`,
@@ -275,28 +277,34 @@ async function seed() {
   // Tài khoản Demo SV dễ nhớ cho FE & bộ test
   // sv001 (idx 0, nam, năm 3)  : active CS1 A14-101, còn hóa đơn điện nước chưa nộp
   // sv002 (idx 1, nữ, năm 3)   : active CS1 A15-101, sạch nợ, sẵn sàng test chuyển phòng / báo hỏng
-  // sv003 (idx 20, nam, năm 3) : CHƯA có hợp đồng -> test POST /api/portal/applications
+  // sv003 (idx 20, nam, năm 3) : CỰU nội trú (HĐ năm trước đã thanh lý & hoàn cọc xong) -> test POST /api/portal/applications đăng ký kỳ mới
   // sv004 (idx 26, nam, TSV)   : pending_payment CS3 C15-102 (chưa quá hạn) -> test Webhook VietQR
   // sv005 (idx 28, nam, TSV)   : pending_payment QUÁ HẠN CS3 C15-201 -> test cancel-overdue
   // sv006 (idx 22, nam, năm 3) : terminated, CHƯA hoàn cọc -> test deposit-refund có khấu trừ
   // sv007 (idx 30, nam, TSV)   : vừa được duyệt, TK = MK = MSSV, mustChangePassword: true
   const DEMO_MAP = { sv001: 0, sv002: 1, sv003: 20, sv004: 26, sv005: 28, sv006: 22, sv007: 30 };
 
-  const createContract = async (st, room, period, { term = '10_months', status = 'active', startDate = null, paymentDeadline = null, createdAt, reviewedAt = null, ...extra } = {}) => {
+  const createContract = async (st, room, period, { term = '10_months', status = 'active', startDate = null, paymentDeadline = null, createdAt, reviewedAt = null, campus = null, preferredRoomTier = null, preferredCapacity = null, pricePerMonth = null, depositAmount = 500000, ...extra } = {}) => {
     contractSeq += 1;
     const months = TERM_MONTHS[term];
     const contractCode = `HD-${YEAR_STR}-${pad(contractSeq)}`;
     const checkinCode = status === 'active' ? `QRC-${contractCode}-${crypto.randomBytes(3).toString('hex').toUpperCase()}` : null;
+    const effCampus = room ? buildingById.get(String(room.buildingId)).campus : (campus || period?.campus || null);
+    const effPrice = room ? room.pricePerMonth : (pricePerMonth ?? 350000);
+    const effDeposit = room ? room.depositAmount : depositAmount;
     const c = await Contract.create({
       contractCode,
       periodId: period?._id ?? null,
       studentId: st._id,
-      roomId: room._id,
+      roomId: room ? room._id : null,
+      campus: effCampus === 'all' ? null : effCampus,
+      preferredRoomTier: preferredRoomTier ?? room?.roomTier ?? null,
+      preferredCapacity: preferredCapacity ?? room?.capacity ?? null,
       term,
       status,
-      pricePerMonth: room.pricePerMonth,
-      totalRoomFee: Math.round(room.pricePerMonth * months),
-      depositAmount: room.depositAmount,
+      pricePerMonth: effPrice,
+      totalRoomFee: Math.round(effPrice * months),
+      depositAmount: effDeposit,
       paymentDeadline,
       startDate,
       endDate: startDate ? addMonths(startDate, months) : null,
@@ -310,8 +318,8 @@ async function seed() {
       ...extra,
     });
     if (createdAt) await Contract.collection.updateOne({ _id: c._id }, { $set: { createdAt: new Date(createdAt) } });
-    if (status === 'active' || status === 'pending_payment') {
-      await Room.updateOne({ _id: room._id }, { $inc: { occupiedCount: 1 } });
+    if (room && (status === 'active' || status === 'pending_payment')) {
+      await Room.updateOne({ _id: room._id }, { $inc: { occupiedCount: 1 }, $set: { gender: st.gender } });
     }
     return c;
   };
@@ -357,31 +365,32 @@ async function seed() {
     await Invoice.updateOne({ _id: inv._id }, { $set: { status: 'paid', paidAt: new Date(paidAt), payerStudentId } });
   };
 
-  // ================================================================ 6. Xếp 18 SV đang ở `active` tại đủ 3 Cơ sở
+  // ================================================================ 6. Xếp 19 SV đang ở `active` tại đủ 3 Cơ sở (Nam & Nữ cùng tòa, cùng tầng)
   const activeRecords = [];
   const start2mAgo = addMonths(today(), -2);
   const placements = [
-    // CS1 Nam (A14) & Nữ (A15)
-    { idx: 0, room: roomOf('A14', '101'), period: periodCs1Returning, term: '10_months' }, // sv001
+    // CS1 — A14 (101 Nam, 102 Nữ cùng tầng 1; 201 & 202 Nam) và A15 (101 Nam, 102 Nữ cùng tầng 1)
+    { idx: 0, room: roomOf('A14', '101'), period: periodCs1Returning, term: '10_months' }, // sv001 (nam)
     { idx: 2, room: roomOf('A14', '101'), period: periodCs1Returning, term: '10_months' },
+    { idx: 3, room: roomOf('A14', '102'), period: periodCs1Returning, term: '10_months' }, // nữ cùng tầng 1 A14
     { idx: 4, room: roomOf('A14', '201'), period: periodCs1Returning, term: '12_months' },
-    { idx: 6, room: roomOf('A14', '201'), period: periodCs1Returning, term: '6_months' },
-    { idx: 1, room: roomOf('A15', '101'), period: periodCs1Returning, term: '10_months' }, // sv002
-    { idx: 3, room: roomOf('A15', '101'), period: periodCs1Returning, term: '10_months' },
-    { idx: 5, room: roomOf('A15', '201'), period: periodCs1Returning, term: '12_months' },
-    // CS2 Nam (B12) & Nữ (B14)
-    { idx: 8, room: roomOf('B12', '102'), period: periodCs2Returning, term: '10_months' },
-    { idx: 10, room: roomOf('B12', '102'), period: periodCs2Returning, term: '6_months' },
-    { idx: 7, room: roomOf('B14', '201'), period: periodCs2Returning, term: '10_months' },
-    { idx: 9, room: roomOf('B14', '201'), period: periodCs2Returning, term: '12_months' },
-    // CS3 Tân SV (C15, C16, C17)
-    { idx: 25, room: roomOf('C16', '101'), period: periodCs3Freshman, term: '8.5_months' },
-    { idx: 27, room: roomOf('C16', '101'), period: periodCs3Freshman, term: '8.5_months' },
-    { idx: 29, room: roomOf('C16', '201'), period: periodCs3Freshman, term: '10_months' },
+    { idx: 6, room: roomOf('A14', '202'), period: periodCs1Returning, term: '6_months' },
+    { idx: 1, room: roomOf('A15', '102'), period: periodCs1Returning, term: '10_months' }, // sv002 (nữ)
+    { idx: 5, room: roomOf('A15', '102'), period: periodCs1Returning, term: '12_months' },
+    { idx: 12, room: roomOf('A15', '101'), period: periodCs1Returning, term: '10_months' }, // nam cùng tầng 1 A15
+    // CS2 — B12 & B14 (Nam & Nữ cùng tầng)
+    { idx: 8, room: roomOf('B12', '101'), period: periodCs2Returning, term: '10_months' },
+    { idx: 10, room: roomOf('B12', '201'), period: periodCs2Returning, term: '6_months' },
+    { idx: 7, room: roomOf('B12', '102'), period: periodCs2Returning, term: '10_months' },
+    { idx: 9, room: roomOf('B14', '102'), period: periodCs2Returning, term: '12_months' },
+    // CS3 Tân SV — C15-101 xếp kín 3/3 nam (khóa loại CLC 3 người để demo); các phòng trống giữ gender = null
+    { idx: 25, room: roomOf('C15', '102'), period: periodCs3Freshman, term: '8.5_months' },
+    { idx: 27, room: roomOf('C15', '102'), period: periodCs3Freshman, term: '8.5_months' },
+    { idx: 29, room: roomOf('C15', '203'), period: periodCs3Freshman, term: '10_months' },
     { idx: 32, room: roomOf('C15', '101'), period: periodCs3Freshman, term: '8.5_months' },
     { idx: 34, room: roomOf('C15', '101'), period: periodCs3Freshman, term: '8.5_months' },
-    { idx: 36, room: roomOf('C17', '102'), period: periodCs3Freshman, term: '10_months' },
-    { idx: 31, room: roomOf('C17', '301'), period: periodCs3Freshman, term: '10_months' },
+    { idx: 36, room: roomOf('C15', '101'), period: periodCs3Freshman, term: '10_months' },
+    { idx: 31, room: roomOf('C17', '102'), period: periodCs3Freshman, term: '10_months' },
   ];
 
   for (const [k, item] of placements.entries()) {
@@ -403,57 +412,99 @@ async function seed() {
   }
 
   // ================================================================ 7. Hợp đồng `pending_payment` (chưa quá hạn + quá hạn)
-  // sv004: pending_payment chưa quá hạn tại CS3 C15-102
+  // sv004: pending_payment chưa quá hạn tại CS3 C15-201 (nam)
   const sv004 = students[DEMO_MAP.sv004];
-  const cSv004 = await createContract(sv004, roomOf('C15', '102'), periodCs3Freshman, {
+  const cSv004 = await createContract(sv004, roomOf('C15', '201'), periodCs3Freshman, {
     term: '8.5_months',
     status: 'pending_payment',
     paymentDeadline: addDays(today(), 5),
     createdAt: `${addDays(today(), -2)}T08:30:00+07:00`,
     reviewedAt: new Date(`${addDays(today(), -1)}T09:00:00+07:00`),
   });
-  await issueInvoice(cSv004, 'deposit', `${addDays(today(), -1)}T09:05:00+07:00`, roomOf('C15', '102'), addDays(today(), 5));
-  await issueInvoice(cSv004, 'room_semester', `${addDays(today(), -1)}T09:05:00+07:00`, roomOf('C15', '102'), addDays(today(), 5));
+  await issueInvoice(cSv004, 'deposit', `${addDays(today(), -1)}T09:05:00+07:00`, roomOf('C15', '201'), addDays(today(), 5));
+  await issueInvoice(cSv004, 'room_semester', `${addDays(today(), -1)}T09:05:00+07:00`, roomOf('C15', '201'), addDays(today(), 5));
 
-  // sv005: pending_payment ĐÃ QUÁ HẠN 2 ngày tại CS3 C15-201 (dùng test cancel-overdue)
+  // sv005: pending_payment ĐÃ QUÁ HẠN 2 ngày tại CS3 C15-202 (nam, dùng test cancel-overdue)
   const sv005 = students[DEMO_MAP.sv005];
-  const cSv005 = await createContract(sv005, roomOf('C15', '201'), periodCs3Freshman, {
+  const cSv005 = await createContract(sv005, roomOf('C15', '202'), periodCs3Freshman, {
     term: '5_months',
     status: 'pending_payment',
     paymentDeadline: addDays(today(), -2),
     createdAt: `${addDays(today(), -10)}T08:00:00+07:00`,
     reviewedAt: new Date(`${addDays(today(), -9)}T09:00:00+07:00`),
   });
-  await issueInvoice(cSv005, 'deposit', `${addDays(today(), -9)}T09:05:00+07:00`, roomOf('C15', '201'), addDays(today(), -2));
-  await issueInvoice(cSv005, 'room_semester', `${addDays(today(), -9)}T09:05:00+07:00`, roomOf('C15', '201'), addDays(today(), -2));
+  await issueInvoice(cSv005, 'deposit', `${addDays(today(), -9)}T09:05:00+07:00`, roomOf('C15', '202'), addDays(today(), -2));
+  await issueInvoice(cSv005, 'room_semester', `${addDays(today(), -9)}T09:05:00+07:00`, roomOf('C15', '202'), addDays(today(), -2));
 
-  // sv007: vừa được duyệt giữ chỗ (mustChangePassword = true)
+  // sv007: vừa được duyệt giữ chỗ (mustChangePassword = true) tại CS3 C15-201 (nam)
   const sv007 = students[DEMO_MAP.sv007];
-  const cSv007 = await createContract(sv007, roomOf('C15', '102'), periodCs3Freshman, {
+  const cSv007 = await createContract(sv007, roomOf('C15', '201'), periodCs3Freshman, {
     term: '8.5_months',
     status: 'pending_payment',
     paymentDeadline: addDays(today(), 6),
     createdAt: `${addDays(today(), -1)}T08:00:00+07:00`,
     reviewedAt: new Date(`${today()}T08:30:00+07:00`),
   });
-  await issueInvoice(cSv007, 'deposit', `${today()}T08:35:00+07:00`, roomOf('C15', '102'), addDays(today(), 6));
-  await issueInvoice(cSv007, 'room_semester', `${today()}T08:35:00+07:00`, roomOf('C15', '102'), addDays(today(), 6));
+  await issueInvoice(cSv007, 'deposit', `${today()}T08:35:00+07:00`, roomOf('C15', '201'), addDays(today(), 6));
+  await issueInvoice(cSv007, 'room_semester', `${today()}T08:35:00+07:00`, roomOf('C15', '201'), addDays(today(), 6));
 
-  // ================================================================ 8. Đơn `pending` (đủ diện ưu tiên + hasHealthCondition cho auto-approve)
-  // idx 38 (nam, hasHealthCondition: true), idx 40 (nam), idx 42 (nam, hasHealthCondition: true), idx 43 (nữ, poor_household)
-  for (const [k, sIdx] of [38, 40, 42, 43].entries()) {
-    const st = students[sIdx];
-    const targetRoom = st.gender === 'male' ? roomOf('C15', '301') : roomOf('C16', '301');
-    await createContract(st, targetRoom, periodCs3Freshman, {
+  // ================================================================ 8. Đơn `pending` (chưa gán số phòng — chờ duyệt theo thứ tự nộp FIFO & xếp từ tầng thấp lên cao)
+  const pendingWishes = [
+    { sIdx: 38, tier: 'standard',     cap: 4 },
+    { sIdx: 40, tier: 'standard',     cap: 6 },
+    { sIdx: 42, tier: 'high_quality', cap: 4 },
+    { sIdx: 43, tier: 'standard',     cap: 4 },
+  ];
+  for (const [k, item] of pendingWishes.entries()) {
+    const st = students[item.sIdx];
+    await createContract(st, null, periodCs3Freshman, {
+      campus: 'cs3',
+      preferredRoomTier: item.tier,
+      preferredCapacity: item.cap,
+      pricePerMonth: ROOM_PRICES_2026[item.tier][item.cap].cs3,
       term: '8.5_months',
       status: 'pending',
       createdAt: `${addDays(today(), -5 + k)}T09:00:00+07:00`,
     });
   }
 
-  // ================================================================ 9. Hợp đồng đã thanh lý `terminated` (chưa hoàn cọc + đã hoàn cọc có khấu trừ)
-  const sv006 = students[DEMO_MAP.sv006];
+  // ================================================================ 9. Hợp đồng đã thanh lý `terminated` (sv003 cựu SV hoàn cọc xong + sv006 chưa hoàn cọc + 1 SV hoàn cọc có khấu trừ)
+  // sv003: từng ở KTX năm học trước (được cấp TK khi duyệt đợt cũ), nay đã thanh lý & hoàn cọc xong -> đăng nhập lại để đăng ký kỳ mới
+  const sv003 = students[DEMO_MAP.sv003];
   const startOld = addMonths(today(), -14);
+  const cSv003Old = await createContract(sv003, roomOf('A14', '301'), periodCs1Returning, {
+    term: '10_months',
+    status: 'terminated',
+    startDate: startOld,
+    terminatedAt: addMonths(startOld, 10),
+    isDepositRefunded: true,
+    depositDeductionAmount: 0,
+    depositRefundAmount: 500000,
+    depositRefundReason: 'Hoàn đủ tiền cọc khi kết thúc kỳ ở năm học trước',
+    depositRefundedAt: new Date(`${addDays(addMonths(startOld, 10), 1)}T15:00:00+07:00`),
+    depositRefundedBy: staffUser._id,
+    depositRefundedByName: STAFF_NAME,
+    createdAt: `${addDays(startOld, -6)}T09:00:00+07:00`,
+    reviewedAt: new Date(`${addDays(startOld, -1)}T09:00:00+07:00`),
+  });
+  await payInvoice(await issueInvoice(cSv003Old, 'deposit', `${startOld}T08:30:00+07:00`, roomOf('A14', '301')), sv003._id, `${addDays(startOld, 1)}T09:00:00+07:00`, 0);
+  await payInvoice(await issueInvoice(cSv003Old, 'room_semester', `${startOld}T08:30:00+07:00`, roomOf('A14', '301')), sv003._id, `${addDays(startOld, 1)}T09:05:00+07:00`, 1);
+  refSeq += 1;
+  await Payment.create({
+    paymentCode: `REF-${YEAR_STR}-${pad(refSeq)}`,
+    paymentType: 'refund',
+    invoiceId: null,
+    contractId: cSv003Old._id,
+    amount: 500000,
+    method: 'cash',
+    note: `Hoàn đủ tiền cọc hợp đồng ${cSv003Old.contractCode}`,
+    paidAt: new Date(`${addDays(addMonths(startOld, 10), 1)}T15:00:00+07:00`),
+    payerStudentId: sv003._id,
+    collectedBy: staffUser._id,
+    collectedByName: STAFF_NAME,
+  });
+
+  const sv006 = students[DEMO_MAP.sv006];
   const cSv006 = await createContract(sv006, roomOf('A14', '301'), periodCs1Returning, {
     term: '12_months',
     status: 'terminated',
@@ -508,7 +559,7 @@ async function seed() {
     occupiedRoomMap.get(k).members.push(rec.st);
   }
   const sv001RoomId = String(roomOf('A14', '101')._id);
-  const sv002RoomId = String(roomOf('A15', '101')._id);
+  const sv002RoomId = String(roomOf('A15', '102')._id);
 
   let ri = 0;
   for (const { room, members } of occupiedRoomMap.values()) {

@@ -12,10 +12,10 @@
 | Method | Endpoint | Mô tả |
 |---|---|---|
 | `GET` | `/api/health` | Kiểm tra tình trạng server |
-| `GET` | `/api/public/campuses` | Thông tin 3 cơ sở (địa chỉ 2026), danh sách tòa nhà & **Bảng giá phòng chính thức 2026–2027** |
+| `GET` | `/api/public/campuses` | Thông tin 3 cơ sở (địa chỉ 2026), danh sách tòa nhà & **Bảng giá phòng chính thức 2026–2027** (`{ academicYear, campuses, priceTable, hotline, website }`) |
 | `GET` | `/api/public/announcements` | Tin tức & Thông báo mở đợt công khai trên trang chủ KTX (`?campus=&limit=`) |
-| `GET` | `/api/public/periods/open` | Danh sách các Đợt đăng ký đang mở (`?studentCode=&faculty=` → tự phân luồng `freshman` vs `returning` từ 4 số đầu MSSV và gắn cờ `eligible` + lý do) |
-| `GET` | `/api/public/rooms/available` | Phòng còn chỗ trống lọc theo `?periodId=&campus=&buildingId=&gender=&roomTier=&capacity=&maxFloor=` (sắp xếp tầng thấp → phòng nhỏ) |
+| `GET` | `/api/public/periods/open` | Danh sách các Đợt đăng ký đang mở (`?studentCode=&faculty=` → tự phân luồng `freshman` vs `returning` từ 4 số đầu MSSV và gắn `eligibility: { eligible, reason, cohortInfo }`) |
+| `GET` | `/api/public/rooms/available` | Phòng còn chỗ trống lọc theo `?periodId=&campus=&buildingId=&gender=&roomTier=&capacity=&maxFloor=` (sắp xếp tầng thấp → phòng nhỏ, trả `occupied`, `availableSlots`, `pendingApplications`) |
 | `POST` | `/api/contracts/register-online` | Nộp đơn trực tuyến trong Đợt đang mở `{ periodId, ...studentFields, roomId?, preferredRoomTier?, preferredCapacity?, term }`. Nếu MSSV đã tồn tại, bắt buộc khớp `citizenId`. |
 | `GET` | `/api/public/applications/status` | Tra cứu tiến độ đơn `?studentCode=&email=` |
 | `POST` | `/api/public/applications/cancel` | Sinh viên tự hủy đơn khi đang `pending` `{ studentCode, email, citizenId, reason? }` |
@@ -56,11 +56,11 @@
 
 | Method | Endpoint | Quyền | Mô tả |
 |---|---|---|---|
-| `GET` | `/api/buildings` | `manager`, `staff` | Danh sách tòa nhà (`?campus=cs1\|cs2\|cs3&includeInactive=true`) kèm thống kê phòng & chỗ ở (`totalCapacity`, `occupiedSlots`, `availableSlots`) |
+| `GET` | `/api/buildings` | `manager`, `staff` | Danh sách tòa nhà (`?campus=cs1\|cs2\|cs3&includeInactive=true`) kèm `stats: { totalRooms, totalSlots, occupiedSlots, availableSlots, maintenanceSlots }` |
 | `POST` | `/api/buildings` | `manager` | Tạo tòa nhà `{ campus, code, name, totalFloors?, description? }` |
 | `PUT` | `/api/buildings/:id` | `manager` | Cập nhật tòa (chặn tắt nếu còn người ở hoặc đơn `pending`/`pending_payment`) |
-| `GET` | `/api/rooms` | `manager`, `staff` | Danh sách phòng (`?campus=&buildingId=&floor=&gender=&roomTier=&capacity=&status=&availability=&search=`) kèm `occupiedCount`, `availableSlots`, `pendingCount` |
-| `GET` | `/api/rooms/:id` | `manager`, `staff` | Chi tiết phòng kèm danh sách `occupants[]` (các SV đang `active`/`pending_payment` trong phòng) và số đơn `pending` |
+| `GET` | `/api/rooms` | `manager`, `staff` | Danh sách phòng (`?campus=&buildingId=&floor=&gender=&roomTier=&capacity=&status=&availability=has_slot\|full&search=`) kèm `occupied`, `availableSlots`, `maintenanceSlots`, `pendingApplications` |
+| `GET` | `/api/rooms/:id` | `manager`, `staff` | Chi tiết phòng kèm danh sách `occupants[]` (các SV đang `active`/`pending_payment` trong phòng) và `pendingApplications` |
 | `POST` | `/api/rooms` | `manager` | Tạo phòng `{ buildingId, roomNumber, floor, gender, roomTier, capacity, hasAirConditioner?, hasWaterHeater?, amenities?, pricePerMonth, depositAmount }` |
 | `PUT` | `/api/rooms/:id` | `manager` | Cập nhật phòng (chặn đổi giới tính khi có người ở/đơn chờ; chặn hạ `capacity` dưới `occupiedCount`) |
 
@@ -85,8 +85,8 @@
 |---|---|---|
 | `GET` | `/api/contracts` | Danh sách đơn & hợp đồng (`?status=&periodId=&campus=&buildingId=&roomId=&term=&isDepositRefunded=&overduePayment=true&search=`) kèm `summary` |
 | `GET` | `/api/contracts/:id` | Chi tiết hợp đồng kèm hồ sơ SV, hóa đơn, trạng thái Check-in QR, thông tin khấu trừ cọc & dòng thời gian `history[]` |
-| `PATCH` | `/api/contracts/:id/approve` | Duyệt 1 đơn `{ roomId? }` → Khóa 1 chỗ nguyên tử trong phòng (`occupiedCount < capacity`), chuyển `pending_payment` (hạn 7 ngày), cấp TK + Email + Thông báo + hóa đơn đầu kỳ |
-| `POST` | `/api/contracts/auto-approve` | **Tự động duyệt & xếp phòng nhân văn theo lô** `{ periodId?, limit? }`: sắp xếp ưu tiên (`policy_family > poor_household > remote_area > normal`), ưu tiên phòng tầng thấp (`floor <= 2`) cho SV có vấn đề thể chất |
+| `PATCH` | `/api/contracts/:id/approve` | Duyệt 1 đơn `{ roomId? }` → Tự động xếp phòng tầng thấp → cao đúng giới tính (hoặc phòng cán bộ chọn), khóa 1 chỗ nguyên tử (`occupiedCount < capacity`), chuyển `pending_payment` (hạn 7 ngày), cấp TK + Email + Thông báo + hóa đơn đầu kỳ |
+| `POST` | `/api/contracts/auto-approve` | **Duyệt hàng loạt theo thứ tự nộp (FIFO)** `{ periodId?, limit? }`: tự động xếp lấp đầy lần lượt từ tầng thấp lên tầng cao đúng loại phòng nguyện vọng & giới tính (tự gán giới tính nếu mở phòng trống) |
 | `PATCH` | `/api/contracts/:id/reject` | Từ chối đơn `pending` `{ reason }` + gửi Email thông báo |
 | `PATCH` | `/api/contracts/:id/cancel` | Hủy hợp đồng `pending_payment` `{ reason? }` (chưa thanh toán) → hủy hóa đơn nháp sang `cancelled` + nhả 1 chỗ phòng ngay |
 | `POST` | `/api/contracts/cancel-overdue` | Hủy hàng loạt toàn bộ hợp đồng `pending_payment` đã quá `paymentDeadline` chưa đóng phí → thu hồi chỗ phòng cho đợt bổ sung |
@@ -154,5 +154,5 @@
 | Method | Endpoint | Quyền | Mô tả |
 |---|---|---|---|
 | `GET` | `/api/dashboard/summary` | `manager`, `staff` | KPI tổng quan (hỗ trợ `?campus=cs1\|cs2\|cs3`): lấp đầy, SV đang ở, đơn chờ duyệt, đơn chờ đóng phí, phiếu yêu cầu chờ xử lý, công nợ |
-| `GET` | `/api/dashboard/occupancy` | `manager`, `staff` | Tỷ lệ lấp đầy chi tiết theo từng Tòa nhà & gom nhóm theo **3 Cơ sở** |
+| `GET` | `/api/dashboard/occupancy` | `manager`, `staff` | Tỷ lệ lấp đầy chi tiết (`?campus=cs1\|cs2\|cs3`) trả `{ byCampus: [...], buildings: [...] }` |
 | `GET` | `/api/dashboard/revenue` | **`manager`** *(chỉ Manager!)* | Doanh thu thực thu theo tháng trong năm (`?year=2026&campus=`), tách tiền phòng & điện nước, loại trừ tiền cọc và phiếu chi hoàn cọc |

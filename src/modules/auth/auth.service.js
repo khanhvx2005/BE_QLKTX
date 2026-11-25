@@ -26,20 +26,27 @@ const passwordErrors = (pw, field = 'newPassword') => {
   return [];
 };
 
-async function login({ identifier, password } = {}) {
+async function login({ identifier, password, portal } = {}) {
   const key = String(identifier || '').trim();
   if (!key || !password) {
     fieldErrors([
-      ...(!key ? [{ field: 'identifier', message: 'Nhập email hoặc mã sinh viên' }] : []),
+      ...(!key ? [{ field: 'identifier', message: portal === 'admin' ? 'Nhập email cán bộ' : 'Nhập email hoặc mã sinh viên' }] : []),
       ...(!password ? [{ field: 'password', message: 'Nhập mật khẩu' }] : []),
     ]);
   }
   const user = await User.findOne({ $or: [{ email: key.toLowerCase() }, { studentCode: key.toUpperCase() }] }).select('+passwordHash');
-  // ⚠️ Kiểm mật khẩu TRƯỚC khi báo khóa: báo khóa trước là lộ cho người ngoài biết tài khoản tồn tại
+  // ⚠️ Kiểm mật khẩu TRƯỚC khi báo khóa hoặc sai cổng: tránh lộ thông tin tài khoản cho người ngoài
   if (!user || !(await user.comparePassword(String(password)))) {
     fail(401, 'INVALID_CREDENTIALS', 'Tài khoản hoặc mật khẩu không chính xác');
   }
   if (!user.isActive) fail(403, 'ACCOUNT_LOCKED', 'Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ ban quản lý');
+
+  if (portal === 'student' && user.role !== 'student') {
+    fail(403, 'WRONG_LOGIN_PORTAL', 'Tài khoản này thuộc Ban quản lý / Quản trị. Vui lòng đăng nhập tại Cổng Cán bộ.');
+  }
+  if (portal === 'admin' && user.role === 'student') {
+    fail(403, 'WRONG_LOGIN_PORTAL', 'Tài khoản sinh viên vui lòng đăng nhập tại Cổng Sinh viên.');
+  }
 
   user.lastLoginAt = new Date();
   await user.save();

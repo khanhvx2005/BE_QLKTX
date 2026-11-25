@@ -12,7 +12,8 @@ const roomSchema = new mongoose.Schema(
     buildingId: { type: mongoose.Schema.Types.ObjectId, ref: 'Building', required: true },
     roomNumber: { type: String, required: true, trim: true, maxLength: 20 },
     floor: { type: Number, required: true, min: 1, default: 1 },
-    gender: { type: String, enum: GENDER, required: true },
+    /** Giới tính phòng động: null khi phòng đang trống (occupiedCount = 0), tự gán 'male'/'female' khi người đầu tiên vào và tự reset null khi người cuối rời phòng */
+    gender: { type: String, enum: [...GENDER, null], default: null },
     roomTier: { type: String, enum: ROOM_TIERS, default: 'standard' },
     capacity: { type: Number, enum: ROOM_CAPACITY, required: true },
     /** Số chỗ đang có sinh viên ở hoặc đang giữ chỗ chờ đóng phí (0 <= occupiedCount <= capacity) */

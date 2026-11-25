@@ -112,7 +112,7 @@ async function createByStudent(student, body = {}) {
           errors.push({ field: 'targetRoomId', message: 'Bạn đang ở chính phòng này' });
         } else if (targetRoom.status !== 'active') {
           errors.push({ field: 'targetRoomId', message: 'Phòng đích đang bảo trì' });
-        } else if (targetRoom.gender !== student.gender) {
+        } else if (targetRoom.gender && targetRoom.gender !== student.gender) {
           errors.push({ field: 'targetRoomId', message: 'Phòng đích không cùng giới tính' });
         } else if ((targetRoom.occupiedCount || 0) >= targetRoom.capacity) {
           errors.push({ field: 'targetRoomId', message: 'Phòng đích hiện đã hết chỗ trống' });
@@ -196,10 +196,9 @@ async function cancelByStudent(studentId, requestId) {
 async function list(q = {}) {
   const filter = {};
   if (q.type) filter.type = q.type;
-  if (q.status) filter.status = q.status;
-  let rows = await requestViews(await Request.find(filter).sort({ createdAt: -1 }).lean());
-  if (q.campus) rows = rows.filter((r) => r.campus === q.campus);
-  rows = rows.filter((r) =>
+  let scoped = await requestViews(await Request.find(filter).sort({ createdAt: -1 }).lean());
+  if (q.campus) scoped = scoped.filter((r) => r.campus === q.campus);
+  scoped = scoped.filter((r) =>
     matches(q.search, [
       r.requestCode,
       r.title,
@@ -210,8 +209,9 @@ async function list(q = {}) {
     ])
   );
 
-  const count = (s) => rows.filter((r) => r.status === s).length;
+  const count = (s) => scoped.filter((r) => r.status === s).length;
   const summary = {
+    total: scoped.length,
     pending: count('pending'),
     in_progress: count('in_progress'),
     approved: count('approved'),
@@ -219,6 +219,7 @@ async function list(q = {}) {
     rejected: count('rejected'),
     cancelled: count('cancelled'),
   };
+  const rows = q.status ? scoped.filter((r) => r.status === q.status) : scoped;
   return { data: paginate(rows, q, { summary }) };
 }
 
@@ -267,15 +268,15 @@ async function updateStatus(id, body = {}, actor) {
     if (targetRoom.status !== 'active' || !targetBuilding?.isActive) {
       fail(422, 'ROOM_NOT_AVAILABLE', 'Phòng đích đang bảo trì hoặc tòa ngừng hoạt động');
     }
-    if (student && targetRoom.gender !== student.gender) {
+    if (student && targetRoom.gender && targetRoom.gender !== student.gender) {
       fail(422, 'GENDER_MISMATCH', 'Phòng đích không cùng giới tính với sinh viên');
     }
     if (String(targetRoom._id) === String(contract.roomId)) {
       fail(422, 'VALIDATION_ERROR', 'Sinh viên đang ở chính phòng đích này');
     }
 
-    // 1. Khóa nguyên tử 1 chỗ ở phòng mới
-    const lockedNew = await contractService.lockRoomSlot(targetRoom._id);
+    // 1. Khóa nguyên tử 1 chỗ ở phòng mới (tự gán giới tính nếu phòng đích đang trống)
+    const lockedNew = await contractService.lockRoomSlot(targetRoom._id, student?.gender);
     if (!lockedNew) {
       fail(409, 'ROOM_FULL', `Phòng ${targetBuilding.code}-${targetRoom.roomNumber} vừa hết chỗ trống`);
     }

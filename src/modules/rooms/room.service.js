@@ -174,7 +174,9 @@ const roomErrors = ({ roomNumber, floor, gender, roomTier = 'standard', capacity
   const money = (v) => v !== '' && v !== null && v !== undefined && Number.isInteger(Number(v)) && Number(v) >= 0;
   if (!String(roomNumber || '').trim()) errors.push({ field: 'roomNumber', message: 'Nhập số phòng' });
   if (!(Number(floor) >= 1)) errors.push({ field: 'floor', message: 'Nhập tầng (>= 1)' });
-  if (!['male', 'female'].includes(gender)) errors.push({ field: 'gender', message: 'Chọn giới tính phòng (male/female)' });
+  if (gender !== undefined && gender !== null && gender !== '' && !['male', 'female'].includes(gender)) {
+    errors.push({ field: 'gender', message: 'Giới tính phòng phải là male, female hoặc bỏ trống' });
+  }
   if (!ROOM_TIERS.includes(roomTier)) errors.push({ field: 'roomTier', message: 'Hạng phòng phải là high_quality, standard hoặc basic' });
   if (!ROOM_CAPACITY.includes(Number(capacity))) errors.push({ field: 'capacity', message: 'Sức chứa phải là 2, 3, 4 hoặc 6 người' });
   if (!money(pricePerMonth)) errors.push({ field: 'pricePerMonth', message: 'Nhập đơn giá thuê (số nguyên, không âm)' });
@@ -195,7 +197,8 @@ async function listRooms(q = {}) {
   const filter = {};
   if (q.buildingId && isObjectId(q.buildingId)) filter.buildingId = q.buildingId;
   if (q.floor) filter.floor = Number(q.floor);
-  if (q.gender) filter.gender = q.gender;
+  if (q.gender === 'empty') filter.gender = null;
+  else if (q.gender) filter.gender = q.gender;
   if (q.roomTier) filter.roomTier = q.roomTier;
   if (q.capacity) filter.capacity = Number(q.capacity);
   if (q.status) filter.status = q.status;
@@ -278,7 +281,7 @@ async function createRoom(body = {}) {
     buildingId: b._id,
     roomNumber,
     floor: Number(body.floor),
-    gender: body.gender,
+    gender: body.gender || null,
     roomTier,
     capacity,
     occupiedCount: 0,
@@ -300,7 +303,8 @@ async function updateRoom(id, body = {}) {
   if (errors.length) fieldErrors(errors);
 
   const capacity = Number(body.capacity ?? r.capacity);
-  const genderChanged = body.gender && body.gender !== r.gender;
+  const nextGender = body.gender !== undefined ? (body.gender || null) : r.gender;
+  const genderChanged = body.gender !== undefined && nextGender !== r.gender;
   if (r.occupiedCount > 0 && genderChanged) {
     fail(422, 'ROOM_HAS_OCCUPANTS', 'Phòng đang có sinh viên ở hoặc giữ chỗ, không thể đổi giới tính');
   }
@@ -316,7 +320,7 @@ async function updateRoom(id, body = {}) {
   r.roomNumber = roomNumber;
   r.capacity = capacity;
   if (body.floor !== undefined) r.floor = Number(body.floor);
-  if (body.gender) r.gender = body.gender;
+  if (body.gender !== undefined) r.gender = nextGender;
   if (body.roomTier) r.roomTier = body.roomTier;
   if (body.hasAirConditioner !== undefined) r.hasAirConditioner = Boolean(body.hasAirConditioner);
   if (body.hasWaterHeater !== undefined) r.hasWaterHeater = Boolean(body.hasWaterHeater);

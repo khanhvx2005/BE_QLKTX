@@ -66,8 +66,6 @@ erDiagram
     BUILDINGS {
         ObjectId _id PK
         string campus "cs1 | cs2 | cs3"
-        string campusName
-        string campusAddress "Địa giới 2026"
         string code UK "A14, A15, B12, B14, C15, C16, C17"
         string name
         number totalFloors
@@ -289,7 +287,7 @@ erDiagram
 | `buildingId` | ObjectId | required, ref `'Building'` | Tòa nhà trực thuộc |
 | `roomNumber` | String | required, trim | Số phòng (`101`, `205`...) |
 | `floor` | Number | required, min `1` | Tầng |
-| `gender` | String | required, enum `['male', 'female']` | Giới tính phòng |
+| `gender` | String | enum `['male', 'female', null]`, default `null` | Giới tính phòng động: `null` khi trống (`occupiedCount = 0`), tự gán khi người đầu tiên vào và tự mở lại `null` khi người cuối rời phòng |
 | `roomTier` | String | required, enum `['high_quality', 'standard', 'basic']`, default `'standard'` | Hạng phòng theo bảng giá HaUI 2026–2027 |
 | `capacity` | Number | required, enum `[2, 3, 4, 6]` | Sức chứa thực tế HaUI (2, 3, 4 hoặc 6 người) |
 | `hasAirConditioner` | Boolean | default `false` | Có điều hòa (`true` với `high_quality`) |
@@ -323,7 +321,9 @@ erDiagram
 |---|---|---|---|
 | `contractCode` | String | required, unique | `HD-YYYY-NNNN` |
 | `periodId` | ObjectId | ref `'RegistrationPeriod'`, default `null` | Đợt đăng ký gốc |
-| `studentId`, `roomId` | ObjectId | required | Sinh viên và phòng được phân bổ |
+| `studentId` | ObjectId | required | Sinh viên đăng ký |
+| `roomId` | ObjectId | ref `'Room'`, default `null` | Phòng được phân bổ (có thể `null` lúc `pending`, tự động xếp từ tầng thấp → cao khi duyệt) |
+| `campus`, `preferredRoomTier`, `preferredCapacity` | String / Number | default `null` | Cơ sở & nguyện vọng loại phòng của đơn đăng ký (không chọn từng số phòng) |
 | `term` | String | enum `['5_months', '6_months', '8.5_months', '10_months', '12_months']` | Kỳ thuê |
 | `status` | String | enum `['pending', 'pending_payment', 'active', 'terminated', 'rejected', 'cancelled']` | Vòng đời đầy đủ (`expired` suy ra lúc đọc khi `active` quá `endDate`) |
 | `pricePerMonth`, `totalRoomFee`, `depositAmount` | Number | required, min `0` | Giá chốt theo phòng & kỳ (`Math.round(pricePerMonth * months)`) |

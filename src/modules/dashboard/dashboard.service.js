@@ -48,7 +48,7 @@ async function summary(q = {}) {
   const roomIds = rooms.map((r) => r._id);
   const slotStats = countSlots(rooms);
 
-  const contractScope = campus ? { roomId: { $in: roomIds } } : {};
+  const contractScope = campus ? { $or: [{ roomId: { $in: roomIds } }, { campus }] } : {};
   const invoiceScope = campus ? { roomId: { $in: roomIds } } : {};
   const requestScope = campus ? { roomId: { $in: roomIds } } : {};
 

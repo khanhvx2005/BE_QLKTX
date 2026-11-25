@@ -28,7 +28,6 @@ const {
   CAMPUS_INFO,
   ROOM_PRICES_2026,
   TERM_MONTHS,
-  PRIORITY_WEIGHT,
 } = require('../../shared/constants/enums');
 const {
   loadCtx,
@@ -39,7 +38,7 @@ const {
   debtsOf,
   byId,
 } = require('../../shared/views');
-const { numericSort, availableSlotsOf } = require('../rooms/room.service');
+const { availableSlotsOf } = require('../rooms/room.service');
 const logger = require('../../core/logger/logger');
 const { sendAccountEmail, sendRejectionEmail, sendCheckinReadyEmail } = require('../../core/email/email.service');
 
@@ -57,17 +56,35 @@ async function viewOne(c) {
   return contractView(c, ctx, await debtsOf([c.studentId]));
 }
 
-/** Khóa nguyên tử 1 chỗ trống trong phòng (chống vượt sức chứa 100% — BR-05) */
-const lockRoomSlot = (roomId) =>
+/** Kiểm tra phòng có nhận được sinh viên giới tính `gender` không (cùng giới hoặc phòng đang trống hoàn toàn) */
+const roomAcceptsGender = (room, gender) =>
+  room.gender === gender || (!room.gender && (room.occupiedCount || 0) === 0);
+
+/** Khóa nguyên tử 1 chỗ trống & tự động gán giới tính nếu là người đầu tiên vào phòng trống (BR-05) */
+const lockRoomSlot = (roomId, gender) =>
   Room.findOneAndUpdate(
-    { _id: roomId, status: 'active', $expr: { $lt: ['$occupiedCount', '$capacity'] } },
-    { $inc: { occupiedCount: 1 } },
+    {
+      _id: roomId,
+      status: 'active',
+      $expr: { $lt: ['$occupiedCount', '$capacity'] },
+      ...(gender ? { $or: [{ gender }, { gender: null, occupiedCount: 0 }] } : {}),
+    },
+    { $inc: { occupiedCount: 1 }, ...(gender ? { $set: { gender } } : {}) },
     { returnDocument: 'after' }
   );
 
-/** Giải phóng 1 chỗ trong phòng an toàn (không bao giờ âm) */
-const releaseRoomSlot = (roomId) =>
-  Room.updateOne({ _id: roomId, occupiedCount: { $gt: 0 } }, { $inc: { occupiedCount: -1 } });
+/** Giải phóng 1 chỗ trong phòng an toàn; nếu phòng về 0 người -> tự động mở lại thành phòng Trống (`gender: null`) */
+async function releaseRoomSlot(roomId) {
+  const updated = await Room.findOneAndUpdate(
+    { _id: roomId, occupiedCount: { $gt: 0 } },
+    { $inc: { occupiedCount: -1 } },
+    { returnDocument: 'after' }
+  );
+  if (updated && updated.occupiedCount === 0) {
+    await Room.updateOne({ _id: roomId, occupiedCount: 0 }, { $set: { gender: null } });
+  }
+  return updated;
+}
 
 // ================================================================ 1. TRANG CHỦ CÔNG KHAI (§1)
 
@@ -111,6 +128,26 @@ async function publicCampuses() {
   };
 }
 
+/**
+ * Sắp xếp xếp phòng chuẩn KTX:
+ * 1. Lấp đầy phòng cùng giới đang có người trước (tránh rải rác, giữ phòng trống linh hoạt cho giới tính còn lại)
+ * 2. Lấp đầy lần lượt từ TẦNG THẤP -> TẦNG CAO (`floor ASC`)
+ * 3. Cùng tầng theo mã tòa và số phòng tăng dần (`buildingCode ASC`, `roomNumber ASC`)
+ */
+const placementSort = (gender) => (a, b) => {
+  const aSame = a.gender === gender && (a.occupied ?? a.occupiedCount ?? 0) > 0 ? 0 : 1;
+  const bSame = b.gender === gender && (b.occupied ?? b.occupiedCount ?? 0) > 0 ? 0 : 1;
+  if (aSame !== bSame) return aSame - bSame;
+  return (
+    (a.floor ?? 99) - (b.floor ?? 99) ||
+    String(a.campus || '').localeCompare(String(b.campus || '')) ||
+    String(a.buildingCode || '').localeCompare(String(b.buildingCode || '')) ||
+    String(a.roomNumber || '').localeCompare(String(b.roomNumber || ''), 'vi', { numeric: true })
+  );
+};
+
+const TIER_ORDER = { high_quality: 1, standard: 2, basic: 3 };
+
 /** GET /api/public/rooms/available?periodId=&campus=&buildingId=&gender=&roomTier=&capacity= */
 async function availableRooms(q = {}) {
   if (!['male', 'female'].includes(q.gender)) {
@@ -127,22 +164,53 @@ async function availableRooms(q = {}) {
   const buildings = byId(openBuildings);
   const bIds = openBuildings.map((b) => b._id);
 
-  const rQuery = {
+  // Tải toàn bộ phòng đang hoạt động trong phạm vi cơ sở để tính đủ cả loại phòng CÒN CHỖ lẫn loại phòng HẾT CHỖ (khóa chọn)
+  const campusRooms = await Room.find({
     status: 'active',
-    gender: q.gender,
     buildingId: q.buildingId && isObjectId(q.buildingId) ? q.buildingId : { $in: bIds },
-    ...(q.roomTier ? { roomTier: q.roomTier } : {}),
-    ...(q.capacity ? { capacity: Number(q.capacity) } : {}),
-  };
-  const rooms = await Room.find(rQuery).lean();
+  }).lean();
+
+  // Tổng hợp tất cả các loại phòng (roomTier + capacity) của cơ sở kèm số chỗ còn trống cho giới tính `q.gender`
+  const typeMap = new Map();
+  for (const r of campusRooms) {
+    const key = `${r.roomTier || 'standard'}__${r.capacity}`;
+    const usableSlots = roomAcceptsGender(r, q.gender) ? availableSlotsOf(r) : 0;
+    const cur = typeMap.get(key);
+    if (!cur) {
+      typeMap.set(key, {
+        key,
+        roomTier: r.roomTier || 'standard',
+        capacity: r.capacity,
+        pricePerMonth: r.pricePerMonth,
+        depositAmount: r.depositAmount,
+        totalSlots: r.capacity || 0,
+        availableSlots: usableSlots,
+      });
+    } else {
+      cur.totalSlots += r.capacity || 0;
+      cur.availableSlots += usableSlots;
+      cur.pricePerMonth = Math.min(cur.pricePerMonth, r.pricePerMonth);
+    }
+  }
+  const roomTypes = [...typeMap.values()]
+    .map((t) => ({ ...t, isFull: t.availableSlots <= 0 }))
+    .sort((a, b) => (TIER_ORDER[a.roomTier] ?? 9) - (TIER_ORDER[b.roomTier] ?? 9) || a.capacity - b.capacity);
+
+  const matchingRooms = campusRooms.filter(
+    (r) =>
+      roomAcceptsGender(r, q.gender) &&
+      (!q.roomTier || r.roomTier === q.roomTier) &&
+      (!q.capacity || r.capacity === Number(q.capacity))
+  );
+
   const pendingAgg = await Contract.aggregate([
-    { $match: { roomId: { $in: rooms.map((r) => r._id) }, status: 'pending' } },
+    { $match: { roomId: { $in: matchingRooms.map((r) => r._id) }, status: 'pending' } },
     { $group: { _id: '$roomId', n: { $sum: 1 } } },
   ]);
   const pendingMap = new Map(pendingAgg.map((x) => [String(x._id), x.n]));
   const ctx = { buildings };
 
-  const rows = rooms
+  const rows = matchingRooms
     .map((r) => {
       const availableSlots = availableSlotsOf(r);
       const pendingApplications = pendingMap.get(String(r._id)) || 0;
@@ -159,34 +227,55 @@ async function availableRooms(q = {}) {
       };
     })
     .filter((r) => r.availableSlots > 0)
-    .sort(numericSort);
+    .sort(placementSort(q.gender));
 
-  return { data: paginate(rows, { page: 1, limit: 100, ...q }) };
+  return { data: paginate(rows, { page: 1, limit: 100, ...q }, { roomTypes }) };
 }
 
-/** Chọn phòng tốt nhất khi sinh viên đăng ký theo nguyện vọng (ưu tiên tầng thấp, số phòng nhỏ) */
-async function pickBestRoomForWish({ campus, gender, roomTier, capacity, preferLowFloor = false }) {
+/**
+ * Tự động chọn phòng trống tốt nhất theo quy tắc KTX thực tế:
+ * - Giới tính phòng động: khớp phòng cùng giới tính đang mở còn chỗ trước, rồi mới mở phòng Trống (gender = null)
+ * - Lấp đầy lần lượt từ TẦNG THẤP -> TẦNG CAO (floor ASC -> buildingCode ASC -> roomNumber ASC)
+ * - Đúng tuyệt đối loại phòng nguyện vọng (roomTier/capacity) — hết loại phòng thì không tự đẩy sang loại khác.
+ */
+async function pickBestRoomForWish({ campus, gender, roomTier, capacity }) {
   const bQuery = { isActive: true, ...(campus && campus !== 'all' ? { campus } : {}) };
   const openBuildings = await Building.find(bQuery).lean();
   if (!openBuildings.length) return null;
   const bMap = byId(openBuildings);
-  const rooms = await Room.find({
+  const allRooms = await Room.find({
     status: 'active',
-    gender,
     buildingId: { $in: openBuildings.map((b) => b._id) },
+    $or: [{ gender }, { gender: null, occupiedCount: 0 }],
     ...(roomTier ? { roomTier } : {}),
     ...(capacity ? { capacity: Number(capacity) } : {}),
   }).lean();
-  const candidates = rooms
-    .filter((r) => availableSlotsOf(r) > 0)
+
+  const sortFn = placementSort(gender);
+  const candidates = allRooms
+    .filter((r) => availableSlotsOf(r) > 0 && roomAcceptsGender(r, gender))
     .map((r) => ({ room: r, building: bMap.get(String(r.buildingId)) }))
-    .sort((a, b) => {
-      if (preferLowFloor && a.room.floor !== b.room.floor) return a.room.floor - b.room.floor;
-      return numericSort(
-        { campus: a.building?.campus, buildingCode: a.building?.code, floor: a.room.floor, roomNumber: a.room.roomNumber },
-        { campus: b.building?.campus, buildingCode: b.building?.code, floor: b.room.floor, roomNumber: b.room.roomNumber }
-      );
-    });
+    .sort((a, b) =>
+      sortFn(
+        {
+          gender: a.room.gender,
+          occupied: a.room.occupiedCount || 0,
+          campus: a.building?.campus,
+          buildingCode: a.building?.code,
+          floor: a.room.floor,
+          roomNumber: a.room.roomNumber,
+        },
+        {
+          gender: b.room.gender,
+          occupied: b.room.occupiedCount || 0,
+          campus: b.building?.campus,
+          buildingCode: b.building?.code,
+          floor: b.room.floor,
+          roomNumber: b.room.roomNumber,
+        }
+      )
+    );
+
   return candidates[0] || null;
 }
 
@@ -210,8 +299,16 @@ async function createApplication({ student, body }) {
     fail(409, 'APPLICATION_OR_CONTRACT_EXISTS', 'Sinh viên này đã có đơn đăng ký đang xử lý hoặc đang lưu trú tại ký túc xá');
   }
 
+  const months = TERM_MONTHS[body.term];
+  const preferredRoomTier = body.preferredRoomTier || null;
+  const preferredCapacity = body.preferredCapacity ? Number(body.preferredCapacity) : null;
+
   let room = null;
   let building = null;
+  let campus = period.campus !== 'all' ? period.campus : null;
+  let estimatedPrice = 0;
+  let estimatedDeposit = 500000;
+
   if (body.roomId) {
     if (!isObjectId(body.roomId)) fieldErrors([{ field: 'roomId', message: 'Mã phòng không hợp lệ' }]);
     room = await Room.findOne({ _id: body.roomId, status: 'active' }).lean();
@@ -220,33 +317,41 @@ async function createApplication({ student, body }) {
     if (period.campus !== 'all' && building.campus !== period.campus) {
       fail(422, 'PERIOD_NOT_ELIGIBLE', `Phòng này thuộc cơ sở ${building.campus.toUpperCase()}, không thuộc phạm vi đợt đăng ký (${period.campus.toUpperCase()})`);
     }
-    if (room.gender !== student.gender) fail(422, 'GENDER_MISMATCH', `Phòng này chỉ dành cho sinh viên ${genderText(room.gender)}`);
+    if (!roomAcceptsGender(room, student.gender)) fail(422, 'GENDER_MISMATCH', `Phòng này chỉ dành cho sinh viên ${genderText(room.gender)}`);
     if (availableSlotsOf(room) <= 0) fail(409, 'ROOM_FULL', `Phòng ${building.code}-${room.roomNumber} đã hết chỗ trống`);
+    campus = building.campus;
+    estimatedPrice = room.pricePerMonth;
+    estimatedDeposit = room.depositAmount;
   } else {
-    const picked = await pickBestRoomForWish({
+    // Luồng chuẩn KTX: kiểm tra loại phòng nguyện vọng còn chỗ không; hết chỗ -> khóa & báo SV chọn loại phòng khác
+    const sample = await pickBestRoomForWish({
       campus: period.campus,
       gender: student.gender,
-      roomTier: body.preferredRoomTier,
-      capacity: body.preferredCapacity,
-      preferLowFloor: Boolean(student.hasHealthCondition),
+      roomTier: preferredRoomTier,
+      capacity: preferredCapacity,
     });
-    if (!picked) fail(409, 'ROOM_FULL', 'Hiện không còn phòng phù hợp với nguyện vọng trong đợt này');
-    room = picked.room;
-    building = picked.building;
+    if (!sample) {
+      fail(409, 'ROOM_FULL', 'Loại phòng này hiện đã hết chỗ trống, vui lòng chọn loại phòng khác');
+    }
+    campus = campus || sample.building.campus;
+    estimatedPrice = sample.room.pricePerMonth;
+    estimatedDeposit = sample.room.depositAmount;
   }
 
-  const months = TERM_MONTHS[body.term];
-  const totalRoomFee = Math.round(room.pricePerMonth * months);
+  const totalRoomFee = Math.round(estimatedPrice * months);
   const c = await createWithCode(Contract, 'contractCode', yearPrefix('HD'), (contractCode) => ({
     contractCode,
     periodId: period._id,
     studentId: student._id,
-    roomId: room._id,
+    roomId: room ? room._id : null,
+    campus,
+    preferredRoomTier: preferredRoomTier || room?.roomTier || null,
+    preferredCapacity: preferredCapacity || room?.capacity || null,
     term: body.term,
     status: 'pending',
-    pricePerMonth: room.pricePerMonth,
+    pricePerMonth: estimatedPrice,
     totalRoomFee,
-    depositAmount: room.depositAmount,
+    depositAmount: estimatedDeposit,
   }));
 
   return {
@@ -255,14 +360,18 @@ async function createApplication({ student, body }) {
       contractCode: c.contractCode,
       periodId: String(period._id),
       periodName: period.name,
+      campus: c.campus,
+      campusName: c.campus ? CAMPUS_INFO[c.campus]?.name ?? null : null,
+      preferredRoomTier: c.preferredRoomTier,
+      preferredCapacity: c.preferredCapacity,
       status: c.status,
-      room: roomRef(room, { buildings: byId([building]) }),
+      room: room ? roomRef(room, { buildings: byId([building]) }) : null,
       term: c.term,
       pricePerMonth: c.pricePerMonth,
       totalRoomFee: c.totalRoomFee,
       depositAmount: c.depositAmount,
     },
-    message: 'Đã gửi đơn đăng ký KTX thành công. Vui lòng theo dõi email để nhận kết quả xét duyệt',
+    message: 'Đã gửi đơn đăng ký KTX thành công. Ban quản lý sẽ xét duyệt và xếp phòng từ tầng thấp lên cao theo đúng giới tính.',
     status: 201,
   };
 }
@@ -305,14 +414,20 @@ async function applicationStatus(q = {}) {
   const st = await Student.findOne({ studentCode: code, email: mail }).lean();
   const c = st && (await Contract.findOne({ studentId: st._id }).sort({ createdAt: -1 }).lean());
   if (!c) fail(404, 'APPLICATION_NOT_FOUND', 'Không tìm thấy đơn đăng ký khớp mã sinh viên và email này');
-  const ctx = await loadCtx({ roomIds: [c.roomId] });
+  const ctx = await loadCtx({ roomIds: c.roomId ? [c.roomId] : [] });
+  const rr = c.roomId ? roomRef(ctx.rooms.get(String(c.roomId)), ctx) : null;
+  const effectiveCampus = rr?.campus ?? (c.campus && c.campus !== 'all' ? c.campus : null);
   return {
     data: {
       contractCode: c.contractCode,
       periodId: c.periodId ? String(c.periodId) : null,
+      campus: effectiveCampus,
+      campusName: rr?.campusName ?? (effectiveCampus ? CAMPUS_INFO[effectiveCampus]?.name ?? null : null),
+      preferredRoomTier: c.preferredRoomTier ?? null,
+      preferredCapacity: c.preferredCapacity ?? null,
       status: contractStatusOf(c),
       submittedAt: c.createdAt,
-      room: roomRef(ctx.rooms.get(String(c.roomId)), ctx),
+      room: rr,
       term: c.term,
       paymentDeadline: c.paymentDeadline ?? null,
       startDate: c.startDate ?? null,
@@ -392,7 +507,12 @@ async function list(q = {}) {
 async function getById(id) {
   const c = await findContract(id);
   const st = await Student.findById(c.studentId).lean();
-  const invoices = await Invoice.find({ contractId: c._id }).sort({ createdAt: -1 }).lean();
+  const [invoices, roomUnpaidRaw] = await Promise.all([
+    Invoice.find({ contractId: c._id }).sort({ createdAt: -1 }).lean(),
+    c.roomId && c.status === 'active'
+      ? Invoice.find({ type: 'utility', roomId: c.roomId, status: 'unpaid' }).sort({ dueDate: 1 }).lean()
+      : Promise.resolve([]),
+  ]);
   const ctx = await loadCtx({ roomIds: [c.roomId], studentIds: [c.studentId] });
   const view = contractView(c, ctx, await debtsOf([c.studentId]));
   const status = view.status;
@@ -431,6 +551,8 @@ async function getById(id) {
     .sort((a, b) => new Date(b.at) - new Date(a.at));
 
   const invoiceViews = invoices.map((i) => invoiceView(i, ctx));
+  const roomUnpaidInvoices = roomUnpaidRaw.map((i) => invoiceView(i, ctx));
+  const roomUtilityDebt = roomUnpaidInvoices.reduce((sum, i) => sum + (i.amount || 0), 0);
   return {
     data: {
       ...view,
@@ -455,6 +577,8 @@ async function getById(id) {
           }
         : null,
       depositStatus: invoiceViews.find((i) => i.type === 'deposit')?.status ?? null,
+      roomUtilityDebt,
+      roomUnpaidInvoices,
       invoices: invoiceViews,
       history,
     },
@@ -486,19 +610,39 @@ async function issuePersonalInvoices(c, room, building, dueDate) {
   return created;
 }
 
-/** PATCH /api/contracts/:id/approve — Khóa 1 chỗ phòng nguyên tử -> chuyển sang `pending_payment` (hạn 7 ngày) */
+/** PATCH /api/contracts/:id/approve — Tự động xếp phòng tầng thấp -> cao (hoặc phòng cán bộ chọn) & khóa chỗ nguyên tử -> `pending_payment` */
 async function approve(id, body = {}, actor) {
   const c = await findContract(id, 'Không tìm thấy đơn đăng ký');
   if (c.status !== 'pending') fail(409, 'CONTRACT_NOT_PENDING', 'Đơn đăng ký đã được xử lý');
   const st = await Student.findById(c.studentId).lean();
-  const roomId = body.roomId || c.roomId;
-  const room = isObjectId(roomId) ? await Room.findById(roomId).lean() : null;
-  if (!room) fail(404, 'NOT_FOUND', 'Không tìm thấy phòng');
-  const building = await Building.findById(room.buildingId).lean();
-  if (room.status !== 'active' || !building?.isActive) {
-    fail(422, 'ROOM_NOT_AVAILABLE', `Phòng ${building?.code ?? ''}-${room.roomNumber} đang bảo trì hoặc tòa ngừng hoạt động`);
+  const period = c.periodId ? await RegistrationPeriod.findById(c.periodId).lean() : null;
+  const targetCampus = c.campus || period?.campus || null;
+
+  let room = null;
+  let building = null;
+  const explicitRoomId = body.roomId || c.roomId;
+  if (explicitRoomId) {
+    room = isObjectId(explicitRoomId) ? await Room.findById(explicitRoomId).lean() : null;
+    if (!room) fail(404, 'NOT_FOUND', 'Không tìm thấy phòng');
+    building = await Building.findById(room.buildingId).lean();
+    if (room.status !== 'active' || !building?.isActive) {
+      fail(422, 'ROOM_NOT_AVAILABLE', `Phòng ${building?.code ?? ''}-${room.roomNumber} đang bảo trì hoặc tòa ngừng hoạt động`);
+    }
+    if (!roomAcceptsGender(room, st.gender)) {
+      fail(422, 'GENDER_MISMATCH', `Phòng này đang dành cho sinh viên ${genderText(room.gender)}`);
+    }
+  } else {
+    const picked = await pickBestRoomForWish({
+      campus: targetCampus,
+      gender: st.gender,
+      roomTier: c.preferredRoomTier,
+      capacity: c.preferredCapacity,
+    });
+    if (!picked) fail(409, 'ROOM_FULL', 'Hiện không còn chỗ trống cho loại phòng này trong cơ sở. Vui lòng chọn phòng khác hoặc từ chối đơn');
+    room = picked.room;
+    building = picked.building;
   }
-  if (room.gender !== st.gender) fail(422, 'GENDER_MISMATCH', `Phòng này chỉ dành cho sinh viên ${genderText(room.gender)}`);
+
   if (await Contract.exists({ studentId: st._id, status: { $in: ['pending_payment', 'active'] } })) {
     fail(409, 'APPLICATION_OR_CONTRACT_EXISTS', 'Sinh viên đã có hợp đồng chờ đóng phí hoặc đang hiệu lực');
   }
@@ -509,12 +653,11 @@ async function approve(id, body = {}, actor) {
     fail(409, 'EMAIL_ALREADY_USED', `Email ${st.email} đã thuộc tài khoản khác. Liên hệ sinh viên để cập nhật email`);
   }
 
-  // BR-05: Khóa nguyên tử 1 chỗ trống trong phòng
-  const locked = await lockRoomSlot(room._id);
+  // BR-05: Khóa nguyên tử 1 chỗ trống & tự gán giới tính phòng nếu là người đầu tiên
+  const locked = await lockRoomSlot(room._id, st.gender);
   if (!locked) fail(409, 'ROOM_FULL', `Phòng ${building.code}-${room.roomNumber} vừa hết chỗ trống. Vui lòng điều phối phòng khác`);
 
   try {
-    const period = c.periodId ? await RegistrationPeriod.findById(c.periodId).lean() : null;
     const deadlineDays = period?.paymentDeadlineDays || 7;
     const paymentDeadline = addDays(today(), deadlineDays);
     const months = TERM_MONTHS[c.term];
@@ -526,6 +669,7 @@ async function approve(id, body = {}, actor) {
         $set: {
           status: 'pending_payment',
           roomId: room._id,
+          campus: building.campus,
           pricePerMonth: room.pricePerMonth,
           depositAmount: room.depositAmount,
           totalRoomFee,
@@ -611,7 +755,7 @@ async function approve(id, body = {}, actor) {
       await releaseRoomSlot(room._id);
       await Contract.updateOne(
         { _id: c._id, status: 'pending_payment' },
-        { $set: { status: 'pending', paymentDeadline: null, reviewedAt: null } }
+        { $set: { status: 'pending', roomId: c.roomId ?? null, paymentDeadline: null, reviewedAt: null } }
       );
       await Invoice.deleteMany({ contractId: c._id, status: 'unpaid' });
     }
@@ -619,63 +763,48 @@ async function approve(id, body = {}, actor) {
   }
 }
 
-/** POST /api/contracts/auto-approve — Tự động duyệt & xếp phòng theo ưu tiên chính sách + tầng thấp cho SV sức khỏe yếu */
+/** POST /api/contracts/auto-approve — Duyệt hàng loạt thuần FIFO (ai nộp trước duyệt trước), xếp tầng thấp -> cao theo đúng loại phòng */
 async function autoApprove(body = {}, actor) {
   const filter = { status: 'pending' };
   if (body.periodId && isObjectId(body.periodId)) filter.periodId = body.periodId;
   const limit = Math.min(Math.max(Number(body.limit) || 50, 1), 200);
 
-  const pendingList = await Contract.find(filter).lean();
+  const pendingList = await Contract.find(filter).sort({ createdAt: 1 }).lean();
   if (!pendingList.length) return { data: { approvedCount: 0, skippedCount: 0, approved: [], skipped: [] }, message: 'Không có đơn chờ duyệt' };
 
   const students = byId(await Student.find({ _id: { $in: pendingList.map((c) => c.studentId) } }).lean());
-  pendingList.sort((a, b) => {
-    const sa = students.get(String(a.studentId));
-    const sb = students.get(String(b.studentId));
-    const wa = PRIORITY_WEIGHT[sa?.priorityType || 'normal'] ?? 4;
-    const wb = PRIORITY_WEIGHT[sb?.priorityType || 'normal'] ?? 4;
-    if (wa !== wb) return wa - wb;
-    if (Boolean(sa?.hasHealthCondition) !== Boolean(sb?.hasHealthCondition)) return sa?.hasHealthCondition ? -1 : 1;
-    return new Date(a.createdAt) - new Date(b.createdAt);
-  });
-
   const approved = [];
   const skipped = [];
+
+  const periods = byId(await RegistrationPeriod.find({ _id: { $in: pendingList.map((c) => c.periodId).filter(Boolean) } }).lean());
 
   for (const c of pendingList.slice(0, limit)) {
     const st = students.get(String(c.studentId));
     if (!st) continue;
     try {
-      let targetRoomId = c.roomId;
-      const curRoom = await Room.findById(c.roomId).lean();
-      const curBuilding = curRoom && (await Building.findById(curRoom.buildingId).lean());
+      const period = c.periodId ? periods.get(String(c.periodId)) : null;
+      const curRoom = c.roomId ? await Room.findById(c.roomId).lean() : null;
+      const curBuilding = curRoom ? await Building.findById(curRoom.buildingId).lean() : null;
+      const targetCampus = c.campus || curBuilding?.campus || period?.campus || null;
 
-      // Nếu phòng SV chọn đã hết chỗ hoặc SV yếu sức khỏe đang ở tầng cao (>2), thử tìm phòng tầng thấp hơn cùng cơ sở/hạng phòng
-      const needsRelocate =
-        !curRoom ||
-        curRoom.status !== 'active' ||
-        availableSlotsOf(curRoom) <= 0 ||
-        (st.hasHealthCondition && curRoom.floor > 2);
-
-      if (needsRelocate && curBuilding) {
-        const better = await pickBestRoomForWish({
-          campus: curBuilding.campus,
-          gender: st.gender,
-          roomTier: curRoom?.roomTier,
-          preferLowFloor: Boolean(st.hasHealthCondition),
-        });
-        if (better && (!st.hasHealthCondition || better.room.floor < (curRoom?.floor || 99) || availableSlotsOf(curRoom) <= 0)) {
-          targetRoomId = better.room._id;
-        }
+      // Xếp lấp đầy từ tầng thấp lên tầng cao đúng loại phòng sinh viên đã chọn & đúng giới tính
+      const picked = await pickBestRoomForWish({
+        campus: targetCampus,
+        gender: st.gender,
+        roomTier: c.preferredRoomTier || curRoom?.roomTier || null,
+        capacity: c.preferredCapacity || curRoom?.capacity || null,
+      });
+      if (!picked) {
+        skipped.push({ contractCode: c.contractCode, studentCode: st.studentCode, reason: 'Loại phòng đăng ký hiện đã hết chỗ trống' });
+        continue;
       }
 
-      const res = await approve(c._id, { roomId: targetRoomId }, actor);
+      const res = await approve(c._id, { roomId: picked.room._id }, actor);
       approved.push({
         contractCode: res.data.contract.contractCode,
         studentCode: st.studentCode,
         room: `${res.data.contract.buildingCode}-${res.data.contract.roomNumber}`,
-        priorityType: st.priorityType,
-        hasHealthCondition: Boolean(st.hasHealthCondition),
+        floor: res.data.contract.room?.floor,
       });
     } catch (err) {
       skipped.push({ contractCode: c.contractCode, studentCode: st.studentCode, reason: err.message });
@@ -684,7 +813,7 @@ async function autoApprove(body = {}, actor) {
 
   return {
     data: { approvedCount: approved.length, skippedCount: skipped.length, approved, skipped },
-    message: `Đã tự động duyệt ${approved.length} đơn${skipped.length ? `, bỏ qua ${skipped.length} đơn` : ''}`,
+    message: `Đã duyệt hàng loạt ${approved.length} đơn theo thứ tự nộp${skipped.length ? `, bỏ qua ${skipped.length} đơn do hết chỗ loại phòng` : ''}`,
   };
 }
 
