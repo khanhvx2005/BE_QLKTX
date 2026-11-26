@@ -204,8 +204,28 @@ async function myInvoiceVietqr(req) {
       invoiceCode: inv.invoiceCode,
       transferContent,
       qrImageUrl,
+      sandboxEnabled: process.env.NODE_ENV !== 'production' || process.env.ALLOW_VIETQR_SIMULATE === 'true',
     },
   };
+}
+
+/** POST /portal/my-invoices/:id/simulate-vietqr — Môi trường Test/Sandbox VietQR cho SV bấm giả lập chuyển khoản (đi qua đúng Webhook thật!) */
+async function simulateMyInvoiceVietqr(req) {
+  const enabled = process.env.NODE_ENV !== 'production' || process.env.ALLOW_VIETQR_SIMULATE === 'true';
+  if (!enabled) {
+    fail(403, 'SANDBOX_DISABLED', 'Chế độ giả lập thanh toán VietQR chỉ khả dụng trong môi trường thử nghiệm');
+  }
+  const st = await me(req);
+  const inv = isObjectId(req.params.id) ? await Invoice.findById(req.params.id).lean() : null;
+  if (!inv) fail(404, 'NOT_FOUND', 'Không tìm thấy hóa đơn');
+  await assertVisible(st, inv);
+  if (inv.status === 'cancelled') fail(409, 'INVOICE_CANCELLED', `Hóa đơn ${inv.invoiceCode} đã bị hủy`);
+  if (inv.status === 'paid') fail(409, 'INVOICE_ALREADY_PAID', `Hóa đơn ${inv.invoiceCode} đã được thanh toán`);
+
+  return payments.simulateVietqrWebhook(
+    { invoiceId: String(inv._id), payerStudentId: String(st._id) },
+    { fullName: `${st.fullName} (Sandbox SV)` }
+  );
 }
 
 /** GET /portal/my-payments — gồm cả phiếu thu hóa đơn lẫn phiếu chi hoàn cọc của SV */
@@ -270,6 +290,7 @@ module.exports = {
   myInvoices,
   myInvoice,
   myInvoiceVietqr,
+  simulateMyInvoiceVietqr,
   myPayments,
   myRoomUtilityHistory,
   myRequests,

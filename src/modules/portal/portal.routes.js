@@ -20,6 +20,7 @@ router.get('/my-contracts/:id/checkin-qr', respond(service.myCheckinQr));
 router.get('/my-invoices', respond(service.myInvoices));
 router.get('/my-invoices/:id', respond(service.myInvoice));
 router.get('/my-invoices/:id/vietqr', respond(service.myInvoiceVietqr));
+router.post('/my-invoices/:id/simulate-vietqr', respond(service.simulateMyInvoiceVietqr));
 router.get('/my-payments', respond(service.myPayments));
 router.get('/my-room/utility-history', respond(service.myRoomUtilityHistory));
 

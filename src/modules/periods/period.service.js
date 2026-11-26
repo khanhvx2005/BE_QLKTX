@@ -70,8 +70,8 @@ const periodView = (p, stats = null) => ({
   code: p.code,
   name: p.name,
   academicYearStart: p.academicYearStart,
-  campus: p.campus,
-  campusName: p.campus === 'all' ? 'Tất cả 3 Cơ sở' : CAMPUS_INFO[p.campus]?.name ?? p.campus,
+  campus: p.campus || 'cs1',
+  campusName: CAMPUS_INFO[p.campus]?.name ?? CAMPUS_INFO.cs1.name,
   targetCohort: p.targetCohort,
   allowedFaculties: p.allowedFaculties || [],
   excludedFaculties: p.excludedFaculties || [],
@@ -99,8 +99,8 @@ const validatePeriodBody = (body = {}, isUpdate = false) => {
     const yr = Number(body.academicYearStart);
     if (!Number.isInteger(yr) || yr < 2020 || yr > 2100) errors.push({ field: 'academicYearStart', message: 'Năm bắt đầu năm học không hợp lệ' });
   }
-  if (!isUpdate || body.campus !== undefined) {
-    if (!CAMPUS_SCOPE.includes(body.campus)) errors.push({ field: 'campus', message: 'Chọn cơ sở hợp lệ (cs1, cs2, cs3 hoặc all)' });
+  if (body.campus !== undefined && !CAMPUS_SCOPE.includes(body.campus)) {
+    errors.push({ field: 'campus', message: 'Cơ sở không hợp lệ' });
   }
   if (body.targetCohort !== undefined && !TARGET_COHORTS.includes(body.targetCohort)) {
     errors.push({ field: 'targetCohort', message: 'Đối tượng phải là freshman, returning hoặc all' });
@@ -193,7 +193,7 @@ async function create(body = {}) {
     code,
     name: String(body.name).trim(),
     academicYearStart: Number(body.academicYearStart),
-    campus: body.campus,
+    campus: body.campus || 'cs1',
     targetCohort: body.targetCohort || 'all',
     allowedFaculties: Array.isArray(body.allowedFaculties) ? body.allowedFaculties.map((s) => String(s).trim()).filter(Boolean) : [],
     excludedFaculties: Array.isArray(body.excludedFaculties) ? body.excludedFaculties.map((s) => String(s).trim()).filter(Boolean) : [],

@@ -67,6 +67,7 @@ async function summary(q = {}) {
     pendingApplications,
     pendingPaymentContracts,
     overduePaymentContracts,
+    awaitingDepositRefund,
     pendingRequests,
   ] = await Promise.all([
     debtOf('room_semester'),
@@ -75,6 +76,7 @@ async function summary(q = {}) {
     Contract.countDocuments({ ...contractScope, status: 'pending' }),
     Contract.countDocuments({ ...contractScope, status: 'pending_payment' }),
     Contract.countDocuments({ ...contractScope, status: 'pending_payment', paymentDeadline: { $lt: today() } }),
+    Contract.countDocuments({ ...contractScope, status: 'terminated', isDepositRefunded: false }),
     Request.countDocuments({ ...requestScope, status: { $in: ['pending', 'in_progress'] } }),
   ]);
 
@@ -91,6 +93,7 @@ async function summary(q = {}) {
       pendingApplications,
       pendingPaymentContracts,
       overduePaymentContracts,
+      awaitingDepositRefund,
       pendingRequests,
       finance: {
         totalDebt: roomDebt + utilityDebt,

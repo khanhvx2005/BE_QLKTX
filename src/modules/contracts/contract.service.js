@@ -101,13 +101,22 @@ async function publicCampuses() {
     const ownR = rooms.filter((r) => ownB.some((b) => String(b._id) === String(r.buildingId)));
     return {
       ...info,
-      buildings: ownB.map((b) => ({
-        id: String(b._id),
-        code: b.code,
-        name: b.name,
-        totalFloors: b.totalFloors || 5,
-        description: b.description || '',
-      })),
+      buildings: ownB.map((b) => {
+        const bRooms = ownR.filter((r) => String(r.buildingId) === String(b._id));
+        return {
+          id: String(b._id),
+          code: b.code,
+          name: b.name,
+          totalFloors: b.totalFloors || 5,
+          description: b.description || '',
+          stats: {
+            totalRooms: bRooms.length,
+            totalSlots: bRooms.reduce((t, r) => t + (r.capacity || 0), 0),
+            occupiedSlots: bRooms.reduce((t, r) => t + (r.occupiedCount || 0), 0),
+            availableSlots: bRooms.reduce((t, r) => t + availableSlotsOf(r), 0),
+          },
+        };
+      }),
       stats: {
         totalRooms: ownR.length,
         totalSlots: ownR.reduce((t, r) => t + (r.capacity || 0), 0),
@@ -279,7 +288,14 @@ async function pickBestRoomForWish({ campus, gender, roomTier, capacity }) {
   return candidates[0] || null;
 }
 
-/** Logic dùng chung cho nộp đơn (cả Cổng công khai lẫn Portal nội bộ SV năm 2+) */
+/**
+ * Logic dùng chung cho đăng ký ở KTX (cả Cổng công khai `/apply` lẫn Portal nội bộ `/portal/applications`):
+ * TỰ ĐỘNG DUYỆT 100% NGAY KHI NỘP ĐƠN:
+ *  1. Kiểm tra đợt mở, điều kiện khóa (Tân SV / Năm 2+), chưa có HĐ đang hoạt động/chờ đóng phí.
+ *  2. Tìm & khóa nguyên tử 1 chỗ phòng tầng thấp -> cao đúng loại phòng nguyện vọng & giới tính.
+ *  3. Tạo hợp đồng trực tiếp ở trạng thái `pending_payment` (giữ chỗ 7 ngày), tự cấp tài khoản SV (`TK = MK = MSSV`) nếu chưa có,
+ *     và tự sinh 2 hóa đơn đầu kỳ (`deposit` + `room_semester`) để SV quét VietQR kích hoạt ngay.
+ */
 async function createApplication({ student, body }) {
   if (!isObjectId(body.periodId)) {
     fieldErrors([{ field: 'periodId', message: 'Vui lòng chọn đợt đăng ký KTX đang mở' }]);
@@ -299,81 +315,166 @@ async function createApplication({ student, body }) {
     fail(409, 'APPLICATION_OR_CONTRACT_EXISTS', 'Sinh viên này đã có đơn đăng ký đang xử lý hoặc đang lưu trú tại ký túc xá');
   }
 
+  let account = await User.findOne({ studentId: student._id });
+  const email = String(student.email || '').toLowerCase();
+  if (!account && email && (await User.exists({ email }))) {
+    fail(409, 'EMAIL_ALREADY_USED', `Email ${student.email} đã được sử dụng cho tài khoản khác. Vui lòng nhập email khác hoặc liên hệ Trung tâm KTX`);
+  }
+
   const months = TERM_MONTHS[body.term];
   const preferredRoomTier = body.preferredRoomTier || null;
   const preferredCapacity = body.preferredCapacity ? Number(body.preferredCapacity) : null;
 
   let room = null;
   let building = null;
-  let campus = period.campus !== 'all' ? period.campus : null;
-  let estimatedPrice = 0;
-  let estimatedDeposit = 500000;
+  let lockedRoom = null;
 
   if (body.roomId) {
     if (!isObjectId(body.roomId)) fieldErrors([{ field: 'roomId', message: 'Mã phòng không hợp lệ' }]);
     room = await Room.findOne({ _id: body.roomId, status: 'active' }).lean();
     building = room && (await Building.findOne({ _id: room.buildingId, isActive: true }).lean());
-    if (!room || !building) fail(404, 'NOT_FOUND', 'Phòng không còn nhận đơn, vui lòng chọn phòng khác');
-    if (period.campus !== 'all' && building.campus !== period.campus) {
-      fail(422, 'PERIOD_NOT_ELIGIBLE', `Phòng này thuộc cơ sở ${building.campus.toUpperCase()}, không thuộc phạm vi đợt đăng ký (${period.campus.toUpperCase()})`);
+    if (!room || !building) fail(404, 'NOT_FOUND', 'Phòng không còn nhận đơn, vui lòng chọn loại phòng khác');
+    if (period.campus && period.campus !== 'all' && building.campus !== period.campus) {
+      fail(422, 'PERIOD_NOT_ELIGIBLE', 'Phòng này không thuộc phạm vi đợt đăng ký hiện tại');
     }
     if (!roomAcceptsGender(room, student.gender)) fail(422, 'GENDER_MISMATCH', `Phòng này chỉ dành cho sinh viên ${genderText(room.gender)}`);
-    if (availableSlotsOf(room) <= 0) fail(409, 'ROOM_FULL', `Phòng ${building.code}-${room.roomNumber} đã hết chỗ trống`);
-    campus = building.campus;
-    estimatedPrice = room.pricePerMonth;
-    estimatedDeposit = room.depositAmount;
+    lockedRoom = await lockRoomSlot(room._id, student.gender);
+    if (!lockedRoom) fail(409, 'ROOM_FULL', `Phòng ${building.code}-${room.roomNumber} đã hết chỗ trống`);
   } else {
-    // Luồng chuẩn KTX: kiểm tra loại phòng nguyện vọng còn chỗ không; hết chỗ -> khóa & báo SV chọn loại phòng khác
-    const sample = await pickBestRoomForWish({
-      campus: period.campus,
-      gender: student.gender,
-      roomTier: preferredRoomTier,
-      capacity: preferredCapacity,
-    });
-    if (!sample) {
+    // Thử tối đa 5 lần để chống race condition khi 2 SV cùng chốt slot cuối của 1 phòng
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const picked = await pickBestRoomForWish({
+        campus: period.campus,
+        gender: student.gender,
+        roomTier: preferredRoomTier,
+        capacity: preferredCapacity,
+      });
+      if (!picked) break;
+      const attemptLock = await lockRoomSlot(picked.room._id, student.gender);
+      if (attemptLock) {
+        room = picked.room;
+        building = picked.building;
+        lockedRoom = attemptLock;
+        break;
+      }
+    }
+    if (!lockedRoom || !room || !building) {
       fail(409, 'ROOM_FULL', 'Loại phòng này hiện đã hết chỗ trống, vui lòng chọn loại phòng khác');
     }
-    campus = campus || sample.building.campus;
-    estimatedPrice = sample.room.pricePerMonth;
-    estimatedDeposit = sample.room.depositAmount;
   }
 
-  const totalRoomFee = Math.round(estimatedPrice * months);
-  const c = await createWithCode(Contract, 'contractCode', yearPrefix('HD'), (contractCode) => ({
-    contractCode,
-    periodId: period._id,
-    studentId: student._id,
-    roomId: room ? room._id : null,
-    campus,
-    preferredRoomTier: preferredRoomTier || room?.roomTier || null,
-    preferredCapacity: preferredCapacity || room?.capacity || null,
-    term: body.term,
-    status: 'pending',
-    pricePerMonth: estimatedPrice,
-    totalRoomFee,
-    depositAmount: estimatedDeposit,
-  }));
+  const deadlineDays = period.paymentDeadlineDays || 7;
+  const paymentDeadline = addDays(today(), deadlineDays);
+  const totalRoomFee = Math.round(room.pricePerMonth * months);
 
-  return {
-    data: {
-      id: String(c._id),
-      contractCode: c.contractCode,
-      periodId: String(period._id),
-      periodName: period.name,
-      campus: c.campus,
-      campusName: c.campus ? CAMPUS_INFO[c.campus]?.name ?? null : null,
-      preferredRoomTier: c.preferredRoomTier,
-      preferredCapacity: c.preferredCapacity,
-      status: c.status,
-      room: room ? roomRef(room, { buildings: byId([building]) }) : null,
-      term: c.term,
-      pricePerMonth: c.pricePerMonth,
-      totalRoomFee: c.totalRoomFee,
-      depositAmount: c.depositAmount,
-    },
-    message: 'Đã gửi đơn đăng ký KTX thành công. Ban quản lý sẽ xét duyệt và xếp phòng từ tầng thấp lên cao theo đúng giới tính.',
-    status: 201,
-  };
+  let createdContract = null;
+  try {
+    createdContract = await createWithCode(Contract, 'contractCode', yearPrefix('HD'), (contractCode) => ({
+      contractCode,
+      periodId: period._id,
+      studentId: student._id,
+      roomId: room._id,
+      campus: building.campus || 'cs1',
+      preferredRoomTier: preferredRoomTier || room.roomTier || null,
+      preferredCapacity: preferredCapacity || room.capacity || null,
+      term: body.term,
+      status: 'pending_payment',
+      pricePerMonth: room.pricePerMonth,
+      totalRoomFee,
+      depositAmount: room.depositAmount,
+      paymentDeadline,
+      reviewedAt: new Date(),
+      reviewedByName: 'Hệ thống tự động xếp phòng',
+    }));
+
+    const isNewAccount = !account;
+    if (isNewAccount) {
+      account = await User.create({
+        email,
+        fullName: student.fullName,
+        role: 'student',
+        studentId: student._id,
+        studentCode: student.studentCode,
+        passwordHash: await User.hashPassword(student.studentCode),
+        mustChangePassword: true,
+      });
+    }
+
+    const createdInvoices = await issuePersonalInvoices(createdContract, room, building, paymentDeadline);
+
+    let finalContract = createdContract.toObject ? createdContract.toObject() : createdContract;
+    if (createdInvoices.every((i) => i.amount === 0)) {
+      await Invoice.updateMany({ contractId: finalContract._id }, { $set: { status: 'paid', paidAt: new Date() } });
+      finalContract = (await activateIfInitialPaid(finalContract._id)) || finalContract;
+    }
+
+    const roomLabel = `${building.name} (${building.code}) - Phòng ${room.roomNumber}`;
+    let emailSent = false;
+    try {
+      emailSent = await sendAccountEmail({
+        to: email,
+        studentName: student.fullName,
+        studentCode: student.studentCode,
+        roomName: roomLabel,
+        termName: termLabel(finalContract.term),
+        paymentDeadline,
+        isNewAccount,
+      });
+    } catch (mailErr) {
+      logger.error('[Tự động xếp phòng] Lỗi gửi email:', mailErr);
+    }
+
+    await notificationService
+      .notifyStudent(student._id, {
+        type: 'application',
+        campus: building.campus || 'cs1',
+        title: `Đã tự động xếp Phòng ${building.code}-${room.roomNumber} (${finalContract.contractCode})`,
+        content: `Hệ thống đã giữ chỗ cho bạn tại ${roomLabel} (Tầng ${room.floor}). Vui lòng hoàn tất thanh toán VietQR trước ngày ${paymentDeadline} để tự động kích hoạt hợp đồng và nhận mã QR Check-in.`,
+        refType: 'contract',
+        refId: finalContract._id,
+      })
+      .catch(() => {});
+
+    const rr = roomRef({ ...room, gender: lockedRoom.gender, occupiedCount: lockedRoom.occupiedCount }, { buildings: byId([building]) });
+    return {
+      data: {
+        id: String(finalContract._id),
+        contractCode: finalContract.contractCode,
+        periodId: String(period._id),
+        periodName: period.name,
+        campus: finalContract.campus,
+        campusName: CAMPUS_INFO[finalContract.campus]?.name ?? CAMPUS_INFO.cs1.name,
+        preferredRoomTier: finalContract.preferredRoomTier,
+        preferredCapacity: finalContract.preferredCapacity,
+        status: finalContract.status,
+        room: rr,
+        term: finalContract.term,
+        paymentDeadline: finalContract.paymentDeadline,
+        pricePerMonth: finalContract.pricePerMonth,
+        totalRoomFee: finalContract.totalRoomFee,
+        depositAmount: finalContract.depositAmount,
+        studentCode: student.studentCode,
+        accountProvisioned: isNewAccount,
+        emailSent,
+        invoices: createdInvoices.map((i) => ({
+          id: String(i._id),
+          invoiceCode: i.invoiceCode,
+          type: i.type,
+          amount: i.amount,
+          dueDate: i.dueDate,
+        })),
+      },
+      message: `Đăng ký thành công! Đã tự động xếp Phòng ${building.code}-${room.roomNumber} (Tầng ${room.floor}) — giữ chỗ đến ${paymentDeadline}.`,
+      status: 201,
+    };
+  } catch (err) {
+    if (createdContract?._id) {
+      await Invoice.deleteMany({ contractId: createdContract._id }).catch(() => {});
+      await Contract.deleteOne({ _id: createdContract._id }).catch(() => {});
+    }
+    await releaseRoomSlot(room._id);
+    throw err;
+  }
 }
 
 /** POST /api/contracts/register-online — Công khai (kiểm tra khớp CCCD nếu MSSV đã có hồ sơ để chống giả mạo) */
@@ -441,7 +542,7 @@ async function applicationStatus(q = {}) {
   };
 }
 
-/** POST /api/public/applications/cancel — SV tự hủy đơn khi đang pending (xác thực MSSV + Email + CCCD) */
+/** POST /api/public/applications/cancel — SV tự hủy đơn chờ duyệt hoặc chờ đóng phí CHƯA nộp tiền (tự nhả chỗ phòng & hủy hóa đơn nháp) */
 async function cancelPendingByStudent(body = {}) {
   const code = String(body.studentCode || '').trim();
   const mail = String(body.email || '').trim().toLowerCase();
@@ -451,13 +552,29 @@ async function cancelPendingByStudent(body = {}) {
   }
   const st = await Student.findOne({ studentCode: code, email: mail, citizenId }).lean();
   if (!st) fail(404, 'APPLICATION_NOT_FOUND', 'Thông tin xác thực không khớp với đơn đăng ký nào');
+
+  const candidate = await Contract.findOne({ studentId: st._id, status: { $in: ['pending', 'pending_payment'] } }).sort({ createdAt: -1 }).lean();
+  if (!candidate) fail(409, 'CONTRACT_NOT_PENDING', 'Không có đơn đăng ký hoặc giữ chỗ chờ đóng phí nào để hủy');
+
+  if (candidate.status === 'pending_payment') {
+    const hasPaid = await Invoice.exists({ contractId: candidate._id, status: 'paid' });
+    if (hasPaid) {
+      fail(409, 'CONTRACT_HAS_PAID_INVOICE', 'Đơn này đã có hóa đơn được thanh toán, vui lòng liên hệ Văn phòng KTX để được hỗ trợ');
+    }
+  }
+
   const updated = await Contract.findOneAndUpdate(
-    { studentId: st._id, status: 'pending' },
-    { $set: { status: 'cancelled', cancelReason: String(body.reason || 'Sinh viên tự hủy đơn trước khi xét duyệt').trim() } },
+    { _id: candidate._id, status: { $in: ['pending', 'pending_payment'] } },
+    { $set: { status: 'cancelled', cancelReason: String(body.reason || 'Sinh viên tự hủy giữ chỗ trước khi thanh toán').trim() } },
     { returnDocument: 'after' }
   ).lean();
-  if (!updated) fail(409, 'CONTRACT_NOT_PENDING', 'Không có đơn đăng ký nào đang ở trạng thái chờ duyệt để hủy');
-  return { data: await viewOne(updated), message: `Đã hủy đơn đăng ký ${updated.contractCode}` };
+  if (!updated) fail(409, 'CONTRACT_NOT_PENDING', 'Đơn đăng ký đã thay đổi trạng thái');
+
+  if (candidate.status === 'pending_payment') {
+    await Invoice.updateMany({ contractId: updated._id, status: 'unpaid' }, { $set: { status: 'cancelled' } });
+    if (updated.roomId) await releaseRoomSlot(updated.roomId);
+  }
+  return { data: await viewOne(updated), message: `Đã hủy đơn đăng ký ${updated.contractCode} và giải phóng chỗ giữ tạm` };
 }
 
 // ================================================================ 2. QUẢN TRỊ & XÉT DUYỆT (§6)

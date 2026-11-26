@@ -1,7 +1,7 @@
 /**
  * /api/dashboard — API.md §10.
- *   - KPI & Tỷ lệ lấp đầy 3 cơ sở: `manager` và `staff`.
- *   - Báo cáo Doanh thu tài chính (`/revenue`): CHỈ `manager` (`admin` & `staff` -> 403 FORBIDDEN).
+ *   - KPI & Tỷ lệ lấp đầy (KTX Cơ sở 1): `manager` và `staff` (`admin` -> 403 FORBIDDEN).
+ *   - Doanh thu thực thu (`/revenue`): CHỈ `manager` (`staff` và `admin` -> 403 FORBIDDEN).
  */
 
 const express = require('express');

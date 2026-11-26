@@ -104,12 +104,12 @@ async function listBuildings(q = {}) {
 }
 
 async function createBuilding(body = {}) {
-  const campus = String(body.campus || '').trim().toLowerCase();
+  const campus = String(body.campus || 'cs1').trim().toLowerCase();
   const code = String(body.code || '').trim().toUpperCase();
   const name = String(body.name || '').trim();
   const totalFloors = body.totalFloors !== undefined ? Number(body.totalFloors) : 5;
   const errors = [];
-  if (!CAMPUSES.includes(campus)) errors.push({ field: 'campus', message: 'Chọn cơ sở hợp lệ (cs1, cs2 hoặc cs3)' });
+  if (!CAMPUSES.includes(campus)) errors.push({ field: 'campus', message: 'Cơ sở không hợp lệ (hiện quản lý Cơ sở 1)' });
   if (!code) errors.push({ field: 'code', message: 'Nhập mã tòa nhà' });
   else if (!/^[A-Z0-9-]{1,10}$/.test(code)) errors.push({ field: 'code', message: 'Mã gồm chữ, số, dấu -, tối đa 10 ký tự' });
   if (!name) errors.push({ field: 'name', message: 'Nhập tên tòa nhà' });

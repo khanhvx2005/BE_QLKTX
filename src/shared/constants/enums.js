@@ -7,37 +7,19 @@ const ROLES = ['admin', 'manager', 'staff', 'student'];
 const GENDER = ['male', 'female'];
 const STUDENT_STATUS = ['active', 'inactive'];
 
-const CAMPUSES = ['cs1', 'cs2', 'cs3'];
-const CAMPUS_SCOPE = ['cs1', 'cs2', 'cs3', 'all'];
+const CAMPUSES = ['cs1'];
+const CAMPUS_SCOPE = ['cs1', 'all'];
 
-/** Thông tin chính thức 3 Cơ sở ĐH Công nghiệp Hà Nội (Địa giới hành chính 2026 & ssc.haui.edu.vn) */
+/** Thông tin chính thức Ký túc xá Cơ sở 1 — ĐH Công nghiệp Hà Nội */
 const CAMPUS_INFO = {
   cs1: {
     code: 'cs1',
-    name: 'Cơ sở 1 (Trụ sở chính)',
+    name: 'KTX Cơ sở 1 — Cầu Diễn (Hà Nội)',
     shortName: 'Cơ sở 1 - Cầu Diễn',
     address: 'Ngõ 296 / Số 298 Đường Cầu Diễn, Phường Tây Tựu, TP. Hà Nội',
-    officeLocation: 'Văn phòng Trung tâm KTX — Tầng 1 nhà A14 / A15',
+    officeLocation: 'Văn phòng Trung tâm KTX Cơ sở 1 — Tầng 1 nhà A14',
     buildings: ['A14', 'A15'],
-    scaleNote: '264 phòng nội trú (>30m²), hơn 1.100 chỗ ở (209 phòng SV Việt Nam, 55 phòng SV quốc tế)',
-  },
-  cs2: {
-    code: 'cs2',
-    name: 'Cơ sở 2',
-    shortName: 'Cơ sở 2 - Tây Tựu',
-    address: 'Tổ dân phố Thượng 2, Phường Tây Tựu, TP. Hà Nội',
-    officeLocation: 'Văn phòng Trung tâm KTX — Tầng 1 nhà B12',
-    buildings: ['B12', 'B14'],
-    scaleNote: '112 phòng nội trú (4.500m²), hơn 476 chỗ ở (B12: 5 tầng 72 phòng; B14: 5 tầng 40 phòng)',
-  },
-  cs3: {
-    code: 'cs3',
-    name: 'Cơ sở 3 (Ninh Bình)',
-    shortName: 'Cơ sở 3 - Phù Vân',
-    address: 'Phường Phù Vân, Tỉnh Ninh Bình',
-    officeLocation: 'Văn phòng Trung tâm KTX — Tầng 1 nhà C15',
-    buildings: ['C15', 'C16', 'C17'],
-    scaleNote: '330 phòng nội trú (15.035m²), hơn 1.400 chỗ ở (C15: 57 phòng, C16: 63 phòng, C17: 210 phòng)',
+    scaleNote: '2 tòa nhà nội trú (A14, A15 — 60 phòng), đầy đủ hạng phòng Chất lượng cao, Tiêu chuẩn & Cơ bản',
   },
 };
 
