@@ -22,17 +22,15 @@ const defaultAmenitiesFor = (tier, capacity) => {
       'Wifi miễn phí',
       'Điều hòa',
       'Bình nóng lạnh',
-      'Quạt trần',
       'Tủ cá nhân',
-      capacity <= 3 ? 'Giường gỗ đơn' : 'Giường tầng',
+      capacity <= 3 ? 'Giường gỗ' : 'Giường tầng',
       'Đệm',
-      'Công trình phụ khép kín',
+      'Quạt trần',
+      'Dụng cụ vệ sinh',
+      'Khép kín >30m²',
     ];
   }
-  if (tier === 'standard') {
-    return ['Wifi miễn phí', 'Bình nóng lạnh', 'Quạt trần', 'Tủ cá nhân', 'Giường tầng', 'Công trình phụ khép kín'];
-  }
-  return ['Quạt trần', 'Tủ cá nhân', 'Giường tầng', 'Công trình phụ khép kín'];
+  return ['Wifi miễn phí', 'Bình nóng lạnh', 'Tủ cá nhân', 'Giường tầng', 'Quạt trần', 'Dụng cụ vệ sinh', 'Khép kín >30m²'];
 };
 
 const availableSlotsOf = (r) => (r.status === 'maintenance' ? 0 : Math.max(0, (r.capacity || 0) - (r.occupiedCount || 0)));
@@ -274,7 +272,7 @@ async function createRoom(body = {}) {
   const roomNumber = String(body.roomNumber).trim();
   await assertRoomNumberFree(b._id, roomNumber);
   const hasAirConditioner = body.hasAirConditioner !== undefined ? Boolean(body.hasAirConditioner) : roomTier === 'high_quality';
-  const hasWaterHeater = body.hasWaterHeater !== undefined ? Boolean(body.hasWaterHeater) : roomTier !== 'basic';
+  const hasWaterHeater = body.hasWaterHeater !== undefined ? Boolean(body.hasWaterHeater) : true;
   const amenities = Array.isArray(body.amenities) && body.amenities.length ? body.amenities : defaultAmenitiesFor(roomTier, capacity);
 
   const r = await Room.create({

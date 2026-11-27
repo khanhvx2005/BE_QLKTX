@@ -1,5 +1,5 @@
 /**
- * Bộ kiểm thử tích hợp RESTful API HaUI - DMS (KTX Cơ sở 1 · 2 Tòa A14, A15 · 60 Phòng · Duyệt tự động 100% · VietQR Sandbox).
+ * Bộ kiểm thử tích hợp RESTful API HaUI - DMS (KTX Cơ sở 1 · 2 Tòa A14, A15 · 40 Phòng [CLC & Tiêu chuẩn] · Kỳ hạn 6T/12T · Tự động duyệt 100%).
  *
  * Cách chạy:
  *   MONGODB_URI=mongodb://127.0.0.1:27017/dms_ktx_test node src/scripts/seed.js
@@ -101,18 +101,18 @@ async function run() {
     assert.equal((await call('/invoices', { token: sv001 })).status, 403);
     ok('ma trận RBAC 4 vai trò: Admin chỉ User · Doanh thu chỉ Manager · Staff vận hành không cấu hình Đợt/Tòa/Phòng');
 
-    // ---------------------------------------------------------------- 3. Trang chủ CS1 (2 tòa A14, A15 · 60 phòng) & Phân luồng Tân SV vs Năm 2+
+    // ---------------------------------------------------------------- 3. Trang chủ CS1 (2 tòa A14, A15 · 40 phòng) & Phân luồng Tân SV vs Năm 2+
     const campuses = (await call('/public/campuses')).data;
     assert.equal(campuses.campuses.length, 1, 'Thu gọn chỉ còn Cơ sở 1');
     assert.equal(campuses.campuses[0].buildings.length, 2, 'Cơ sở 1 có 2 tòa A14 và A15');
-    assert.equal(campuses.campuses[0].stats.totalRooms, 60, 'Tổng 60 phòng tại CS1 (30 phòng/tòa)');
+    assert.equal(campuses.campuses[0].stats.totalRooms, 40, 'Tổng 40 phòng tại CS1 (20 phòng/tòa)');
 
     const periodsFresh = (await call(`/public/periods/open?studentCode=${YEAR}609001&faculty=Công nghệ thông tin`)).data;
     const pFresh = periodsFresh.find((p) => p.targetCohort === 'freshman');
     const pRet = periodsFresh.find((p) => p.targetCohort === 'returning');
     assert.equal(pFresh.eligibility.eligible, true);
     assert.equal(pRet.eligibility.eligible, false);
-    ok('trang chủ CS1 (2 tòa A14, A15 · 60 phòng) & tự phân luồng Tân SV vs Năm 2+');
+    ok('trang chủ CS1 (2 tòa A14, A15 · 40 phòng CLC/Tiêu chuẩn) & tự phân luồng Tân SV vs Năm 2+');
 
     // ---------------------------------------------------------------- 4. Khóa loại phòng hết chỗ + Tự động duyệt 100% xếp tầng thấp -> cao + Tự hủy nhả chỗ + Chống mạo danh CCCD
     const availRes = await call(`/public/rooms/available?periodId=${pFresh.id}&gender=male`);
@@ -121,21 +121,21 @@ async function run() {
     assert.equal(
       (await call('/contracts/register-online', {
         method: 'POST',
-        body: { ...sampleProfile(`${YEAR}609001`), periodId: pFresh.id, preferredRoomTier: 'high_quality', preferredCapacity: 3, term: '10_months' },
+        body: { ...sampleProfile(`${YEAR}609001`), periodId: pFresh.id, preferredRoomTier: 'high_quality', preferredCapacity: 3, term: '12_months' },
       })).code,
       'ROOM_FULL'
     );
 
-    // Giới tính phòng động: A14-101 (Nam) cạnh A14-102 (Nữ), phòng trống A14-301 có gender === null
-    const a14Rooms = (await call('/rooms?campus=cs1', { token: staff })).data.items.filter((r) => r.buildingCode === 'A14');
+    // Giới tính phòng động: A14-101 (Nam) cạnh A14-102 (Nữ), phòng trống A14-302 có gender === null
+    const a14Rooms = (await call('/rooms?campus=cs1&limit=100', { token: staff })).data.items.filter((r) => r.buildingCode === 'A14');
     assert.equal(a14Rooms.find((r) => r.roomNumber === '101')?.gender, 'male');
     assert.equal(a14Rooms.find((r) => r.roomNumber === '102')?.gender, 'female');
-    assert.equal(a14Rooms.find((r) => r.roomNumber === '301')?.gender, null);
+    assert.equal(a14Rooms.find((r) => r.roomNumber === '302')?.gender, null);
 
     // Nộp đơn hợp lệ -> TỰ ĐỘNG DUYỆT 100% (xếp phòng tầng thấp -> cao, chuyển thẳng pending_payment, sinh 2 hóa đơn & cấp TK)
     const app1 = await call('/contracts/register-online', {
       method: 'POST',
-      body: { ...sampleProfile(`${YEAR}609001`), periodId: pFresh.id, preferredRoomTier: 'standard', preferredCapacity: 4, term: '10_months' },
+      body: { ...sampleProfile(`${YEAR}609001`), periodId: pFresh.id, preferredRoomTier: 'standard', preferredCapacity: 4, term: '12_months' },
     });
     assert.equal(app1.status, 201);
     assert.equal(app1.data.status, 'pending_payment', 'Phải tự động duyệt thẳng sang pending_payment');
@@ -154,7 +154,7 @@ async function run() {
     assert.equal(
       (await call('/contracts/register-online', {
         method: 'POST',
-        body: { ...sampleProfile(`${YEAR}609001`, { citizenId: '999999999999', email: 'hacker@evil.com' }), periodId: pFresh.id, preferredRoomTier: 'standard', preferredCapacity: 4, term: '10_months' },
+        body: { ...sampleProfile(`${YEAR}609001`, { citizenId: '999999999999', email: 'hacker@evil.com' }), periodId: pFresh.id, preferredRoomTier: 'standard', preferredCapacity: 4, term: '12_months' },
       })).code,
       'IDENTITY_MISMATCH'
     );
@@ -162,7 +162,7 @@ async function run() {
     // Nộp lại hợp lệ -> Tự động xếp phòng -> Sinh viên đăng nhập & bấm VietQR Sandbox -> Tự kích hoạt HĐ -> Quét QR Check-in
     const app2 = await call('/contracts/register-online', {
       method: 'POST',
-      body: { ...sampleProfile(`${YEAR}609001`), periodId: pFresh.id, preferredRoomTier: 'standard', preferredCapacity: 4, term: '10_months' },
+      body: { ...sampleProfile(`${YEAR}609001`), periodId: pFresh.id, preferredRoomTier: 'standard', preferredCapacity: 4, term: '6_months' },
     });
     assert.equal(app2.status, 201);
     assert.equal(app2.data.status, 'pending_payment');
@@ -190,14 +190,14 @@ async function run() {
     assert.equal((await call('/contracts/checkin-qr', { method: 'POST', token: staff, body: { checkinCode: sim2.data.checkinCode } })).code, 'ALREADY_CHECKED_IN');
     ok('tự động duyệt 100% -> tự hủy nhả chỗ -> chống mạo danh CCCD -> Webhook VietQR kích hoạt HĐ -> QR Check-in');
 
-    // ---------------------------------------------------------------- 5. Hủy quá hạn đóng phí (`sv005` A15-305) -> Nhả chỗ & reset Trống
+    // ---------------------------------------------------------------- 5. Hủy quá hạn đóng phí (`sv005` A15-403) -> Nhả chỗ & reset Trống
     const overdueRes = await call('/contracts/cancel-overdue', { method: 'POST', token: staff });
     assert.equal(overdueRes.status, 200);
     assert.ok(overdueRes.data.cancelledCount >= 1);
     const a15Rooms = (await call('/rooms?campus=cs1&limit=100', { token: staff })).data.items.filter((r) => r.buildingCode === 'A15');
-    const a15305 = a15Rooms.find((r) => r.roomNumber === '305');
-    assert.equal(a15305.occupied, 0);
-    assert.equal(a15305.gender, null, 'Phòng A15-305 sau khi hủy quá hạn phải tự reset về Trống (gender = null)');
+    const a15403 = a15Rooms.find((r) => r.roomNumber === '403');
+    assert.equal(a15403.occupied, 0);
+    assert.equal(a15403.gender, null, 'Phòng A15-403 sau khi hủy quá hạn phải tự reset về Trống (gender = null)');
     ok('hủy quá hạn đóng phí nhả chỗ & tự reset giới tính phòng về Trống');
 
     // ---------------------------------------------------------------- 6. Cổng SV: sv004 dùng nút Sandbox VietQR trực tiếp trên Portal -> tự kích hoạt HĐ
@@ -217,7 +217,7 @@ async function run() {
     const sv003Apply = await call('/portal/applications', {
       method: 'POST',
       token: sv003,
-      body: { periodId: pRet.id, preferredRoomTier: 'standard', preferredCapacity: 4, term: '10_months' },
+      body: { periodId: pRet.id, preferredRoomTier: 'standard', preferredCapacity: 4, term: '12_months' },
     });
     assert.equal(sv003Apply.status, 201);
     assert.equal(sv003Apply.data.status, 'pending_payment');
@@ -301,7 +301,7 @@ async function run() {
     assert.equal((await call(`/dashboard/revenue?year=${YEAR}`, { token: staff })).status, 403);
     const revMgr = (await call(`/dashboard/revenue?year=${YEAR}`, { token: manager })).data;
     assert.ok(Array.isArray(revMgr) && revMgr.length > 0);
-    ok('Dashboard Cơ sở 1 (2 tòa A14, A15 · 60 phòng) & Doanh thu phân quyền chặt chỉ Manager');
+    ok('Dashboard Cơ sở 1 (2 tòa A14, A15 · 40 phòng) & Doanh thu phân quyền chặt chỉ Manager');
 
     console.log(`\n🎉 Toàn bộ ${passed} nhóm kiểm thử HaUI - DMS (Cơ sở 1 · Auto-Approve · VietQR Sandbox) ĐẠT 100%!`);
   } finally {

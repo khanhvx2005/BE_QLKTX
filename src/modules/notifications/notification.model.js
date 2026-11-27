@@ -3,7 +3,7 @@
  */
 
 const mongoose = require('mongoose');
-const { CAMPUS_SCOPE, NOTIFICATION_SCOPE, NOTIFICATION_TYPE } = require('../../shared/constants/enums');
+const { CAMPUS_SCOPE, NOTIFICATION_SCOPE, NOTIFICATION_TYPE, NOTIFICATION_PRIORITY } = require('../../shared/constants/enums');
 const toJSON = require('../../shared/to-json');
 
 const notificationSchema = new mongoose.Schema(
@@ -12,6 +12,7 @@ const notificationSchema = new mongoose.Schema(
     scope: { type: String, enum: NOTIFICATION_SCOPE, default: 'personal' },
     campus: { type: String, enum: CAMPUS_SCOPE, default: 'all' },
     type: { type: String, enum: NOTIFICATION_TYPE, required: true },
+    priority: { type: String, enum: NOTIFICATION_PRIORITY, default: 'normal' },
     title: { type: String, required: true, trim: true, maxLength: 200 },
     content: { type: String, required: true, trim: true },
     refType: { type: String, default: null },

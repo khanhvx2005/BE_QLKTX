@@ -57,7 +57,7 @@ function evaluateEligibility(period, { studentCode, faculty } = {}) {
     if (Array.isArray(period.excludedFaculties) && period.excludedFaculties.length && facultyMatchesList(faculty, period.excludedFaculties)) {
       return {
         eligible: false,
-        reason: `Khoa/Ngành "${faculty}" học tập trung tại Hà Nội từ năm nhất — vui lòng chọn đợt đăng ký tại CS1/CS2`,
+        reason: `Khoa/Ngành "${faculty}" không thuộc đối tượng tiếp nhận của đợt đăng ký này`,
         cohortInfo,
       };
     }

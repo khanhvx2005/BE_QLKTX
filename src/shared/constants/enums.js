@@ -19,44 +19,24 @@ const CAMPUS_INFO = {
     address: 'Ngõ 296 / Số 298 Đường Cầu Diễn, Phường Tây Tựu, TP. Hà Nội',
     officeLocation: 'Văn phòng Trung tâm KTX Cơ sở 1 — Tầng 1 nhà A14',
     buildings: ['A14', 'A15'],
-    scaleNote: '2 tòa nhà nội trú (A14, A15 — 60 phòng), đầy đủ hạng phòng Chất lượng cao, Tiêu chuẩn & Cơ bản',
+    scaleNote: '2 tòa nhà nội trú (A14, A15 — 40 phòng, >30m² khép kín), gồm Phòng Chất lượng cao & Phòng Tiêu chuẩn',
   },
 };
 
 /** Bảng giá phòng ở KTX HaUI chính thức năm học 2026–2027 (VNĐ/SV/tháng — ssc.haui.edu.vn) */
 const ROOM_PRICES_2026 = {
   high_quality: {
-    3: { cs1: 930000, cs2: 930000, cs3: 900000 },
-    4: { cs1: 700000, cs2: 700000, cs3: 680000 },
-    6: { cs1: 470000, cs2: 470000, cs3: 460000 },
+    3: { cs1: 930000 },
+    4: { cs1: 700000 },
+    6: { cs1: 470000 },
   },
   standard: {
-    4: { cs1: 550000, cs2: 490000, cs3: 500000 },
-    6: { cs1: 380000, cs2: 350000, cs3: 350000 },
-  },
-  basic: {
-    4: { cs1: 450000, cs2: 420000, cs3: 420000 },
-    6: { cs1: 320000, cs2: 300000, cs3: 300000 },
+    4: { cs1: 550000 },
+    6: { cs1: 380000 },
   },
 };
 
-/** Nhóm khoa/ngành tân sinh viên học ngay tại Hà Nội (CS1/CS2) từ năm nhất */
-const HANOI_FRESHMAN_FACULTIES = [
-  'Ngoại ngữ',
-  'Ngôn ngữ Anh',
-  'Ngôn ngữ Trung Quốc',
-  'Ngôn ngữ Hàn Quốc',
-  'Ngôn ngữ Nhật',
-  'Công nghệ May và Thiết kế thời trang',
-  'Công nghệ dệt may',
-  'Thiết kế thời trang',
-  'Công nghệ Hóa',
-  'Công nghệ kỹ thuật hóa học',
-  'Công nghệ kỹ thuật môi trường',
-  'Công nghệ thực phẩm',
-];
-
-const ROOM_TIERS = ['high_quality', 'standard', 'basic'];
+const ROOM_TIERS = ['high_quality', 'standard'];
 const ROOM_STATUS = ['active', 'maintenance'];
 const ROOM_CAPACITY = [2, 3, 4, 6];
 
@@ -66,12 +46,9 @@ const PRIORITY_WEIGHT = { policy_family: 1, poor_household: 2, remote_area: 3, n
 const TARGET_COHORTS = ['freshman', 'returning', 'all'];
 const PERIOD_STATUS = ['upcoming', 'open', 'closed'];
 
-const CONTRACT_TERMS = ['5_months', '6_months', '8.5_months', '10_months', '12_months'];
+const CONTRACT_TERMS = ['6_months', '12_months'];
 const TERM_MONTHS = {
-  '5_months': 5,
   '6_months': 6,
-  '8.5_months': 8.5,
-  '10_months': 10,
   '12_months': 12,
 };
 
@@ -93,6 +70,7 @@ const REQUEST_STATUS = ['pending', 'in_progress', 'approved', 'completed', 'reje
 
 const NOTIFICATION_SCOPE = ['personal', 'broadcast'];
 const NOTIFICATION_TYPE = ['application', 'payment', 'utility', 'request', 'announcement'];
+const NOTIFICATION_PRIORITY = ['urgent', 'important', 'normal'];
 
 module.exports = {
   ROLES,
@@ -102,7 +80,6 @@ module.exports = {
   CAMPUS_SCOPE,
   CAMPUS_INFO,
   ROOM_PRICES_2026,
-  HANOI_FRESHMAN_FACULTIES,
   ROOM_TIERS,
   ROOM_STATUS,
   ROOM_CAPACITY,
@@ -124,4 +101,5 @@ module.exports = {
   REQUEST_STATUS,
   NOTIFICATION_SCOPE,
   NOTIFICATION_TYPE,
+  NOTIFICATION_PRIORITY,
 };

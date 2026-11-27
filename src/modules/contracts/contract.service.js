@@ -40,7 +40,7 @@ const {
 } = require('../../shared/views');
 const { availableSlotsOf } = require('../rooms/room.service');
 const logger = require('../../core/logger/logger');
-const { sendAccountEmail, sendRejectionEmail, sendCheckinReadyEmail } = require('../../core/email/email.service');
+const { sendAccountEmail, sendCheckinReadyEmail } = require('../../core/email/email.service');
 
 const genderText = (g) => (g === 'male' ? 'nam' : 'nữ');
 const termLabel = (term) => `${TERM_MONTHS[term] ?? ''} tháng`;
@@ -155,7 +155,7 @@ const placementSort = (gender) => (a, b) => {
   );
 };
 
-const TIER_ORDER = { high_quality: 1, standard: 2, basic: 3 };
+const TIER_ORDER = { high_quality: 1, standard: 2 };
 
 /** GET /api/public/rooms/available?periodId=&campus=&buildingId=&gender=&roomTier=&capacity= */
 async function availableRooms(q = {}) {
@@ -727,213 +727,6 @@ async function issuePersonalInvoices(c, room, building, dueDate) {
   return created;
 }
 
-/** PATCH /api/contracts/:id/approve — Tự động xếp phòng tầng thấp -> cao (hoặc phòng cán bộ chọn) & khóa chỗ nguyên tử -> `pending_payment` */
-async function approve(id, body = {}, actor) {
-  const c = await findContract(id, 'Không tìm thấy đơn đăng ký');
-  if (c.status !== 'pending') fail(409, 'CONTRACT_NOT_PENDING', 'Đơn đăng ký đã được xử lý');
-  const st = await Student.findById(c.studentId).lean();
-  const period = c.periodId ? await RegistrationPeriod.findById(c.periodId).lean() : null;
-  const targetCampus = c.campus || period?.campus || null;
-
-  let room = null;
-  let building = null;
-  const explicitRoomId = body.roomId || c.roomId;
-  if (explicitRoomId) {
-    room = isObjectId(explicitRoomId) ? await Room.findById(explicitRoomId).lean() : null;
-    if (!room) fail(404, 'NOT_FOUND', 'Không tìm thấy phòng');
-    building = await Building.findById(room.buildingId).lean();
-    if (room.status !== 'active' || !building?.isActive) {
-      fail(422, 'ROOM_NOT_AVAILABLE', `Phòng ${building?.code ?? ''}-${room.roomNumber} đang bảo trì hoặc tòa ngừng hoạt động`);
-    }
-    if (!roomAcceptsGender(room, st.gender)) {
-      fail(422, 'GENDER_MISMATCH', `Phòng này đang dành cho sinh viên ${genderText(room.gender)}`);
-    }
-  } else {
-    const picked = await pickBestRoomForWish({
-      campus: targetCampus,
-      gender: st.gender,
-      roomTier: c.preferredRoomTier,
-      capacity: c.preferredCapacity,
-    });
-    if (!picked) fail(409, 'ROOM_FULL', 'Hiện không còn chỗ trống cho loại phòng này trong cơ sở. Vui lòng chọn phòng khác hoặc từ chối đơn');
-    room = picked.room;
-    building = picked.building;
-  }
-
-  if (await Contract.exists({ studentId: st._id, status: { $in: ['pending_payment', 'active'] } })) {
-    fail(409, 'APPLICATION_OR_CONTRACT_EXISTS', 'Sinh viên đã có hợp đồng chờ đóng phí hoặc đang hiệu lực');
-  }
-
-  let account = await User.findOne({ studentId: st._id });
-  const email = String(st.email || '').toLowerCase();
-  if (!account && (await User.exists({ email }))) {
-    fail(409, 'EMAIL_ALREADY_USED', `Email ${st.email} đã thuộc tài khoản khác. Liên hệ sinh viên để cập nhật email`);
-  }
-
-  // BR-05: Khóa nguyên tử 1 chỗ trống & tự gán giới tính phòng nếu là người đầu tiên
-  const locked = await lockRoomSlot(room._id, st.gender);
-  if (!locked) fail(409, 'ROOM_FULL', `Phòng ${building.code}-${room.roomNumber} vừa hết chỗ trống. Vui lòng điều phối phòng khác`);
-
-  try {
-    const deadlineDays = period?.paymentDeadlineDays || 7;
-    const paymentDeadline = addDays(today(), deadlineDays);
-    const months = TERM_MONTHS[c.term];
-    const totalRoomFee = Math.round(room.pricePerMonth * months);
-
-    const updated = await Contract.findOneAndUpdate(
-      { _id: c._id, status: 'pending' },
-      {
-        $set: {
-          status: 'pending_payment',
-          roomId: room._id,
-          campus: building.campus,
-          pricePerMonth: room.pricePerMonth,
-          depositAmount: room.depositAmount,
-          totalRoomFee,
-          paymentDeadline,
-          reviewedAt: new Date(),
-          reviewedBy: actor.id,
-          reviewedByName: actor.fullName,
-        },
-      },
-      { returnDocument: 'after' }
-    ).lean();
-    if (!updated) {
-      await releaseRoomSlot(room._id);
-      fail(409, 'CONTRACT_NOT_PENDING', 'Đơn đăng ký vừa được người khác xử lý');
-    }
-
-    const isNew = !account;
-    if (isNew) {
-      account = await User.create({
-        email,
-        fullName: st.fullName,
-        role: 'student',
-        studentId: st._id,
-        studentCode: st.studentCode,
-        passwordHash: await User.hashPassword(st.studentCode),
-        mustChangePassword: true,
-      });
-    }
-
-    const createdInvoices = await issuePersonalInvoices(updated, room, building, paymentDeadline);
-
-    // Nếu cả tiền phòng lẫn cọc đều = 0 (miễn phí 100%) -> kích hoạt luôn
-    let finalContract = updated;
-    if (createdInvoices.every((i) => i.amount === 0)) {
-      await Invoice.updateMany({ contractId: updated._id }, { $set: { status: 'paid', paidAt: new Date() } });
-      finalContract = (await activateIfInitialPaid(updated._id)) || updated;
-    }
-
-    const roomLabel = `${building.name} (${building.code}) - Phòng ${room.roomNumber}`;
-    let emailSent = false;
-    try {
-      emailSent = await sendAccountEmail({
-        to: email,
-        studentName: st.fullName,
-        studentCode: st.studentCode,
-        roomName: roomLabel,
-        termName: termLabel(updated.term),
-        paymentDeadline,
-        isNewAccount: isNew,
-      });
-    } catch (mailErr) {
-      logger.error('[Duyệt đơn] Lỗi gửi email:', mailErr);
-    }
-
-    await notificationService
-      .notifyStudent(st._id, {
-        type: 'application',
-        campus: building.campus,
-        title: `Đơn ${updated.contractCode} đã được duyệt giữ chỗ`,
-        content: `Bạn được xếp tạm vào ${roomLabel}. Vui lòng hoàn tất thanh toán trước ngày ${paymentDeadline} để kích hoạt hợp đồng và nhận mã QR Check-in.`,
-        refType: 'contract',
-        refId: updated._id,
-      })
-      .catch(() => {});
-
-    return {
-      data: {
-        contract: await viewOne(finalContract),
-        account: { studentCode: st.studentCode, email: account.email, isNew },
-        emailSent,
-        invoices: createdInvoices.map((i) => ({
-          id: String(i._id),
-          invoiceCode: i.invoiceCode,
-          type: i.type,
-          amount: i.amount,
-          dueDate: i.dueDate,
-        })),
-      },
-      message: 'Đã duyệt đơn, giữ chỗ phòng và phát hành hóa đơn chờ thanh toán',
-    };
-  } catch (err) {
-    if (err.statusCode !== 409) {
-      await releaseRoomSlot(room._id);
-      await Contract.updateOne(
-        { _id: c._id, status: 'pending_payment' },
-        { $set: { status: 'pending', roomId: c.roomId ?? null, paymentDeadline: null, reviewedAt: null } }
-      );
-      await Invoice.deleteMany({ contractId: c._id, status: 'unpaid' });
-    }
-    throw err;
-  }
-}
-
-/** POST /api/contracts/auto-approve — Duyệt hàng loạt thuần FIFO (ai nộp trước duyệt trước), xếp tầng thấp -> cao theo đúng loại phòng */
-async function autoApprove(body = {}, actor) {
-  const filter = { status: 'pending' };
-  if (body.periodId && isObjectId(body.periodId)) filter.periodId = body.periodId;
-  const limit = Math.min(Math.max(Number(body.limit) || 50, 1), 200);
-
-  const pendingList = await Contract.find(filter).sort({ createdAt: 1 }).lean();
-  if (!pendingList.length) return { data: { approvedCount: 0, skippedCount: 0, approved: [], skipped: [] }, message: 'Không có đơn chờ duyệt' };
-
-  const students = byId(await Student.find({ _id: { $in: pendingList.map((c) => c.studentId) } }).lean());
-  const approved = [];
-  const skipped = [];
-
-  const periods = byId(await RegistrationPeriod.find({ _id: { $in: pendingList.map((c) => c.periodId).filter(Boolean) } }).lean());
-
-  for (const c of pendingList.slice(0, limit)) {
-    const st = students.get(String(c.studentId));
-    if (!st) continue;
-    try {
-      const period = c.periodId ? periods.get(String(c.periodId)) : null;
-      const curRoom = c.roomId ? await Room.findById(c.roomId).lean() : null;
-      const curBuilding = curRoom ? await Building.findById(curRoom.buildingId).lean() : null;
-      const targetCampus = c.campus || curBuilding?.campus || period?.campus || null;
-
-      // Xếp lấp đầy từ tầng thấp lên tầng cao đúng loại phòng sinh viên đã chọn & đúng giới tính
-      const picked = await pickBestRoomForWish({
-        campus: targetCampus,
-        gender: st.gender,
-        roomTier: c.preferredRoomTier || curRoom?.roomTier || null,
-        capacity: c.preferredCapacity || curRoom?.capacity || null,
-      });
-      if (!picked) {
-        skipped.push({ contractCode: c.contractCode, studentCode: st.studentCode, reason: 'Loại phòng đăng ký hiện đã hết chỗ trống' });
-        continue;
-      }
-
-      const res = await approve(c._id, { roomId: picked.room._id }, actor);
-      approved.push({
-        contractCode: res.data.contract.contractCode,
-        studentCode: st.studentCode,
-        room: `${res.data.contract.buildingCode}-${res.data.contract.roomNumber}`,
-        floor: res.data.contract.room?.floor,
-      });
-    } catch (err) {
-      skipped.push({ contractCode: c.contractCode, studentCode: st.studentCode, reason: err.message });
-    }
-  }
-
-  return {
-    data: { approvedCount: approved.length, skippedCount: skipped.length, approved, skipped },
-    message: `Đã duyệt hàng loạt ${approved.length} đơn theo thứ tự nộp${skipped.length ? `, bỏ qua ${skipped.length} đơn do hết chỗ loại phòng` : ''}`,
-  };
-}
-
 /** Tự kích hoạt hợp đồng pending_payment -> active ngay khi đóng đủ hóa đơn đầu kỳ + sinh mã QR Check-in */
 async function activateIfInitialPaid(contractId) {
   if (!contractId) return null;
@@ -988,32 +781,6 @@ async function activateIfInitialPaid(contractId) {
     }
   }
   return updated;
-}
-
-/** PATCH /api/contracts/:id/reject — Từ chối đơn pending + gửi Email */
-async function reject(id, body = {}, actor) {
-  const reason = String(body.reason || '').trim();
-  if (!reason) fieldErrors([{ field: 'reason', message: 'Nhập lý do từ chối' }]);
-  const c = await findContract(id, 'Không tìm thấy đơn đăng ký');
-  if (c.status !== 'pending') fail(409, 'CONTRACT_NOT_PENDING', 'Đơn đăng ký đã được xử lý');
-  const updated = await Contract.findOneAndUpdate(
-    { _id: c._id, status: 'pending' },
-    { $set: { status: 'rejected', rejectionReason: reason, reviewedAt: new Date(), reviewedBy: actor.id, reviewedByName: actor.fullName } },
-    { returnDocument: 'after' }
-  ).lean();
-  if (!updated) fail(409, 'CONTRACT_NOT_PENDING', 'Đơn đăng ký đã được xử lý');
-
-  const st = await Student.findById(updated.studentId).lean();
-  if (st?.email) {
-    sendRejectionEmail({
-      to: st.email,
-      studentName: st.fullName,
-      studentCode: st.studentCode,
-      contractCode: updated.contractCode,
-      reason,
-    }).catch((err) => logger.error('[Từ chối đơn] Lỗi gửi email:', err));
-  }
-  return { data: await viewOne(updated), message: 'Đã từ chối đơn đăng ký' };
 }
 
 /** PATCH /api/contracts/:id/cancel — Hủy hợp đồng `pending_payment` (bỏ cọc/quá hạn) -> hủy HĐ nháp + nhả chỗ phòng */
@@ -1212,10 +979,7 @@ module.exports = {
   cancelPendingByStudent,
   list,
   getById,
-  approve,
-  autoApprove,
   activateIfInitialPaid,
-  reject,
   cancelPendingPayment,
   cancelOverdue,
   checkinQr,

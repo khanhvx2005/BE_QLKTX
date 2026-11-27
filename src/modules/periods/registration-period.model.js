@@ -21,7 +21,7 @@ const registrationPeriodSchema = new mongoose.Schema(
     excludedFaculties: { type: [String], default: [] },
     allowedTerms: {
       type: [{ type: String, enum: CONTRACT_TERMS }],
-      default: ['5_months', '10_months'],
+      default: ['6_months', '12_months'],
     },
     startDate: { type: String, required: true },
     endDate: { type: String, required: true },

@@ -89,29 +89,6 @@ async function sendAccountEmail({ to, studentName, studentCode, roomName, termNa
   });
 }
 
-async function sendRejectionEmail({ to, studentName, studentCode, contractCode, reason }) {
-  const html = `
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
-      <div style="background-color:#991b1b;color:#fff;padding:20px;text-align:center;">
-        <h2 style="margin:0;font-size:18px;">TRUNG TÂM KÝ TÚC XÁ ĐH CÔNG NGHIỆP HÀ NỘI</h2>
-      </div>
-      <div style="padding:24px;color:#1e293b;line-height:1.6;">
-        <p>Xin chào <strong>${escapeHtml(studentName)}</strong> (MSSV: <strong>${escapeHtml(studentCode)}</strong>),</p>
-        <p>Đơn đăng ký KTX mã <strong>${escapeHtml(contractCode)}</strong> chưa được phê duyệt.</p>
-        <div style="background-color:#fef2f2;border-left:4px solid #dc2626;padding:12px 16px;margin:16px 0;">
-          <p style="margin:4px 0;"><strong>Lý do:</strong> ${escapeHtml(reason)}</p>
-        </div>
-        <p>Bạn có thể bổ sung thông tin và nộp lại đơn nếu đợt đăng ký vẫn đang mở.</p>
-      </div>
-    </div>`;
-  return sendMailSafe({
-    to,
-    subject: `[HaUI - DMS] Kết quả xét duyệt đơn KTX (${contractCode})`,
-    html,
-    tag: 'REJECT',
-  });
-}
-
 async function sendCheckinReadyEmail({ to, studentName, studentCode, contractCode, roomName, checkinCode, officeLocation }) {
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
@@ -165,7 +142,6 @@ async function sendUtilityBillEmail({ to, studentName, roomLabel, monthYear, tot
 
 module.exports = {
   sendAccountEmail,
-  sendRejectionEmail,
   sendCheckinReadyEmail,
   sendUtilityBillEmail,
 };
