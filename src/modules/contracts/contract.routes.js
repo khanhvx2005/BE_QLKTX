@@ -18,7 +18,7 @@ router.post('/cancel-overdue', respond((req) => service.cancelOverdue(req.user))
 router.post('/checkin-qr', respond((req) => service.checkinQr(req.body, req.user)));
 router.get('/:id', respond((req) => service.getById(req.params.id)));
 router.patch('/:id/cancel', respond((req) => service.cancelPendingPayment(req.params.id, req.body, req.user)));
-router.patch('/:id/terminate', respond((req) => service.terminate(req.params.id)));
+router.patch('/:id/terminate', respond((req) => service.terminate(req.params.id, req.user)));
 router.patch('/:id/deposit-refund', respond((req) => service.refundDeposit(req.params.id, req.body, req.user)));
 
 module.exports = router;

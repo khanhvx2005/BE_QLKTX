@@ -96,7 +96,7 @@ async function settleInvoice(inv, { method, payerStudentId, transactionCode = nu
 
   // Hook tự động kích hoạt hợp đồng pending_payment -> active + sinh mã QR Check-in khi đủ phí đầu kỳ!
   let activatedContract = null;
-  if (updated.contractId && (updated.type === 'deposit' || updated.type === 'room_semester')) {
+  if (updated.contractId && ['initial_payment', 'deposit', 'room_semester'].includes(updated.type)) {
     activatedContract = await contractService.activateIfInitialPaid(updated.contractId);
   }
 
@@ -288,7 +288,7 @@ async function simulateVietqrWebhook(body = {}, actor) {
 async function paymentViews(list) {
   const invoiceIds = list.map((p) => p.invoiceId).filter(Boolean);
   const invoices = byId(invoiceIds.length ? await Invoice.find({ _id: { $in: invoiceIds } }).lean() : []);
-  const contractIds = list.filter((p) => !p.invoiceId && p.contractId).map((p) => p.contractId);
+  const contractIds = list.map((p) => p.contractId).filter(Boolean);
   const contracts = byId(contractIds.length ? await Contract.find({ _id: { $in: contractIds } }).lean() : []);
 
   const roomIds = [
@@ -297,16 +297,7 @@ async function paymentViews(list) {
   ];
   const ctx = await loadCtx({ roomIds, studentIds: list.map((p) => p.payerStudentId) });
 
-  return list.map((p) => {
-    const view = paymentView(p, ctx, invoices);
-    if (!view.room && p.contractId) {
-      const c = contracts.get(String(p.contractId));
-      if (c?.roomId) {
-        view.room = roomRef(ctx.rooms.get(String(c.roomId)), ctx);
-      }
-    }
-    return view;
-  });
+  return list.map((p) => paymentView(p, ctx, invoices, contracts));
 }
 
 /** GET /payments?paymentType=&method=&type=&from=&to=&search=&invoiceId=&page=&limit= */

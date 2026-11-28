@@ -11,6 +11,7 @@
 
 const Request = require('./request.model');
 const Contract = require('../contracts/contract.model');
+const Invoice = require('../fees/invoice.model');
 const Room = require('../rooms/room.model');
 const Building = require('../rooms/building.model');
 const Student = require('../students/student.model');
@@ -19,17 +20,40 @@ const notificationService = require('../notifications/notification.service');
 const { REQUEST_TYPE, REPAIR_CATEGORY } = require('../../shared/constants/enums');
 const { fail, fieldErrors, paginate, matches, isObjectId } = require('../../core/utils/http');
 const { createWithCode, yearPrefix } = require('../../core/utils/code-generator');
-const { loadCtx, studentRef, roomRef, byId } = require('../../shared/views');
+const {
+  loadCtx,
+  studentRef,
+  roomRef,
+  byId,
+  contractStatusOf,
+  roomUtilityFilterForContract,
+} = require('../../shared/views');
 
 const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'cancelled']);
-const ALLOWED_OPS_STATUSES = ['in_progress', 'approved', 'completed', 'rejected'];
+const ALLOWED_OPS_STATUSES = ['in_progress', 'completed', 'rejected'];
 const TYPE_LABEL = { repair: 'Báo hỏng sửa chữa', transfer: 'Xin chuyển phòng', checkout: 'Đăng ký trả phòng' };
 const STATUS_LABEL = {
   in_progress: 'đang được tiếp nhận xử lý',
-  approved: 'đã được phê duyệt',
   completed: 'đã hoàn tất xử lý',
   rejected: 'đã bị từ chối',
 };
+
+/** 2A: Chuyển phòng giữa kỳ phải cùng hạng, cùng sức chứa và cùng đơn giá/cọc */
+const isSameRoomClass = (cur, tgt) =>
+  Boolean(cur && tgt) &&
+  (cur.roomTier || 'standard') === (tgt.roomTier || 'standard') &&
+  Number(cur.capacity) === Number(tgt.capacity) &&
+  Number(cur.pricePerMonth) === Number(tgt.pricePerMonth) &&
+  Number(cur.depositAmount) === Number(tgt.depositAmount);
+
+/** Hóa đơn chưa thanh toán chặn chuyển phòng (cá nhân + điện nước phòng hiện tại từ tháng Check-in) */
+async function blockingInvoicesOf(contract) {
+  const utilFilter = roomUtilityFilterForContract(contract);
+  return Invoice.find({
+    status: 'unpaid',
+    $or: [{ studentId: contract.studentId, scope: 'personal' }, ...(utilFilter ? [utilFilter] : [])],
+  }).lean();
+}
 
 async function requestViews(list) {
   const contractIds = list.map((r) => r.contractId).filter(Boolean);
@@ -83,6 +107,9 @@ async function createByStudent(student, body = {}) {
 
   let repairCategory = null;
   if (type === 'repair') {
+    if (!contract.checkedInAt) {
+      fail(422, 'NOT_CHECKED_IN', 'Bạn cần hoàn tất QR Check-in nhận phòng tại văn phòng KTX trước khi gửi phiếu báo hỏng');
+    }
     repairCategory = body.repairCategory ? String(body.repairCategory).trim() : 'other';
     if (!REPAIR_CATEGORY.includes(repairCategory)) {
       errors.push({ field: 'repairCategory', message: 'Danh mục sự cố không hợp lệ (electric, water, ac, furniture, other)' });
@@ -91,6 +118,19 @@ async function createByStudent(student, body = {}) {
 
   let targetRoomId = null;
   if (type === 'transfer') {
+    if (!contract.checkedInAt) {
+      fail(422, 'NOT_CHECKED_IN', 'Bạn cần hoàn tất QR Check-in nhận phòng tại văn phòng KTX trước khi xin chuyển phòng');
+    }
+    if (contractStatusOf(contract) === 'expired') {
+      fail(422, 'CONTRACT_EXPIRED', 'Hợp đồng đã hết hạn, không thể xin chuyển phòng. Vui lòng thanh lý trả phòng hoặc đăng ký kỳ mới');
+    }
+    const unpaid = await blockingInvoicesOf(contract);
+    if (unpaid.length > 0) {
+      fail(422, 'OUTSTANDING_INVOICES', `Còn ${unpaid.length} hóa đơn cá nhân hoặc điện nước phòng hiện tại chưa thanh toán, chưa thể xin chuyển phòng`, {
+        invoices: unpaid.map((i) => ({ id: String(i._id), invoiceCode: i.invoiceCode, type: i.type, amount: i.amount })),
+      });
+    }
+
     const existing = await Request.exists({
       studentId: student._id,
       type: 'transfer',
@@ -116,6 +156,8 @@ async function createByStudent(student, body = {}) {
           errors.push({ field: 'targetRoomId', message: 'Phòng đích không cùng giới tính' });
         } else if ((targetRoom.occupiedCount || 0) >= targetRoom.capacity) {
           errors.push({ field: 'targetRoomId', message: 'Phòng đích hiện đã hết chỗ trống' });
+        } else if (!isSameRoomClass(currentRoom, targetRoom)) {
+          errors.push({ field: 'targetRoomId', message: 'Trong cùng kỳ hợp đồng chỉ được chuyển sang phòng cùng hạng, cùng sức chứa và cùng đơn giá' });
         } else {
           const [curBuilding, tgtBuilding] = await Promise.all([
             currentRoom ? Building.findById(currentRoom.buildingId).lean() : null,
@@ -233,18 +275,27 @@ async function updateStatus(id, body = {}, actor) {
 
   const nextStatus = String(body.status || '').trim();
   if (!ALLOWED_OPS_STATUSES.includes(nextStatus)) {
-    fieldErrors([{ field: 'status', message: 'Trạng thái phải là in_progress, approved, completed hoặc rejected' }]);
+    fieldErrors([{ field: 'status', message: 'Trạng thái phải là in_progress, completed hoặc rejected' }]);
   }
   const handlerNote = String(body.handlerNote ?? doc.handlerNote ?? '').trim();
   if (nextStatus === 'rejected' && !handlerNote) {
     fieldErrors([{ field: 'handlerNote', message: 'Nhập lý do từ chối phiếu yêu cầu' }]);
   }
 
+  // Một nguồn sự thật cho trả phòng: không cho đánh dấu hoàn tất suông ở màn Yêu cầu
+  if (doc.type === 'checkout' && nextStatus === 'completed') {
+    fail(
+      409,
+      'USE_CONTRACT_TERMINATE',
+      'Không hoàn tất trực tiếp trên phiếu trả phòng. Vui lòng mở Hợp đồng của sinh viên và bấm Thanh lý hợp đồng để kiểm tra nợ, nhả chỗ và tự động đóng phiếu này.'
+    );
+  }
+
   let finalTargetRoomId = doc.targetRoomId;
   let transferInfoText = '';
 
-  // Phê duyệt chuyển phòng (`transfer` -> `approved` | `completed`): CHỈ Manager + Hoán đổi phòng nguyên tử
-  if (doc.type === 'transfer' && (nextStatus === 'approved' || nextStatus === 'completed')) {
+  // Phê duyệt chuyển phòng (`transfer` -> `completed`): CHỈ Manager + Hoán đổi phòng nguyên tử 1 lần duy nhất
+  if (doc.type === 'transfer' && nextStatus === 'completed') {
     if (actor.role !== 'manager') {
       fail(403, 'FORBIDDEN', 'Chỉ Trưởng ban QLKTX (Manager) mới có quyền phê duyệt chuyển phòng');
     }
@@ -263,8 +314,24 @@ async function updateStatus(id, body = {}, actor) {
     if (!contract || contract.status !== 'active') {
       fail(409, 'CONTRACT_NOT_ACTIVE', 'Hợp đồng của sinh viên không còn ở trạng thái hiệu lực');
     }
+    if (!contract.checkedInAt) {
+      fail(422, 'NOT_CHECKED_IN', 'Sinh viên chưa làm thủ tục Check-in nhận phòng, không thể chuyển phòng');
+    }
+    if (contractStatusOf(contract) === 'expired') {
+      fail(422, 'CONTRACT_EXPIRED', 'Hợp đồng của sinh viên đã hết hạn, không thể duyệt chuyển phòng');
+    }
+    const unpaid = await blockingInvoicesOf(contract);
+    if (unpaid.length > 0) {
+      fail(422, 'OUTSTANDING_INVOICES', `Còn ${unpaid.length} hóa đơn cá nhân hoặc điện nước phòng cũ chưa thanh toán, chưa thể chuyển phòng`, {
+        invoices: unpaid.map((i) => ({ id: String(i._id), invoiceCode: i.invoiceCode, type: i.type, amount: i.amount })),
+      });
+    }
+
     if (!targetRoom) fail(404, 'NOT_FOUND', 'Không tìm thấy phòng đích');
-    const targetBuilding = await Building.findById(targetRoom.buildingId).lean();
+    const [currentRoom, targetBuilding] = await Promise.all([
+      Room.findById(contract.roomId).lean(),
+      Building.findById(targetRoom.buildingId).lean(),
+    ]);
     if (targetRoom.status !== 'active' || !targetBuilding?.isActive) {
       fail(422, 'ROOM_NOT_AVAILABLE', 'Phòng đích đang bảo trì hoặc tòa ngừng hoạt động');
     }
@@ -273,6 +340,9 @@ async function updateStatus(id, body = {}, actor) {
     }
     if (String(targetRoom._id) === String(contract.roomId)) {
       fail(422, 'VALIDATION_ERROR', 'Sinh viên đang ở chính phòng đích này');
+    }
+    if (!isSameRoomClass(currentRoom, targetRoom)) {
+      fail(422, 'ROOM_TIER_MISMATCH', 'Trong cùng kỳ hợp đồng chỉ phê duyệt chuyển sang phòng cùng hạng, cùng sức chứa và cùng đơn giá');
     }
 
     // 1. Khóa nguyên tử 1 chỗ ở phòng mới (tự gán giới tính nếu phòng đích đang trống)
@@ -285,7 +355,7 @@ async function updateStatus(id, body = {}, actor) {
     const oldRoomId = contract.roomId;
     const movedContract = await Contract.findOneAndUpdate(
       { _id: contract._id, status: 'active' },
-      { $set: { roomId: targetRoom._id, pricePerMonth: targetRoom.pricePerMonth } },
+      { $set: { roomId: targetRoom._id } },
       { returnDocument: 'after' }
     ).lean();
 

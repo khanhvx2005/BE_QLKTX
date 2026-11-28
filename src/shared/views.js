@@ -54,6 +54,8 @@ const roomRef = (room, ctx) => {
     gender: room.gender,
     roomTier: room.roomTier || 'standard',
     capacity: room.capacity,
+    pricePerMonth: room.pricePerMonth ?? null,
+    depositAmount: room.depositAmount ?? null,
     hasAirConditioner: Boolean(room.hasAirConditioner),
   };
 };
@@ -122,6 +124,8 @@ const invoiceView = (inv, ctx) => ({
   type: inv.type,
   scope: inv.scope,
   amount: inv.amount,
+  roomFeeAmount: inv.roomFeeAmount ?? null,
+  depositAmount: inv.depositAmount ?? null,
   description: inv.description,
   createdAt: inv.createdAt,
   dueDate: inv.dueDate,
@@ -135,24 +139,29 @@ const invoiceView = (inv, ctx) => ({
   payer: inv.payerStudentId ? payerRef(ctx.students.get(String(inv.payerStudentId))) : null,
 });
 
-const paymentView = (p, ctx, invoices) => {
+const paymentView = (p, ctx, invoices, contracts = null) => {
   const inv = p.invoiceId ? invoices.get(String(p.invoiceId)) : null;
+  const contract = p.contractId && contracts ? contracts.get(String(p.contractId)) : null;
   return {
     id: idOf(p),
     paymentCode: p.paymentCode,
     paymentType: p.paymentType || 'payment',
     invoiceId: idOf(p.invoiceId),
     contractId: idOf(p.contractId),
+    contractCode: contract?.contractCode ?? null,
     invoiceCode: inv?.invoiceCode ?? null,
     invoiceType: inv?.type ?? null,
     amount: p.amount,
+    depositAmount: p.paymentType === 'refund' ? (contract?.depositAmount ?? null) : null,
+    depositDeductionAmount: p.paymentType === 'refund' ? (contract?.depositDeductionAmount ?? 0) : null,
+    depositRefundReason: p.paymentType === 'refund' ? (contract?.depositRefundReason ?? null) : null,
     method: p.method,
     transactionCode: p.transactionCode ?? null,
     note: p.note ?? '',
     paidAt: p.paidAt,
     collectedByName: p.collectedByName ?? null,
     payer: payerRef(ctx.students.get(String(p.payerStudentId))),
-    room: roomRef(ctx.rooms.get(String(inv?.roomId)), ctx),
+    room: roomRef(ctx.rooms.get(String(inv?.roomId ?? contract?.roomId)), ctx),
   };
 };
 
@@ -172,14 +181,35 @@ async function debtsOf(studentIds) {
   return new Map(rows.map((r) => [String(r._id), r.total]));
 }
 
-async function residentsOf(roomId) {
-  const list = await Contract.find({ roomId, status: 'active' }).lean();
+/** Danh sách SV đang có hợp đồng `active` tại phòng; truyền `{ checkedInOnly: true }` để chỉ lấy người đã Check-in (3A) */
+async function residentsOf(roomId, { checkedInOnly = false } = {}) {
+  const filter = { roomId, status: 'active' };
+  if (checkedInOnly) filter.checkedInAt = { $ne: null };
+  const list = await Contract.find(filter).lean();
   const students = byId(await Student.find({ _id: { $in: list.map((c) => c.studentId) } }).lean());
   return list
     .map((c) => ({ contract: c, student: students.get(String(c.studentId)) }))
     .filter((x) => x.student)
     .sort((a, b) => a.student.studentCode.localeCompare(b.student.studentCode));
 }
+
+/** Mốc tháng (YYYY-MM) bắt đầu tính trách nhiệm điện nước của hợp đồng (chỉ tính từ tháng Check-in) */
+const utilityStartMonthOf = (c) => {
+  if (!c || c.status !== 'active' || !c.checkedInAt) return null;
+  return localDate(c.checkedInAt).slice(0, 7);
+};
+
+/** Điều kiện Mongo lọc các hóa đơn điện nước phòng mà hợp đồng phải gánh trách nhiệm (không gánh tháng trước khi vào ở) */
+const roomUtilityFilterForContract = (c) => {
+  const fromMonth = utilityStartMonthOf(c);
+  if (!fromMonth || !c?.roomId) return null;
+  return {
+    type: 'utility',
+    scope: 'room',
+    roomId: c.roomId,
+    $or: [{ monthYear: null }, { monthYear: { $gte: fromMonth } }],
+  };
+};
 
 module.exports = {
   idOf,
@@ -196,4 +226,6 @@ module.exports = {
   paymentView,
   debtsOf,
   residentsOf,
+  utilityStartMonthOf,
+  roomUtilityFilterForContract,
 };

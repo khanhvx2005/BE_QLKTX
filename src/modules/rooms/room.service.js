@@ -175,7 +175,7 @@ const roomErrors = ({ roomNumber, floor, gender, roomTier = 'standard', capacity
   if (gender !== undefined && gender !== null && gender !== '' && !['male', 'female'].includes(gender)) {
     errors.push({ field: 'gender', message: 'Giới tính phòng phải là male, female hoặc bỏ trống' });
   }
-  if (!ROOM_TIERS.includes(roomTier)) errors.push({ field: 'roomTier', message: 'Hạng phòng phải là high_quality, standard hoặc basic' });
+  if (!ROOM_TIERS.includes(roomTier)) errors.push({ field: 'roomTier', message: 'Hạng phòng phải là high_quality hoặc standard' });
   if (!ROOM_CAPACITY.includes(Number(capacity))) errors.push({ field: 'capacity', message: 'Sức chứa phải là 2, 3, 4 hoặc 6 người' });
   if (!money(pricePerMonth)) errors.push({ field: 'pricePerMonth', message: 'Nhập đơn giá thuê (số nguyên, không âm)' });
   if (!money(depositAmount)) errors.push({ field: 'depositAmount', message: 'Nhập tiền cọc (số nguyên, không âm)' });
@@ -207,17 +207,10 @@ async function listRooms(q = {}) {
   }
 
   const rooms = await Room.find(filter).lean();
-  const [buildings, pendingAgg] = await Promise.all([
-    Building.find({ _id: { $in: rooms.map((r) => r.buildingId) } }).lean(),
-    Contract.aggregate([
-      { $match: { roomId: { $in: rooms.map((r) => r._id) }, status: 'pending' } },
-      { $group: { _id: '$roomId', n: { $sum: 1 } } },
-    ]),
-  ]);
+  const buildings = await Building.find({ _id: { $in: rooms.map((r) => r.buildingId) } }).lean();
   const bMap = byId(buildings);
-  const pendingMap = new Map(pendingAgg.map((x) => [String(x._id), x.n]));
 
-  let rows = rooms.map((r) => roomView(r, bMap.get(String(r.buildingId)), pendingMap.get(String(r._id)) || 0)).sort(numericSort);
+  let rows = rooms.map((r) => roomView(r, bMap.get(String(r.buildingId)), 0)).sort(numericSort);
   if (q.availability === 'has_slot') rows = rows.filter((r) => r.availableSlots > 0);
   if (q.availability === 'full') rows = rows.filter((r) => r.availableSlots === 0);
   rows = rows.filter((r) => matches(q.search, [r.roomNumber, r.buildingName, r.buildingCode, `${r.buildingCode}-${r.roomNumber}`]));
@@ -229,10 +222,7 @@ async function getRoom(id) {
   const r = isObjectId(id) ? await Room.findById(id).lean() : null;
   if (!r) fail(404, 'NOT_FOUND', 'Không tìm thấy phòng');
   const b = await Building.findById(r.buildingId).lean();
-  const [holding, pendingCount] = await Promise.all([
-    Contract.find({ roomId: r._id, status: { $in: ['pending_payment', 'active'] } }).lean(),
-    Contract.countDocuments({ roomId: r._id, status: 'pending' }),
-  ]);
+  const holding = await Contract.find({ roomId: r._id, status: { $in: ['pending_payment', 'active'] } }).lean();
   const students = byId(await Student.find({ _id: { $in: holding.map((c) => c.studentId) } }).lean());
   const occupants = holding
     .map((c) => {
@@ -254,7 +244,7 @@ async function getRoom(id) {
     .filter(Boolean)
     .sort((a, b2) => a.studentCode.localeCompare(b2.studentCode));
 
-  return { data: { ...roomView(r, b, pendingCount), occupants } };
+  return { data: { ...roomView(r, b, 0), occupants } };
 }
 
 async function createRoom(body = {}) {

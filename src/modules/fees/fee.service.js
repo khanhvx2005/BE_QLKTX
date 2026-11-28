@@ -68,11 +68,18 @@ async function sheet(q = {}) {
   const rooms = await billableRoomsOf(building._id);
   const roomIds = rooms.map((r) => r._id);
   const readings = await UtilityReading.find({ roomId: { $in: roomIds }, monthYear: { $lte: monthYear } }).lean();
+  // 3A: Chỉ tính đầu người chia điện nước theo SV đã Check-in, đồng thời báo riêng số SV đã đóng tiền nhưng chưa Check-in
   const occupied = await Contract.aggregate([
     { $match: { roomId: { $in: roomIds }, status: 'active' } },
-    { $group: { _id: '$roomId', n: { $sum: 1 } } },
+    {
+      $group: {
+        _id: '$roomId',
+        checkedIn: { $sum: { $cond: [{ $ne: ['$checkedInAt', null] }, 1, 0] } },
+        pendingCheckin: { $sum: { $cond: [{ $eq: ['$checkedInAt', null] }, 1, 0] } },
+      },
+    },
   ]);
-  const occOf = new Map(occupied.map((x) => [String(x._id), x.n]));
+  const occOf = new Map(occupied.map((x) => [String(x._id), x]));
   const latest = readings
     .slice()
     .sort((a, b) => b.monthYear.localeCompare(a.monthYear) || new Date(b.recordedAt) - new Date(a.recordedAt))[0];
@@ -90,6 +97,7 @@ async function sheet(q = {}) {
       rows: rooms.map((r) => {
         const own = readings.filter((u) => String(u.roomId) === String(r._id));
         const prev = own.filter((u) => u.monthYear < monthYear).sort((a, b) => b.monthYear.localeCompare(a.monthYear))[0];
+        const stats = occOf.get(String(r._id));
         return {
           room: {
             id: String(r._id),
@@ -98,7 +106,8 @@ async function sheet(q = {}) {
             roomTier: r.roomTier,
             capacity: r.capacity,
             status: r.status,
-            occupied: occOf.get(String(r._id)) ?? 0,
+            occupied: stats?.checkedIn ?? 0,
+            pendingCheckin: stats?.pendingCheckin ?? 0,
           },
           previous: prev ? { electricityNewIndex: prev.electricity.newIndex, waterNewIndex: prev.water.newIndex } : null,
           reading: readingView(own.find((u) => u.monthYear === monthYear)),
@@ -213,9 +222,14 @@ async function publish(body = {}) {
   for (const room of rooms) {
     const reading = await UtilityReading.findOne({ roomId: room._id, monthYear, isBilled: false }).lean();
     if (!reading) continue;
-    const residents = await residentsOf(room._id);
+    const residents = await residentsOf(room._id, { checkedInOnly: true });
     if (!residents.length) {
-      skipped.push({ roomId: String(room._id), roomNumber: room.roomNumber, reason: 'Phòng không có người ở' });
+      const hasUnchecked = await Contract.exists({ roomId: room._id, status: 'active', checkedInAt: null });
+      skipped.push({
+        roomId: String(room._id),
+        roomNumber: room.roomNumber,
+        reason: hasUnchecked ? 'Phòng chưa có sinh viên nào Check-in nhận phòng' : 'Phòng không có người ở',
+      });
       continue;
     }
 
@@ -360,7 +374,9 @@ async function getInvoice(id) {
   };
   if (inv.type === 'utility') {
     detail.reading = readingView(inv.utilityReadingId ? await UtilityReading.findById(inv.utilityReadingId).lean() : null);
-    detail.members = (await residentsOf(inv.roomId)).map(({ student }) => ({
+    const checkedInMembers = await residentsOf(inv.roomId, { checkedInOnly: true });
+    const membersSource = checkedInMembers.length ? checkedInMembers : await residentsOf(inv.roomId);
+    detail.members = membersSource.map(({ student }) => ({
       id: String(student._id),
       studentCode: student.studentCode,
       fullName: student.fullName,

@@ -108,8 +108,16 @@ async function update(id, body = {}) {
       errors: [{ field: 'gender', message: 'Không đổi được giới tính khi còn đơn hoặc hợp đồng hiệu lực' }],
     });
   }
+  if (
+    next.email !== s.email &&
+    (await User.exists({ email: next.email, studentId: { $ne: s._id } }))
+  ) {
+    fail(409, 'EMAIL_ALREADY_USED', `Email ${next.email} đã được sử dụng cho tài khoản khác`, {
+      errors: [{ field: 'email', message: 'Email đã được sử dụng cho tài khoản khác' }],
+    });
+  }
   await Student.updateOne({ _id: s._id }, { $set: patch });
-  await User.updateOne({ studentId: s._id }, { $set: { studentCode: next.studentCode, fullName: next.fullName } });
+  await User.updateOne({ studentId: s._id }, { $set: { studentCode: next.studentCode, fullName: next.fullName, email: next.email } });
   return { data: await listItem(await Student.findById(s._id).lean()), message: 'Cập nhật thành công' };
 }
 
@@ -147,9 +155,13 @@ async function deactivate(id) {
   if (await Contract.exists({ studentId: s._id, status: { $in: ['pending', 'pending_payment', 'active'] } })) {
     fail(422, 'STUDENT_HAS_ACTIVE_CONTRACT', 'Sinh viên đang có hợp đồng hoặc đơn đăng ký đang xử lý, không thể vô hiệu hóa');
   }
+  if (await Contract.exists({ studentId: s._id, status: 'terminated', isDepositRefunded: false, depositAmount: { $gt: 0 } })) {
+    fail(422, 'STUDENT_HAS_UNREFUNDED_DEPOSIT', 'Sinh viên còn tiền đặt cọc chưa quyết toán hoàn trả, vui lòng hoàn cọc trước khi vô hiệu hóa');
+  }
   if (((await debtsOf([s._id])).get(idOf(s)) ?? 0) > 0) fail(422, 'STUDENT_HAS_DEBT', 'Sinh viên còn công nợ chưa thanh toán');
   await Student.updateOne({ _id: s._id }, { $set: { status: 'inactive' } });
-  return { data: await listItem(await Student.findById(s._id).lean()), message: 'Đã vô hiệu hóa sinh viên' };
+  await User.updateOne({ studentId: s._id }, { $set: { isActive: false } });
+  return { data: await listItem(await Student.findById(s._id).lean()), message: 'Đã vô hiệu hóa hồ sơ và khóa tài khoản đăng nhập của sinh viên' };
 }
 
 module.exports = { list, getById, create, update, importMany, deactivate };

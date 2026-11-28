@@ -1,42 +1,55 @@
-# HỆ THỐNG QUẢN LÝ KÝ TÚC XÁ ĐẠI HỌC CÔNG NGHIỆP HÀ NỘI (HaUI - DMS v3.0)
+# HỆ THỐNG QUẢN LÝ KÝ TÚC XÁ ĐẠI HỌC CÔNG NGHIỆP HÀ NỘI (HaUI - DMS)
 ### BACKEND SERVICE (Node.js + Express 5 + MongoDB + Mongoose 9)
 
-Kho mã nguồn Backend RESTful API của đề tài **Xây dựng hệ thống web Quản lý Ký túc xá Đại học Công nghiệp Hà Nội (`HaUI - DMS`)**, chuẩn hóa theo nghiệp vụ thực tế Trung tâm Hỗ trợ sinh viên HaUI năm học **2026–2027** (`ssc.haui.edu.vn`):
-- **Kiến trúc:** Modular Monolith gọn nhẹ (**10 Phân hệ · 11 Collections · 4 Vai trò RBAC**), không cần Redis/BullMQ hay Socket.io.
-- **3 Cơ sở HaUI (Địa giới hành chính 2026):**
-  - **Cơ sở 1 (`cs1`):** Ngõ 296 / Số 298 Đường Cầu Diễn, Phường Tây Tựu, TP. Hà Nội (**A14, A15**).
-  - **Cơ sở 2 (`cs2`):** Tổ dân phố Thượng 2, Phường Tây Tựu, TP. Hà Nội (**B12, B14**).
-  - **Cơ sở 3 (`cs3`):** Phường Phù Vân, Tỉnh Ninh Bình (**C15, C16, C17**).
-- **Quản lý tinh gọn cấp Phòng:** Quản lý chỗ ở bằng `capacity` & `occupiedCount` nguyên tử (sinh viên vào phòng tự sắp xếp giường với nhau), bám sát **bảng giá 2026–2027**.
-- **Số hóa tự động khép kín:** Đợt đăng ký & phân luồng tự động Tân SV vs Năm 2+ theo 4 số đầu MSSV (`YYYY60xxxx`) → Duyệt ưu tiên & giữ chỗ `pending_payment` (hạn 7 ngày, tự hủy quá hạn) → **Webhook VietQR tự động gạch nợ + Simulator** → Tự kích hoạt `active` & cấp **Mã QR Check-in** → Điện nước bảng lưới nối tiếp chỉ số → Phiếu Báo hỏng / Chuyển phòng nguyên tử / Trả phòng → Hoàn cọc có khấu trừ hỏng đồ.
+Kho mã nguồn Backend RESTful API của đề tài **Xây dựng hệ thống web Quản lý Ký túc xá Đại học Công nghiệp Hà Nội (`HaUI - DMS`)**, bám sát quy định thực tế của **Trung tâm Hỗ trợ sinh viên HaUI — Ký túc xá Cơ sở 1 (Cầu Diễn)** năm học **2026–2027** (`https://ssc.haui.edu.vn`).
+
+- **Kiến trúc:** Modular Monolith gọn nhẹ (**11 thư mục phân hệ · 11 Collections MongoDB · 4 vai trò RBAC**), không yêu cầu Redis, BullMQ hay Socket.io.
+- **Phạm vi KTX Cơ sở 1 (`cs1`):** Ngõ 296 / Số 298 Đường Cầu Diễn, Phường Tây Tựu, TP. Hà Nội — **2 tòa nhà `A14` & `A15`**, tổng **40 phòng** (>30m² khép kín, 5 tầng × 4 phòng/tầng), phân bổ **40% Chất lượng cao (16 phòng)** và **60% Tiêu chuẩn (24 phòng)**.
+- **Quản lý sức chứa cấp Phòng & Giới tính phòng động:** Theo dõi bằng `capacity` và `occupiedCount` nguyên tử (không theo dõi giường lẻ); phòng trống (`gender = null`) tự nhận giới tính của sinh viên đầu tiên và tự mở lại thành phòng Trống khi về `0` người.
+- **Luồng nghiệp vụ dịch vụ khép kín:**
+  1. **Đăng ký & Xếp phòng tự động 100%:** Phân luồng tự động Tân SV vs Năm 2+ theo 4 số đầu MSSV (`YYYY60xxxx`) → khóa loại phòng đã kín → tự động xếp chỗ từ tầng thấp lên cao → cấp tài khoản SV (`TK = MK = MSSV`) → phát hành **01 hóa đơn gộp đầu kỳ** (`initial_payment` = Tiền phòng cả kỳ + Tiền cọc tài sản, hạn 7 ngày, triệt tiêu deadlock đóng dở 1 nửa).
+  2. **Thanh toán VietQR & Check-in QR:** Webhook VietQR tự động (kèm Sandbox Simulator) gạch nợ 1 chạm → tự kích hoạt `active` & sinh mã **QR Check-in** (`QRC-HD-...`). Báo cáo doanh thu tự động loại trừ phần tiền cọc khỏi `initial_payment`.
+  3. **Vận hành nội trú chặt chẽ:** Chưa Check-in chưa được gửi báo hỏng/chuyển phòng và chưa bị chia tiền điện nước tháng; chuyển phòng giữa kỳ yêu cầu sạch nợ cá nhân + điện nước phòng cũ, cùng hạng & sức chứa và chỉ Trưởng ban KTX phê duyệt 1 lần duy nhất (`completed`).
+  4. **Trả phòng, Thanh lý & Hoàn cọc:** Phiếu trả phòng (`checkout`) liên kết một nguồn sự thật với bước `Thanh lý hợp đồng` (kiểm tra sạch nợ từ tháng Check-in trở đi, nhả chỗ và tự đóng phiếu `checkout` sang `completed`) → quyết toán hoàn cọc có khấu trừ hư hại tài sản và tự lập phiếu chi `REF-...`.
 
 ---
 
-## 1. Yêu cầu môi trường (Prerequisites)
+## 1. Bảng giá KTX Cơ sở 1 áp dụng (Năm học 2026–2027)
 
-- **Node.js:** Phiên bản `>= 18.x` hoặc `>= 20.x`.
-- **Trình quản lý gói:** `npm`.
-- **Cơ sở dữ liệu:** MongoDB `>= 6.0` (cài cục bộ `mongodb://localhost:27017/dms_ktx` hoặc **MongoDB Atlas**).
+| Hạng phòng | Loại phòng | Đơn giá (VNĐ/SV/tháng) | Tiền cọc tài sản | Trang thiết bị |
+|---|---|---:|---:|---|
+| **Chất lượng cao (`high_quality`)** | 3 người | 930.000 | 500.000 | Điều hòa, bình nóng lạnh, quạt trần, tủ cá nhân, giường gỗ, đệm, Wifi, khép kín >30m² |
+| **Chất lượng cao (`high_quality`)** | 4 người | 700.000 | 500.000 | Điều hòa, bình nóng lạnh, quạt trần, tủ cá nhân, giường tầng, đệm, Wifi, khép kín >30m² |
+| **Chất lượng cao (`high_quality`)** | 6 người | 470.000 | 500.000 | Điều hòa, bình nóng lạnh, quạt trần, tủ cá nhân, giường tầng, đệm, Wifi, khép kín >30m² |
+| **Tiêu chuẩn (`standard`)** | 4 người | 550.000 | 500.000 | Bình nóng lạnh, quạt trần, tủ cá nhân, giường tầng, Wifi, khép kín >30m² |
+| **Tiêu chuẩn (`standard`)** | 6 người | 380.000 | 500.000 | Bình nóng lạnh, quạt trần, tủ cá nhân, giường tầng, Wifi, khép kín >30m² |
+
+- **2 gói kỳ hạn lưu trú:** Nửa năm (`6_months` — 1 học kỳ) và 1 năm (`12_months` — cả năm học).
 
 ---
 
-## 2. Hướng dẫn Cài đặt & Khởi chạy
+## 2. Yêu cầu môi trường & Cài đặt
+
+- **Node.js:** `>= 18.x` (khuyến nghị `>= 20.x`) và `npm`.
+- **MongoDB:** `>= 6.0` (chạy cục bộ bằng Docker container hoặc MongoDB cài máy / MongoDB Atlas).
 
 ```bash
 # 1. Cài đặt thư viện phụ thuộc
 npm install
 
-# 2. Tạo file .env từ mẫu chuẩn (điền chuỗi kết nối MongoDB của bạn)
+# 2. Tạo file .env từ mẫu chuẩn
 cp .env.example .env
 
-# 3. Khởi tạo dữ liệu mẫu 3 cơ sở HaUI 2026–2027 (chỉ chạy trên DB local hoặc khi cả nhóm đồng ý)
+# 3. Khởi tạo dữ liệu mẫu KTX Cơ sở 1 (chỉ chạy trên DB cục bộ)
 npm run seed
 
-# 4. Chạy server chế độ phát triển (Nodemon tại cổng 5000)
+# 4. Chạy server phát triển (cổng 5000)
 npm run dev
+# hoặc chạy trực tiếp:
+npm start
 ```
 
-Sau khi khởi chạy thành công:
+Địa chỉ sau khi khởi chạy:
 - **Server:** `http://localhost:5000`
 - **Health Check:** `http://localhost:5000/api/health`
 - **Base API URL:** `http://localhost:5000/api`
@@ -46,64 +59,66 @@ Sau khi khởi chạy thành công:
 ## 3. Cấu hình biến môi trường (`.env`)
 
 Xem đầy đủ tại [.env.example](.env.example). Các nhóm biến chính:
-- `MONGODB_URI`: Chuỗi kết nối MongoDB (tuyệt đối **không commit mật khẩu thật** lên Git).
-- `SEED_ALLOW_REMOTE`: Mặc định `false` để bảo vệ cụm MongoDB Atlas khỏi lệnh xóa trắng của `npm run seed`.
-- `JWT_SECRET`, `JWT_EXPIRES_IN`: Chữ ký số và thời hạn phiên đăng nhập (mặc định `7d`).
-- `CORS_ORIGIN`, `FRONTEND_URL`: Địa chỉ ứng dụng React Vite (mặc định `http://localhost:5173`).
-- `VIETQR_BANK_BIN`, `VIETQR_ACCOUNT_NUMBER`, `VIETQR_ACCOUNT_NAME`, `VIETQR_WEBHOOK_SECRET`: Thông tin nhận VietQR động và khóa bảo mật xác thực Webhook báo có (`x-webhook-secret`).
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`: Cấu hình gửi email tự động (duyệt đơn, từ chối, gửi mã QR Check-in, báo tiền điện nước). Nếu để trống, hệ thống vẫn vận hành bình thường và ghi log.
+- `PORT`, `NODE_ENV`: Cổng lắng nghe (mặc định `5000`) và chế độ môi trường.
+- `MONGODB_URI`: Chuỗi kết nối MongoDB (mặc định `mongodb://localhost:27017/dms_ktx`; không commit `.env` lên Git).
+- `SEED_ALLOW_REMOTE`: Mặc định `false` để chặn `npm run seed` vô tình xóa cụm Atlas dùng chung.
+- `JWT_SECRET`, `JWT_EXPIRES_IN`, `BCRYPT_SALT_ROUNDS`: Cấu hình JWT (hạn mặc định `7d`) và băm mật khẩu.
+- `CORS_ORIGIN`, `FRONTEND_URL`: Nguồn Frontend React Vite (mặc định `http://localhost:5173`).
+- `VIETQR_BANK_BIN`, `VIETQR_ACCOUNT_NUMBER`, `VIETQR_ACCOUNT_NAME`, `VIETQR_WEBHOOK_SECRET`: Thông tin sinh mã VietQR NAPAS 247 và mã bí mật xác thực Webhook (`x-webhook-secret`).
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_FROM_NAME`: Cấu hình gửi email Nodemailer (nếu để trống, hệ thống ghi log và bỏ qua gửi thật).
 
 ---
 
-## 4. Danh sách Tài khoản Mẫu (sau khi chạy `npm run seed`)
+## 4. Danh sách 12 Tài khoản Mẫu (sau khi chạy `npm run seed`)
 
-| Vai trò (Role) | Email / Tên đăng nhập | Mật khẩu | Vai trò & Tình huống kiểm thử |
+### Cổng Cán bộ (`portal: 'admin'`)
+| Vai trò | Email đăng nhập | Mật khẩu | Phạm vi & Kịch bản kiểm thử |
 |---|---|---|---|
-| **Quản trị Hệ thống (`admin`)** | `admin@dorm.local` | `Admin@123` | Chỉ quản trị tài khoản, phân quyền, khóa/mở TK (tách biệt khỏi vận hành KTX & doanh thu) |
-| **Trưởng ban QLKTX (`manager`)** | `manager@dorm.local` | `Manager@123` | Mở đợt đăng ký, cấu hình 3 cơ sở/tòa/phòng, duyệt chuyển phòng, **độc quyền xem Báo cáo Doanh thu** |
-| **Cán bộ Quản sinh (`staff`)** | `staff@dorm.local` | `Staff@123` | Vận hành hằng ngày: SV, duyệt/hủy đơn, quét QR Check-in, điện nước, thu tiền, xử lý báo hỏng |
+| **Quản trị hệ thống (`admin`)** | `admin@dorm.local` | `Admin@123` | Chỉ quản trị tài khoản người dùng (tách biệt khỏi nghiệp vụ KTX và doanh thu) |
+| **Trưởng ban QLKTX (`manager`)** | `manager@dorm.local` | `Manager@123` | Mở đợt đăng ký, cấu hình Tòa/Phòng, duyệt chuyển phòng 2A, **độc quyền xem Báo cáo Doanh thu** |
+| **Cán bộ quản sinh (`staff`)** | `staff@dorm.local` | `Staff@123` | Vận hành hằng ngày: SV, QR Check-in, thanh lý, hoàn cọc, điện nước, thu tiền, báo hỏng, bảng tin |
 | **Cán bộ bị khóa (`staff`)** | `staff2@dorm.local` | `Staff@123` | Kiểm thử chặn đăng nhập `403 ACCOUNT_LOCKED` |
 | **Cán bộ mới (`staff`)** | `doimk@dorm.local` | `Tam@12345` | Kiểm thử cưỡng bức đổi mật khẩu lần đầu (`mustChangePassword`) |
-| **SV đang ở CS1 (`student`)** | `sv001@dorm.local` | `Student@123` | Đang nội trú phòng A14-101, còn hóa đơn điện nước phòng chưa nộp |
-| **SV sạch nợ CS1 (`student`)** | `sv002@dorm.local` | `Student@123` | Đang nội trú phòng A15-101, sạch nợ, sẵn sàng thử báo hỏng / chuyển phòng |
-| **SV năm 2+ chưa ở (`student`)** | `sv003@dorm.local` | `Student@123` | Kiểm thử đăng ký / gia hạn nội bộ (`POST /api/portal/applications`) |
-| **SV chờ đóng phí CS3 (`student`)** | `sv004@dorm.local` | `Student@123` | Hợp đồng `pending_payment` tại C15-102 — thử **Webhook VietQR tự kích hoạt & sinh QR Check-in** |
-| **SV quá hạn đóng phí (`student`)** | `sv005@dorm.local` | `Student@123` | Hợp đồng `pending_payment` quá hạn — thử `POST /api/contracts/cancel-overdue` |
-| **SV chờ hoàn cọc (`student`)** | `sv006@dorm.local` | `Student@123` | Hợp đồng `terminated` chưa hoàn cọc — thử khấu trừ hỏng đồ khi hoàn cọc |
-| **SV mới được duyệt (`student`)** | `sv007@dorm.local` *(hoặc MSSV `YYYY600031`)* | *Trùng MSSV* | Kiểm thử cưỡng bức đổi mật khẩu lần đầu (`TK = MK = MSSV`) |
+
+### Cổng Sinh viên (`portal: 'student'` — đăng nhập bằng Email hoặc MSSV)
+| Email | MSSV | Mật khẩu | Kịch bản kiểm thử sẵn có |
+|---|---|---|---|
+| `sv001@dorm.local` | `2024600001` | `Student@123` | Đang ở `A14-101` (CLC 3 kín), còn 1 hóa đơn điện nước chưa nộp + 1 phiếu báo hỏng |
+| `sv002@dorm.local` | `2024600002` | `Student@123` | Đang ở `A15-103` (CLC 4 Nữ), sạch nợ — test chuyển phòng cùng hạng 2A (`A15-202`), trả phòng & in HĐ A4 |
+| `sv003@dorm.local` | `2024600041` | `Student@123` | Cựu nội trú đã hoàn đủ 500k cọc — test đăng ký gia hạn tự động trên Portal |
+| `sv004@dorm.local` | `2026600053` | `Student@123` | Đang `pending_payment` tại `A14-301` với 01 hóa đơn gộp `initial_payment` — test VietQR Sandbox 1A + quy tắc chưa Check-in 3A |
+| `sv005@dorm.local` | `2026600055` | `Student@123` | Đang `pending_payment` quá hạn 2 ngày tại `A15-403` — test Hủy quá hạn nhả chỗ & reset phòng Trống |
+| `sv006@dorm.local` | `2024600043` | `Student@123` | Hợp đồng `terminated` chưa hoàn cọc — test quyết toán hoàn cọc có danh mục khấu trừ |
+| `sv007@dorm.local` | `2026600051` | `2026600051` | Tân SV vừa cấp tài khoản (`TK = MK = MSSV`, bắt buộc đổi mật khẩu lần đầu) |
 
 ---
 
-## 5. Cấu trúc Thư mục Dự án (10 Phân hệ · 11 Collections)
+## 5. Cấu trúc Thư mục Dự án
 
 ```text
 BE_QLKTX/
-├── .agents/rules/gemini.md       # Quy ước kiến trúc & chuẩn kỹ thuật toàn dự án
-├── docs/                         # Bộ tài liệu chuẩn hóa v3.0 & Báo cáo đồ án
-│   ├── PRD.md                    # Phạm vi sản phẩm, 3 cơ sở HaUI & Bảng giá 2026–2027
-│   ├── ARCHITECTURE.md           # Kiến trúc Modular Monolith 10 phân hệ
-│   ├── EDIT_DOCS_DATA_SCHEMA.md  # ERD & thiết kế 11 Collections MongoDB
-│   ├── EDIT_DOCS_DAC_TA_YEU_CAU.md # Đặc tả yêu cầu phần mềm (SRS: 4 Roles, FR, BR)
-│   ├── API.md                    # Hợp đồng RESTful API v3.0 đầy đủ (FE ↔ BE)
-│   └── report/                   # Bản thảo các chương báo cáo Đồ án & Script sinh sơ đồ
+├── docs/                         # Tài liệu phân tích thiết kế, API & báo cáo đồ án
 ├── src/
-│   ├── app.js                    # Khởi tạo Express 5, CORS, định tuyến 10 phân hệ, bắt lỗi
-│   ├── server.js                 # Kết nối MongoDB + Graceful Shutdown
-│   ├── core/                     # Hạ tầng dùng chung (config, email, errors, logger, middlewares, utils)
-│   ├── shared/                   # Hằng số enum (bảng giá 2026–2027), mã lỗi chuẩn, DTO views
-│   ├── modules/                  # 10 phân hệ nghiệp vụ độc lập
-│   │   ├── auth/                 # M1: Xác thực (/api/auth) & Quản trị tài khoản (/api/users)
-│   │   ├── students/             # M2: Hồ sơ SV HaUI, trích xuất khóa MSSV, Import Excel (/api/students)
-│   │   ├── rooms/                # M3: 3 Cơ sở, Tòa nhà & Phòng cấp Phòng (/api/buildings, /api/rooms)
-│   │   ├── periods/              # M4: Đợt đăng ký & phân luồng khóa/ngành (/api/periods)
-│   │   ├── contracts/            # M5: Cổng công khai (/api/public) & Hợp đồng / QR Check-in (/api/contracts)
-│   │   ├── fees/                 # M6: Điện nước nối tiếp chỉ số & Hóa đơn phòng (/api/utility-readings, /api/invoices)
-│   │   ├── payments/             # M7: Cash, Webhook VietQR tự động + Simulator, Phiếu chi hoàn cọc (/api/payments)
-│   │   ├── requests/             # M8: Phiếu Báo hỏng / Chuyển phòng nguyên tử / Trả phòng (/api/requests)
-│   │   ├── notifications/        # M9: Bảng tin KTX công khai & Chuông thông báo (/api/notifications)
-│   │   ├── portal/               # M10a: Cổng tự phục vụ SV (/api/portal)
-│   │   └── dashboard/            # M10b: Thống kê 3 cơ sở & Doanh thu riêng Manager (/api/dashboard)
-│   └── scripts/                  # Khởi tạo dữ liệu mẫu (seed.js) & Kiểm thử tích hợp (test-haui-dms.js)
+│   ├── app.js                    # Khởi tạo Express 5, CORS, gắn route các phân hệ & xử lý lỗi tập trung
+│   ├── server.js                 # Kết nối MongoDB & Graceful Shutdown
+│   ├── core/                     # config, email, errors, logger, middlewares (JWT + RBAC), utils
+│   ├── shared/                   # constants/enums.js (bảng giá CS1 2026–2027), views.js (DTO + bộ lọc nợ/cư trú)
+│   ├── modules/                  # 11 thư mục phân hệ nghiệp vụ độc lập
+│   │   ├── auth/                 # Xác thực (/api/auth) & Quản trị tài khoản (/api/users)
+│   │   ├── students/             # Hồ sơ SV, kiểm tra khóa theo MSSV, Import Excel (/api/students)
+│   │   ├── rooms/                # Tòa nhà A14/A15 & Phòng cấp Phòng (/api/buildings, /api/rooms)
+│   │   ├── periods/              # Đợt đăng ký & phân luồng khóa/ngành (/api/periods)
+│   │   ├── contracts/            # Cổng công khai (/api/public), đăng ký tự động, QR Check-in, thanh lý, hoàn cọc (/api/contracts)
+│   │   ├── fees/                 # Bảng ghi điện nước nối tiếp chỉ số (3A) & Hóa đơn (/api/utility-readings, /api/invoices)
+│   │   ├── payments/             # Thu tiền mặt, Webhook VietQR tự động + Simulator, Phiếu chi hoàn cọc (/api/payments)
+│   │   ├── requests/             # Phiếu Báo hỏng / Chuyển phòng cùng hạng (2A) / Trả phòng (/api/requests)
+│   │   ├── notifications/        # Bảng tin KTX ưu tiên 3 mức & Chuông thông báo SV (/api/notifications)
+│   │   ├── portal/               # Cổng tự phục vụ SV (/api/portal)
+│   │   └── dashboard/            # Thống kê CS1 & Báo cáo Doanh thu tách cọc chỉ Manager (/api/dashboard)
+│   └── scripts/
+│       ├── seed.js               # Nạp dữ liệu mẫu KTX Cơ sở 1 (40 phòng, 110 SV, 12 tài khoản)
+│       ├── test-db.js            # Kiểm tra kết nối MongoDB
+│       └── test-haui-dms.js      # Bộ kiểm thử tích hợp RESTful API (11 nhóm test tự động)
 ├── .env.example
 └── package.json
 ```
@@ -112,8 +127,10 @@ BE_QLKTX/
 
 ## 6. Các lệnh NPM Scripts
 
-- `npm run dev`: Chạy server chế độ phát triển với `nodemon`.
-- `npm start`: Chạy server chế độ Production.
-- `npm run db:test`: Kiểm tra kết nối tới MongoDB.
-- `npm run seed`: Khởi tạo lại bộ dữ liệu mẫu v3.0 đầy đủ 3 cơ sở HaUI.
-- `npm test`: Chạy bộ kiểm thử tự động RESTful API v3.0 (`src/scripts/test-haui-dms.js`) trên CSDL cục bộ.
+| Lệnh | Mục đích |
+|---|---|
+| `npm run dev` | Khởi chạy server phát triển với `nodemon` |
+| `npm start` | Khởi chạy server bằng `node src/server.js` |
+| `npm run db:test` | Kiểm tra kết nối tới MongoDB cấu hình trong `.env` |
+| `npm run seed` | Nạp lại bộ dữ liệu mẫu KTX Cơ sở 1 (40 phòng · 110 SV · 12 tài khoản) |
+| `npm test` | Chạy bộ kiểm thử tích hợp tự động (`src/scripts/test-haui-dms.js`) — khuyến nghị chạy trên DB test cục bộ như `dms_ktx_test` |

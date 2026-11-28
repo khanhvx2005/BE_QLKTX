@@ -52,25 +52,34 @@ async function summary(q = {}) {
   const invoiceScope = campus ? { roomId: { $in: roomIds } } : {};
   const requestScope = campus ? { roomId: { $in: roomIds } } : {};
 
-  const debtOf = async (type) =>
-    (
-      await Invoice.aggregate([
-        { $match: { ...invoiceScope, type, status: 'unpaid' } },
-        { $group: { _id: null, t: { $sum: '$amount' } } },
-      ])
-    )[0]?.t ?? 0;
+  const unpaidInvoices = await Invoice.find({ ...invoiceScope, status: 'unpaid' })
+    .select('type amount roomFeeAmount depositAmount')
+    .lean();
+  let roomDebt = 0;
+  let utilityDebt = 0;
+  let depositPending = 0;
+  for (const inv of unpaidInvoices) {
+    if (inv.type === 'initial_payment') {
+      const dep = inv.depositAmount ?? 0;
+      const roomPart = inv.roomFeeAmount !== null && inv.roomFeeAmount !== undefined ? inv.roomFeeAmount : Math.max(0, inv.amount - dep);
+      roomDebt += roomPart;
+      depositPending += dep;
+    } else if (inv.type === 'room_semester') {
+      roomDebt += inv.amount;
+    } else if (inv.type === 'deposit') {
+      depositPending += inv.amount;
+    } else if (inv.type === 'utility') {
+      utilityDebt += inv.amount;
+    }
+  }
 
   const [
-    roomDebt,
-    utilityDebt,
     activeStudents,
     pendingPaymentContracts,
     overduePaymentContracts,
     awaitingDepositRefund,
     pendingRequests,
   ] = await Promise.all([
-    debtOf('room_semester'),
-    debtOf('utility'),
     Contract.countDocuments({ ...contractScope, status: 'active' }),
     Contract.countDocuments({ ...contractScope, status: 'pending_payment' }),
     Contract.countDocuments({ ...contractScope, status: 'pending_payment', paymentDeadline: { $lt: today() } }),
@@ -96,6 +105,7 @@ async function summary(q = {}) {
         totalDebt: roomDebt + utilityDebt,
         roomDebt,
         utilityDebt,
+        depositPending,
       },
     },
   };
@@ -155,7 +165,7 @@ async function revenue(q = {}) {
   const invoiceIds = list.map((p) => p.invoiceId).filter(Boolean);
   const invoices = byId(
     invoiceIds.length
-      ? await Invoice.find({ _id: { $in: invoiceIds } }).select('type status roomId').lean()
+      ? await Invoice.find({ _id: { $in: invoiceIds } }).select('type status roomId amount roomFeeAmount depositAmount').lean()
       : []
   );
 
@@ -172,9 +182,20 @@ async function revenue(q = {}) {
     if (!inv || inv.type === 'deposit' || inv.status === 'cancelled' || !month.startsWith(year)) continue;
     if (allowedRoomIds && !allowedRoomIds.has(String(inv.roomId))) continue;
     const row = byMonth[month] ?? (byMonth[month] = { month, roomRevenue: 0, utilityRevenue: 0, total: 0 });
-    if (inv.type === 'room_semester') row.roomRevenue += p.amount;
-    else row.utilityRevenue += p.amount;
-    row.total += p.amount;
+    if (inv.type === 'initial_payment') {
+      const roomPart =
+        inv.roomFeeAmount !== null && inv.roomFeeAmount !== undefined
+          ? inv.roomFeeAmount
+          : Math.max(0, p.amount - (inv.depositAmount || 0));
+      row.roomRevenue += roomPart;
+      row.total += roomPart;
+    } else if (inv.type === 'room_semester') {
+      row.roomRevenue += p.amount;
+      row.total += p.amount;
+    } else {
+      row.utilityRevenue += p.amount;
+      row.total += p.amount;
+    }
   }
 
   return {

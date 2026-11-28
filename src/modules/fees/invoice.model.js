@@ -16,6 +16,9 @@ const invoiceSchema = new mongoose.Schema(
     type: { type: String, enum: INVOICE_TYPE, required: true },
     scope: { type: String, enum: INVOICE_SCOPE, required: true },
     amount: { type: Number, required: true, min: 0 },
+    /** Bóc tách kế toán cho hóa đơn gộp đầu kỳ `initial_payment` (tách riêng doanh thu phòng & tiền cọc) */
+    roomFeeAmount: { type: Number, default: null, min: 0 },
+    depositAmount: { type: Number, default: null, min: 0 },
     description: { type: String, default: '' },
     /** Chủ hóa đơn (personal). Hóa đơn phòng để null */
     studentId: ref('Student'),

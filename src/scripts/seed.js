@@ -266,11 +266,11 @@ async function seed() {
 
   // Tài khoản Demo SV (100% tại Cơ sở 1 — A14 & A15)
   // sv001 (idx 0, nam, năm 3)  : active A14-101 (kín 3/3 CLC), còn hóa đơn điện nước chưa nộp + 1 phiếu báo hỏng
-  // sv002 (idx 1, nữ, năm 3)   : active A15-101 (kín 3/3 CLC), sạch nợ -> test chuyển phòng / báo hỏng / thanh lý
+  // sv002 (idx 1, nữ, năm 3)   : active A15-103 (3/4 CLC 4), sạch nợ -> test chuyển phòng cùng hạng (A15-202) / báo hỏng / thanh lý
   // sv003 (idx 40, nam, năm 3) : CỰU nội trú (HĐ năm trước đã thanh lý & hoàn cọc xong) -> test gia hạn tự động 100%
-  // sv004 (idx 52, nam, TSV)   : pending_payment còn hạn tại A14-301 (TC 4) -> test nút Giả lập VietQR Sandbox trên Portal
+  // sv004 (idx 52, nam, TSV)   : pending_payment còn hạn tại A14-301 (TC 4) -> test nút Giả lập VietQR Sandbox 1 hóa đơn gộp
   // sv005 (idx 54, nam, TSV)   : pending_payment QUÁ HẠN 2 ngày tại A15-403 (1/6 TC 6) -> test Hủy quá hạn reset phòng về Trống
-  // sv006 (idx 42, nam, năm 3) : terminated CHƯA hoàn cọc -> test nút Hoàn cọc trực tiếp trên bảng
+  // sv006 (idx 42, nam, năm 3) : terminated CHƯA hoàn cọc -> test nút Hoàn cọc + checklist khấu trừ trực tiếp trên bảng
   // sv007 (idx 50, nam, TSV)   : pending_payment mới xếp tại A14-301, TK = MK = MSSV (2026600051), mustChangePassword = true
   const DEMO_MAP = { sv001: 0, sv002: 1, sv003: 40, sv004: 52, sv005: 54, sv006: 42, sv007: 50 };
 
@@ -313,17 +313,19 @@ async function seed() {
     return c;
   };
 
-  const issueInvoice = async (c, type, issuedAt, room, dueDate = null) => {
+  /** Phương án 1A: sinh 01 hóa đơn gộp đầu kỳ (`initial_payment` = Tiền phòng cả kỳ + Tiền cọc tài sản) */
+  const issueInitialInvoice = async (c, issuedAt, room, dueDate = null) => {
     invSeq += 1;
+    const totalAmount = (c.totalRoomFee || 0) + (c.depositAmount || 0);
+    const depositPart = c.depositAmount > 0 ? ` + Cọc tài sản ${c.depositAmount.toLocaleString('vi-VN')}đ` : '';
     const inv = await Invoice.create({
       invoiceCode: `INV-${YEAR_STR}-${pad(invSeq)}`,
-      type,
+      type: 'initial_payment',
       scope: 'personal',
-      amount: type === 'deposit' ? c.depositAmount : c.totalRoomFee,
-      description:
-        type === 'deposit'
-          ? `Tiền đặt cọc tài sản - ${c.contractCode}`
-          : `Tiền phòng ${codeOfRoom(room)}-${room.roomNumber} (${TERM_MONTHS[c.term]} tháng) - ${c.contractCode}`,
+      amount: totalAmount,
+      roomFeeAmount: c.totalRoomFee || 0,
+      depositAmount: c.depositAmount || 0,
+      description: `Phí đầu kỳ: Tiền phòng ${codeOfRoom(room)}-${room.roomNumber} (${TERM_MONTHS[c.term]} tháng)${depositPart} - ${c.contractCode}`,
       studentId: c.studentId,
       roomId: room._id,
       contractId: c._id,
@@ -412,16 +414,16 @@ async function seed() {
     { idx: 71, room: roomOf('A14', '304'), period: periodFreshman,  term: '6_months',  start: start1mAgo },
 
     // ---------- Nhà A15 (37 SV đang ở across Floors 1–3) ----------
-    // A15-101: 3/3 Nữ (CLC 3 kín)
-    { idx: 1,  room: roomOf('A15', '101'), period: periodReturning, term: '12_months', start: start2mAgo }, // sv002
+    // A15-101: 3/3 Nữ (CLC 3 kín để khóa loại phòng CLC 3 trên /apply)
+    { idx: 17, room: roomOf('A15', '101'), period: periodReturning, term: '12_months', start: start2mAgo },
     { idx: 3,  room: roomOf('A15', '101'), period: periodReturning, term: '12_months', start: start2mAgo },
     { idx: 5,  room: roomOf('A15', '101'), period: periodReturning, term: '12_months', start: start2mAgo },
     // A15-102: 3/4 Nam (CLC 4) — nam cạnh nữ tầng 1
     { idx: 18, room: roomOf('A15', '102'), period: periodReturning, term: '12_months', start: start2mAgo },
     { idx: 20, room: roomOf('A15', '102'), period: periodReturning, term: '12_months', start: start1mAgo },
     { idx: 22, room: roomOf('A15', '102'), period: periodReturning, term: '6_months',  start: start2mAgo },
-    // A15-103: 3/4 Nữ (CLC 4)
-    { idx: 17, room: roomOf('A15', '103'), period: periodReturning, term: '12_months', start: start2mAgo },
+    // A15-103: 3/4 Nữ (CLC 4 — sv002 ở đây để test chuyển phòng cùng hạng sang A15-202 / A14-102)
+    { idx: 1,  room: roomOf('A15', '103'), period: periodReturning, term: '12_months', start: start2mAgo }, // sv002
     { idx: 19, room: roomOf('A15', '103'), period: periodReturning, term: '6_months',  start: start1mAgo },
     { idx: 21, room: roomOf('A15', '103'), period: periodReturning, term: '12_months', start: start2mAgo },
     // A15-104: 5/6 Nữ (CLC 6)
@@ -471,16 +473,14 @@ async function seed() {
       reviewedAt: new Date(`${addDays(item.start, -3)}T09:00:05+07:00`),
     });
     const issuedAt = `${addDays(item.start, -3)}T09:00:10+07:00`;
-    const depInv = await issueInvoice(c, 'deposit', issuedAt, item.room);
-    const roomInv = await issueInvoice(c, 'room_semester', issuedAt, item.room);
+    const initInv = await issueInitialInvoice(c, issuedAt, item.room);
     const paidAt = `${addDays(item.start, -1)}T10:${pad((k * 7) % 60, 2)}:00+07:00`;
-    await payInvoice(depInv, st._id, paidAt, k);
-    await payInvoice(roomInv, st._id, paidAt, k + 1);
+    await payInvoice(initInv, st._id, paidAt, k);
     activeRecords.push({ c, st, room: item.room, idx: item.idx });
   }
 
-  // ================================================================ 7. Hợp đồng `pending_payment` (tự động xếp phòng giữ chỗ 7 ngày)
-  // sv004: pending_payment còn hạn 5 ngày tại A14-301 (TC 4 nam) -> test nút Giả lập VietQR Sandbox trên Portal
+  // ================================================================ 7. Hợp đồng `pending_payment` (tự động xếp phòng giữ chỗ 7 ngày · 01 hóa đơn gộp đầu kỳ)
+  // sv004: pending_payment còn hạn 5 ngày tại A14-301 (TC 4 nam) -> test nút Giả lập VietQR Sandbox 1 chạm
   const sv004 = students[DEMO_MAP.sv004];
   const cSv004 = await createContract(sv004, roomOf('A14', '301'), periodFreshman, {
     term: '12_months',
@@ -489,8 +489,7 @@ async function seed() {
     createdAt: `${addDays(today(), -2)}T08:30:00+07:00`,
     reviewedAt: new Date(`${addDays(today(), -2)}T08:30:05+07:00`),
   });
-  await issueInvoice(cSv004, 'deposit', `${addDays(today(), -2)}T08:30:10+07:00`, roomOf('A14', '301'), addDays(today(), 5));
-  await issueInvoice(cSv004, 'room_semester', `${addDays(today(), -2)}T08:30:10+07:00`, roomOf('A14', '301'), addDays(today(), 5));
+  await issueInitialInvoice(cSv004, `${addDays(today(), -2)}T08:30:10+07:00`, roomOf('A14', '301'), addDays(today(), 5));
 
   // sv005: pending_payment ĐÃ QUÁ HẠN 2 ngày tại A15-403 (1/6 TC nam) -> test Hủy quá hạn nhả chỗ & reset Trống
   const sv005 = students[DEMO_MAP.sv005];
@@ -501,8 +500,7 @@ async function seed() {
     createdAt: `${addDays(today(), -9)}T08:00:00+07:00`,
     reviewedAt: new Date(`${addDays(today(), -9)}T08:00:05+07:00`),
   });
-  await issueInvoice(cSv005, 'deposit', `${addDays(today(), -9)}T08:00:10+07:00`, roomOf('A15', '403'), addDays(today(), -2));
-  await issueInvoice(cSv005, 'room_semester', `${addDays(today(), -9)}T08:00:10+07:00`, roomOf('A15', '403'), addDays(today(), -2));
+  await issueInitialInvoice(cSv005, `${addDays(today(), -9)}T08:00:10+07:00`, roomOf('A15', '403'), addDays(today(), -2));
 
   // sv007: vừa tự động xếp vào A14-301 (mustChangePassword = true, TK = MK = MSSV)
   const sv007 = students[DEMO_MAP.sv007];
@@ -513,8 +511,7 @@ async function seed() {
     createdAt: `${addDays(today(), -1)}T08:00:00+07:00`,
     reviewedAt: new Date(`${addDays(today(), -1)}T08:00:05+07:00`),
   });
-  await issueInvoice(cSv007, 'deposit', `${addDays(today(), -1)}T08:00:10+07:00`, roomOf('A14', '301'), addDays(today(), 6));
-  await issueInvoice(cSv007, 'room_semester', `${addDays(today(), -1)}T08:00:10+07:00`, roomOf('A14', '301'), addDays(today(), 6));
+  await issueInitialInvoice(cSv007, `${addDays(today(), -1)}T08:00:10+07:00`, roomOf('A14', '301'), addDays(today(), 6));
 
   // ================================================================ 8. Hợp đồng `terminated` (sv003 hoàn cọc xong + 3 SV CHỜ HOÀN CỌC + 1 SV đã hoàn cọc có khấu trừ)
   const startOld = addMonths(today(), -14);
@@ -536,8 +533,7 @@ async function seed() {
     createdAt: `${addDays(startOld, -5)}T09:00:00+07:00`,
     reviewedAt: new Date(`${addDays(startOld, -5)}T09:00:05+07:00`),
   });
-  await payInvoice(await issueInvoice(cSv003Old, 'deposit', `${startOld}T08:30:00+07:00`, roomOf('A14', '302')), sv003._id, `${addDays(startOld, 1)}T09:00:00+07:00`, 0);
-  await payInvoice(await issueInvoice(cSv003Old, 'room_semester', `${startOld}T08:30:00+07:00`, roomOf('A14', '302')), sv003._id, `${addDays(startOld, 1)}T09:05:00+07:00`, 1);
+  await payInvoice(await issueInitialInvoice(cSv003Old, `${startOld}T08:30:00+07:00`, roomOf('A14', '302')), sv003._id, `${addDays(startOld, 1)}T09:00:00+07:00`, 0);
   refSeq += 1;
   await Payment.create({
     paymentCode: `REF-${YEAR_STR}-${pad(refSeq)}`,
@@ -568,8 +564,7 @@ async function seed() {
       createdAt: `${addDays(startOld, -5)}T09:00:00+07:00`,
       reviewedAt: new Date(`${addDays(startOld, -5)}T09:00:05+07:00`),
     });
-    await payInvoice(await issueInvoice(cWait, 'deposit', `${startOld}T09:05:00+07:00`, spec.room), spec.st._id, `${addDays(startOld, 1)}T10:00:00+07:00`, riIdx);
-    await payInvoice(await issueInvoice(cWait, 'room_semester', `${startOld}T09:05:00+07:00`, spec.room), spec.st._id, `${addDays(startOld, 1)}T10:05:00+07:00`, riIdx + 1);
+    await payInvoice(await issueInitialInvoice(cWait, `${startOld}T09:05:00+07:00`, spec.room), spec.st._id, `${addDays(startOld, 1)}T10:00:00+07:00`, riIdx);
   }
 
   // 1 Hợp đồng đã thanh lý & hoàn cọc có khấu trừ 100.000đ -> phiếu chi `refund` tách khỏi doanh thu
@@ -589,8 +584,7 @@ async function seed() {
     createdAt: `${addDays(startOld, -5)}T09:00:00+07:00`,
     reviewedAt: new Date(`${addDays(startOld, -5)}T09:00:05+07:00`),
   });
-  await payInvoice(await issueInvoice(cRefunded, 'deposit', `${startOld}T09:05:00+07:00`, roomOf('A15', '404')), stRefunded._id, `${addDays(startOld, 1)}T10:00:00+07:00`, 3);
-  await payInvoice(await issueInvoice(cRefunded, 'room_semester', `${startOld}T09:05:00+07:00`, roomOf('A15', '404')), stRefunded._id, `${addDays(startOld, 1)}T10:05:00+07:00`, 4);
+  await payInvoice(await issueInitialInvoice(cRefunded, `${startOld}T09:05:00+07:00`, roomOf('A15', '404')), stRefunded._id, `${addDays(startOld, 1)}T10:00:00+07:00`, 3);
   refSeq += 1;
   await Payment.create({
     paymentCode: `REF-${YEAR_STR}-${pad(refSeq)}`,
@@ -615,7 +609,7 @@ async function seed() {
     occupiedRoomMap.get(k).members.push(rec.st);
   }
   const sv001RoomId = String(roomOf('A14', '101')._id);
-  const sv002RoomId = String(roomOf('A15', '101')._id);
+  const sv002RoomId = String(roomOf('A15', '103')._id);
 
   let ri = 0;
   for (const { room, members } of occupiedRoomMap.values()) {
@@ -686,6 +680,21 @@ async function seed() {
     description: 'Từ tối qua điều hòa chạy phát tiếng ồn lớn, nhờ tổ kỹ thuật kiểm tra nạp gas.',
     status: 'pending',
   });
+
+  const checkoutSample = activeRecords.find((r) => r.idx === 18);
+  if (checkoutSample) {
+    reqSeq += 1;
+    await Request.create({
+      requestCode: `REQ-${YEAR_STR}-${pad(reqSeq)}`,
+      studentId: checkoutSample.st._id,
+      contractId: checkoutSample.c._id,
+      roomId: checkoutSample.room._id,
+      type: 'checkout',
+      title: 'Đăng ký trả phòng cuối tuần này',
+      description: 'Em xin hẹn lịch kiểm kê tài sản và thanh lý hợp đồng vào sáng thứ Bảy lúc 09:00.',
+      status: 'pending',
+    });
+  }
 
   // ================================================================ 12. Bảng tin công khai & Thông báo cá nhân (`notifications` — phân loại ưu tiên Khẩn / Quan trọng / Thông thường)
   await Notification.insertMany([

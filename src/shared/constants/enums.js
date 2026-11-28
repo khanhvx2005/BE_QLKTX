@@ -57,7 +57,7 @@ const CONTRACT_STATUS = ['pending', 'pending_payment', 'active', 'terminated', '
 /** Trạng thái TRẢ RA cho Frontend */
 const CONTRACT_STATUS_VIEW = ['pending', 'pending_payment', 'active', 'expired', 'terminated', 'rejected', 'cancelled'];
 
-const INVOICE_TYPE = ['room_semester', 'deposit', 'utility'];
+const INVOICE_TYPE = ['initial_payment', 'room_semester', 'deposit', 'utility'];
 const INVOICE_SCOPE = ['personal', 'room'];
 const INVOICE_STATUS = ['unpaid', 'paid', 'cancelled'];
 

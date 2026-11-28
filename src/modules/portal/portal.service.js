@@ -23,7 +23,7 @@ const payments = require('../payments/payment.service');
 const config = require('../../core/config');
 const { CAMPUS_INFO } = require('../../shared/constants/enums');
 const { fail, paginate, isObjectId } = require('../../core/utils/http');
-const { loadCtx, contractView, debtsOf, roomRef } = require('../../shared/views');
+const { loadCtx, contractView, debtsOf, roomRef, roomUtilityFilterForContract, utilityStartMonthOf } = require('../../shared/views');
 
 async function me(req) {
   const st = req.user.studentId ? await Student.findById(req.user.studentId).lean() : null;
@@ -41,15 +41,20 @@ async function currentContract(studentId) {
   return Contract.findOne({ studentId, status: 'pending_payment' }).sort({ createdAt: -1 }).lean();
 }
 
-/** Điều kiện Mongo: hóa đơn sinh viên được xem (cá nhân của mình + hóa đơn phòng ĐANG ở `active`) */
+/** Điều kiện Mongo: hóa đơn sinh viên được xem (cá nhân của mình + điện nước phòng ĐÃ Check-in từ tháng vào ở) */
 async function visibleFilter(st) {
   const c = await activeContract(st._id);
-  return { $or: [{ scope: 'personal', studentId: st._id }, ...(c ? [{ scope: 'room', roomId: c.roomId }] : [])] };
+  const roomUtil = roomUtilityFilterForContract(c);
+  return { $or: [{ scope: 'personal', studentId: st._id }, ...(roomUtil ? [roomUtil] : [])] };
 }
 
 async function assertVisible(st, inv) {
   const c = await activeContract(st._id);
-  const ok = inv.scope === 'personal' ? String(inv.studentId) === String(st._id) : c && String(inv.roomId) === String(c.roomId);
+  const fromMonth = utilityStartMonthOf(c);
+  const roomMatch =
+    Boolean(fromMonth && c && String(inv.roomId) === String(c.roomId)) &&
+    (!inv.monthYear || inv.monthYear >= fromMonth);
+  const ok = inv.scope === 'personal' ? String(inv.studentId) === String(st._id) : roomMatch;
   if (!ok) fail(403, 'FORBIDDEN', 'Bạn không có quyền truy cập dữ liệu này');
 }
 
@@ -65,12 +70,18 @@ async function myResidence(req) {
     debtsOf([st._id]),
   ]);
 
-  const unpaidInvoiceCount = await Invoice.countDocuments({
-    studentId: st._id,
-    scope: 'personal',
-    status: 'unpaid',
-  });
-  const debtSummary = { totalDebt: debts.get(String(st._id)) ?? 0, unpaidInvoiceCount };
+  const utilFilter = roomUtilityFilterForContract(c);
+  const [unpaidInvoiceCount, roomUnpaidList] = await Promise.all([
+    Invoice.countDocuments({ studentId: st._id, scope: 'personal', status: 'unpaid' }),
+    utilFilter ? Invoice.find({ ...utilFilter, status: 'unpaid' }).select('amount').lean() : Promise.resolve([]),
+  ]);
+  const roomUtilityDebt = roomUnpaidList.reduce((sum, i) => sum + (i.amount || 0), 0);
+  const debtSummary = {
+    totalDebt: debts.get(String(st._id)) ?? 0,
+    unpaidInvoiceCount,
+    roomUtilityDebt,
+    roomUnpaidCount: roomUnpaidList.length,
+  };
 
   if (!c) {
     return {
@@ -228,12 +239,12 @@ async function simulateMyInvoiceVietqr(req) {
   );
 }
 
-/** GET /portal/my-payments — gồm cả phiếu thu hóa đơn lẫn phiếu chi hoàn cọc của SV */
+/** GET /portal/my-payments — gồm toàn bộ phiếu thu cá nhân, phiếu thu phòng (kể cả phòng cũ do SV từng nộp) và phiếu chi hoàn cọc */
 async function myPayments(req) {
   const st = await me(req);
   const visible = await Invoice.find(await visibleFilter(st)).select('_id').lean();
   const list = await Payment.find({
-    $or: [{ invoiceId: { $in: visible.map((i) => i._id) } }, { paymentType: 'refund', payerStudentId: st._id }],
+    $or: [{ invoiceId: { $in: visible.map((i) => i._id) } }, { payerStudentId: st._id }],
   })
     .sort({ paidAt: -1 })
     .lean();

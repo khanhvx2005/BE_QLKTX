@@ -17,6 +17,7 @@ const Room = require('../rooms/room.model');
 const Building = require('../rooms/building.model');
 const Invoice = require('../fees/invoice.model');
 const Payment = require('../payments/payment.model');
+const Request = require('../requests/request.model');
 const periodService = require('../periods/period.service');
 const notificationService = require('../notifications/notification.service');
 const { pickStudent, studentErrors } = require('../students/student.rules');
@@ -37,6 +38,7 @@ const {
   roomRef,
   debtsOf,
   byId,
+  roomUtilityFilterForContract,
 } = require('../../shared/views');
 const { availableSlotsOf } = require('../rooms/room.service');
 const logger = require('../../core/logger/logger');
@@ -212,17 +214,11 @@ async function availableRooms(q = {}) {
       (!q.capacity || r.capacity === Number(q.capacity))
   );
 
-  const pendingAgg = await Contract.aggregate([
-    { $match: { roomId: { $in: matchingRooms.map((r) => r._id) }, status: 'pending' } },
-    { $group: { _id: '$roomId', n: { $sum: 1 } } },
-  ]);
-  const pendingMap = new Map(pendingAgg.map((x) => [String(x._id), x.n]));
   const ctx = { buildings };
 
   const rows = matchingRooms
     .map((r) => {
       const availableSlots = availableSlotsOf(r);
-      const pendingApplications = pendingMap.get(String(r._id)) || 0;
       const rr = roomRef(r, ctx);
       return {
         ...rr,
@@ -231,8 +227,8 @@ async function availableRooms(q = {}) {
         amenities: r.amenities || [],
         occupied: r.occupiedCount || 0,
         availableSlots,
-        pendingApplications,
-        effectiveAvailableSlots: Math.max(0, availableSlots - pendingApplications),
+        pendingApplications: 0,
+        effectiveAvailableSlots: availableSlots,
       };
     })
     .filter((r) => r.availableSlots > 0)
@@ -477,7 +473,7 @@ async function createApplication({ student, body }) {
   }
 }
 
-/** POST /api/contracts/register-online — Công khai (kiểm tra khớp CCCD nếu MSSV đã có hồ sơ để chống giả mạo) */
+/** POST /api/contracts/register-online — Công khai (kiểm tra đủ điều kiện & trùng hợp đồng TRƯỚC khi lưu/cập nhật hồ sơ SV) */
 async function registerOnline(body = {}) {
   const profile = pickStudent(body);
   const errors = studentErrors(profile);
@@ -485,15 +481,45 @@ async function registerOnline(body = {}) {
   if (!TERM_MONTHS[body.term]) errors.push({ field: 'term', message: 'Chọn gói kỳ hạn hợp lệ' });
   if (errors.length) fieldErrors(errors);
 
+  // Kiểm tra điều kiện đợt & gói thuê TRƯỚC khi ghi nhận/cập nhật hồ sơ sinh viên
+  const period = await RegistrationPeriod.findById(body.periodId).lean();
+  if (!period) fail(404, 'NOT_FOUND', 'Không tìm thấy đợt đăng ký');
+  const check = periodService.evaluateEligibility(period, { studentCode: profile.studentCode, faculty: profile.faculty });
+  if (!check.eligible) {
+    const code = periodService.isCurrentlyOpen(period) ? 'PERIOD_NOT_ELIGIBLE' : 'PERIOD_NOT_OPEN';
+    fail(422, code, check.reason);
+  }
+  if (!(period.allowedTerms || []).includes(body.term)) {
+    fail(422, 'TERM_NOT_ALLOWED_IN_PERIOD', `Đợt này chỉ chấp nhận các gói thời hạn: ${(period.allowedTerms || []).join(', ')}`);
+  }
+
   let st = await Student.findOne({ studentCode: profile.studentCode });
   if (st) {
     if (st.citizenId && st.citizenId !== profile.citizenId) {
       fail(403, 'IDENTITY_MISMATCH', 'MSSV này đã có hồ sơ trên hệ thống nhưng số CCCD không trùng khớp. Vui lòng kiểm tra lại hoặc liên hệ Trung tâm KTX');
     }
+    if (await Contract.exists({ studentId: st._id, status: { $in: ['pending', 'pending_payment', 'active'] } })) {
+      fail(409, 'APPLICATION_OR_CONTRACT_EXISTS', 'Sinh viên này đã có đơn đăng ký đang xử lý hoặc đang lưu trú tại ký túc xá');
+    }
+    const nextEmail = String(profile.email || '').toLowerCase();
+    const existingAcc = await User.findOne({ studentId: st._id }).lean();
+    if (nextEmail && (await User.exists({ email: nextEmail, ...(existingAcc ? { _id: { $ne: existingAcc._id } } : {}) }))) {
+      fail(409, 'EMAIL_ALREADY_USED', `Email ${profile.email} đã được sử dụng cho tài khoản khác. Vui lòng nhập email khác hoặc liên hệ Trung tâm KTX`);
+    }
     Object.assign(st, profile);
     st.status = 'active';
     await st.save();
+    if (existingAcc) {
+      await User.updateOne(
+        { _id: existingAcc._id },
+        { $set: { fullName: st.fullName, email: nextEmail, isActive: true } }
+      );
+    }
   } else {
+    const nextEmail = String(profile.email || '').toLowerCase();
+    if (nextEmail && (await User.exists({ email: nextEmail }))) {
+      fail(409, 'EMAIL_ALREADY_USED', `Email ${profile.email} đã được sử dụng cho tài khoản khác. Vui lòng nhập email khác hoặc liên hệ Trung tâm KTX`);
+    }
     st = await Student.create({ ...profile, status: 'active' });
   }
 
@@ -624,11 +650,15 @@ async function list(q = {}) {
 async function getById(id) {
   const c = await findContract(id);
   const st = await Student.findById(c.studentId).lean();
-  const [invoices, roomUnpaidRaw] = await Promise.all([
+  const utilFilter = roomUtilityFilterForContract(c);
+  const [invoices, roomUnpaidRaw, openCheckoutReq] = await Promise.all([
     Invoice.find({ contractId: c._id }).sort({ createdAt: -1 }).lean(),
-    c.roomId && c.status === 'active'
-      ? Invoice.find({ type: 'utility', roomId: c.roomId, status: 'unpaid' }).sort({ dueDate: 1 }).lean()
+    utilFilter
+      ? Invoice.find({ ...utilFilter, status: 'unpaid' }).sort({ dueDate: 1 }).lean()
       : Promise.resolve([]),
+    Request.findOne({ contractId: c._id, type: 'checkout', status: { $in: ['pending', 'in_progress'] } })
+      .select('requestCode status title createdAt')
+      .lean(),
   ]);
   const ctx = await loadCtx({ roomIds: [c.roomId], studentIds: [c.studentId] });
   const view = contractView(c, ctx, await debtsOf([c.studentId]));
@@ -693,7 +723,19 @@ async function getById(id) {
             emergencyContact: st.emergencyContact,
           }
         : null,
-      depositStatus: invoiceViews.find((i) => i.type === 'deposit')?.status ?? null,
+      depositStatus:
+        invoiceViews.find((i) => i.type === 'initial_payment')?.status ??
+        invoiceViews.find((i) => i.type === 'deposit')?.status ??
+        null,
+      openCheckoutRequest: openCheckoutReq
+        ? {
+            id: String(openCheckoutReq._id),
+            requestCode: openCheckoutReq.requestCode,
+            status: openCheckoutReq.status,
+            title: openCheckoutReq.title,
+            createdAt: openCheckoutReq.createdAt,
+          }
+        : null,
       roomUtilityDebt,
       roomUnpaidInvoices,
       invoices: invoiceViews,
@@ -702,29 +744,29 @@ async function getById(id) {
   };
 }
 
-/** Sinh các hóa đơn đầu kỳ khi duyệt đơn (bỏ qua hóa đơn cọc nếu depositAmount === 0) */
+/**
+ * Phương án 1A: Sinh 01 hóa đơn đầu kỳ duy nhất (`initial_payment` = Tiền phòng cả kỳ + Tiền cọc tài sản).
+ * Lưu bóc tách `roomFeeAmount` & `depositAmount` để báo cáo doanh thu tự động loại trừ tiền cọc,
+ * đồng thời triệt tiêu hoàn toàn trạng thái khóa chết (deadlock) khi đóng dở 1 nửa.
+ */
 async function issuePersonalInvoices(c, room, building, dueDate) {
-  const created = [];
-  const make = (type) =>
-    createWithCode(Invoice, 'invoiceCode', yearPrefix('INV'), (invoiceCode) => ({
-      invoiceCode,
-      type,
-      scope: 'personal',
-      amount: type === 'deposit' ? c.depositAmount : c.totalRoomFee,
-      description:
-        type === 'deposit'
-          ? `Tiền đặt cọc tài sản - ${c.contractCode}`
-          : `Tiền phòng ${building.code}-${room.roomNumber} (${termLabel(c.term)}) - ${c.contractCode}`,
-      studentId: c.studentId,
-      roomId: room._id,
-      contractId: c._id,
-      dueDate,
-      status: 'unpaid',
-    }));
-
-  if (c.depositAmount > 0) created.push(await make('deposit'));
-  created.push(await make('room_semester'));
-  return created;
+  const totalAmount = (c.totalRoomFee || 0) + (c.depositAmount || 0);
+  const depositPart = c.depositAmount > 0 ? ` + Cọc tài sản ${c.depositAmount.toLocaleString('vi-VN')}đ` : '';
+  const inv = await createWithCode(Invoice, 'invoiceCode', yearPrefix('INV'), (invoiceCode) => ({
+    invoiceCode,
+    type: 'initial_payment',
+    scope: 'personal',
+    amount: totalAmount,
+    roomFeeAmount: c.totalRoomFee || 0,
+    depositAmount: c.depositAmount || 0,
+    description: `Phí đầu kỳ: Tiền phòng ${building.code}-${room.roomNumber} (${termLabel(c.term)})${depositPart} - ${c.contractCode}`,
+    studentId: c.studentId,
+    roomId: room._id,
+    contractId: c._id,
+    dueDate,
+    status: 'unpaid',
+  }));
+  return [inv];
 }
 
 /** Tự kích hoạt hợp đồng pending_payment -> active ngay khi đóng đủ hóa đơn đầu kỳ + sinh mã QR Check-in */
@@ -735,7 +777,7 @@ async function activateIfInitialPaid(contractId) {
 
   const remainingUnpaid = await Invoice.countDocuments({
     contractId: c._id,
-    type: { $in: ['deposit', 'room_semester'] },
+    type: { $in: ['initial_payment', 'deposit', 'room_semester'] },
     status: 'unpaid',
   });
   if (remainingUnpaid > 0) return null;
@@ -865,13 +907,14 @@ async function checkinQr(body = {}, actor) {
   return { data: await viewOne(updated), message: `Check-in nhận phòng thành công cho hợp đồng ${c.contractCode}` };
 }
 
-/** PATCH /api/contracts/:id/terminate — Sạch nợ 100% -> thanh lý & nhả 1 chỗ phòng */
-async function terminate(id) {
+/** PATCH /api/contracts/:id/terminate — Sạch nợ 100% -> thanh lý, nhả 1 chỗ phòng & tự động đóng phiếu trả phòng */
+async function terminate(id, actor = null) {
   const c = await findContract(id);
   if (c.status !== 'active') fail(409, 'CONTRACT_NOT_TERMINABLE', 'Chỉ thanh lý được hợp đồng đang hiệu lực hoặc đã hết hạn');
+  const utilFilter = roomUtilityFilterForContract(c);
   const outstanding = await Invoice.find({
     status: 'unpaid',
-    $or: [{ studentId: c.studentId, scope: 'personal' }, { type: 'utility', roomId: c.roomId }],
+    $or: [{ studentId: c.studentId, scope: 'personal' }, ...(utilFilter ? [utilFilter] : [])],
   }).lean();
   if (outstanding.length) {
     fail(422, 'OUTSTANDING_INVOICES', `Còn ${outstanding.length} hóa đơn chưa thanh toán, chưa thể thanh lý`, {
@@ -886,6 +929,33 @@ async function terminate(id) {
   if (!updated) fail(409, 'CONTRACT_NOT_TERMINABLE', 'Hợp đồng vừa được xử lý');
 
   await releaseRoomSlot(c.roomId);
+
+  // Đồng bộ một nguồn sự thật: tự đóng phiếu `checkout` sang `completed` và đóng phiếu `transfer`/`repair` đang mở
+  const now = new Date();
+  await Promise.all([
+    Request.updateMany(
+      { contractId: c._id, type: 'checkout', status: { $in: ['pending', 'in_progress'] } },
+      {
+        $set: {
+          status: 'completed',
+          handlerNote: `Đã hoàn tất nghiệm thu và thanh lý hợp đồng ${c.contractCode}`,
+          handledBy: actor?.id ?? null,
+          handledByName: actor?.fullName ?? null,
+          handledAt: now,
+        },
+      }
+    ),
+    Request.updateMany(
+      { contractId: c._id, type: { $in: ['transfer', 'repair'] }, status: { $in: ['pending', 'in_progress'] } },
+      {
+        $set: {
+          status: 'cancelled',
+          handlerNote: `Tự động hủy do hợp đồng ${c.contractCode} đã thanh lý`,
+          handledAt: now,
+        },
+      }
+    ),
+  ]);
 
   await notificationService
     .notifyStudent(c.studentId, {
@@ -935,11 +1005,10 @@ async function refundDeposit(id, body = {}, actor) {
 
   let refundPayment = null;
   if (refundAmount > 0) {
-    const depInv = await Invoice.findOne({ contractId: c._id, type: 'deposit' }).select('_id').lean();
     refundPayment = await createWithCode(Payment, 'paymentCode', yearPrefix('REF'), (paymentCode) => ({
       paymentCode,
       paymentType: 'refund',
-      invoiceId: depInv?._id ?? null,
+      invoiceId: null,
       contractId: c._id,
       amount: refundAmount,
       method: body.method === 'vietqr' ? 'vietqr' : 'cash',
